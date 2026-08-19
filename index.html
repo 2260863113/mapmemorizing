@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>中国行政区记忆</title>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">中国行政区记忆</div>
+      <nav id="mode-tabs">
+        <button data-mode="free" class="active">自由模式</button>
+        <button data-mode="self">自测模式</button>
+        <button data-mode="challenge">挑战模式</button>
+        <button data-mode="memory">记忆模式</button>
+      </nav>
+      <div class="top-actions">
+        <select id="province-select">
+          <option value="">选择省份（下钻）</option>
+        </select>
+        <button id="btn-back" class="ghost">返回全国</button>
+        <button id="btn-settings" class="ghost">设置</button>
+      </div>
+    </header>
+
+    <div id="search-row">
+      <input id="search-input" type="text" placeholder="输入地名，如：黔南" autocomplete="off" spellcheck="false" />
+      <div id="timer-pill" class="hidden">10s</div>
+    </div>
+    <div id="mode-hint"></div>
+
+    <main>
+      <div id="map"></div>
+      <aside id="side-panel">
+        <h3>自由模式进度</h3>
+        <div id="stats"></div>
+        <button id="btn-reset" class="ghost danger">重置进度</button>
+        <p class="tip">进度自动保存在本机浏览器（localStorage）</p>
+      </aside>
+    </main>
+  </div>
+
+  <div id="summary" class="overlay hidden">
+    <div class="card">
+      <div id="summary-body"></div>
+      <div class="card-actions">
+        <button id="summary-restart" class="primary">再来一轮</button>
+        <button id="summary-close" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-panel" class="overlay hidden">
+    <div class="card">
+      <h3>设置</h3>
+      <label class="row"><input type="checkbox" id="set-self-enable" /> 自测模式开启倒计时</label>
+      <label class="row">自测每题秒数 <input type="number" id="set-self-secs" min="5" max="600" style="width:80px" /></label>
+      <label class="row">挑战模式每题秒数 <input type="number" id="set-challenge-secs" min="3" max="120" style="width:80px" /></label>
+      <div class="card-actions">
+        <button id="set-save" class="primary">保存</button>
+        <button id="set-cancel" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

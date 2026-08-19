@@ -1,0 +1,103 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #app { height: 100%; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  background: #f2f3f5; color: #222; overflow: hidden;
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 16px; background: #1f2937; color: #fff; flex-wrap: wrap;
+}
+.brand { font-weight: 700; font-size: 16px; white-space: nowrap; }
+#mode-tabs { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
+#mode-tabs button {
+  border: 1px solid #374151; background: transparent; color: #d1d5db;
+  padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+#mode-tabs button:hover { background: #374151; }
+#mode-tabs button.active { background: #10b981; border-color: #10b981; color: #fff; font-weight: 600; }
+.top-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+select, button.ghost {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid #374151;
+  background: #111827; color: #e5e7eb; cursor: pointer; font-size: 13px;
+}
+button.ghost:hover { background: #374151; }
+button.ghost.danger { color: #fca5a5; }
+button.primary {
+  background: #10b981; color: #fff; border: none; padding: 8px 18px;
+  border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+
+/* ---------- 搜索行 ---------- */
+#search-row {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: #fff; border-bottom: 1px solid #e5e7eb; flex-wrap: wrap;
+}
+#search-input {
+  flex: 0 1 420px; min-width: 220px; padding: 9px 14px;
+  border: 1px solid #d1d5db; border-radius: 10px; font-size: 15px; outline: none;
+}
+#search-input:focus { border-color: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15); }
+
+#timer-pill {
+  background: #fee2e2; color: #b91c1c; padding: 6px 14px;
+  border-radius: 999px; font-weight: 700; font-size: 14px;
+}
+#timer-pill.urgent { animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: 0.4; } }
+
+#mode-hint {
+  padding: 6px 16px; font-size: 13px; color: #4b5563;
+  background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+}
+
+/* ---------- 主区 ---------- */
+main { flex: 1; display: flex; min-height: 0; }
+#map { flex: 1; background: #eef1f4; }
+#side-panel {
+  width: 300px; background: #fff; border-left: 1px solid #e5e7eb;
+  padding: 14px; overflow-y: auto;
+}
+#side-panel h3 { font-size: 14px; margin-bottom: 10px; color: #374151; }
+.stat-head { font-size: 14px; margin-bottom: 6px; }
+.stat-head b { font-size: 20px; color: #10b981; }
+.pct { color: #6b7280; font-size: 12px; margin-left: 6px; }
+.bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-bottom: 12px; }
+.bar-fill {
+  height: 100%; background: linear-gradient(90deg, #34d399, #10b981);
+  border-radius: 999px; transition: width 0.4s;
+}
+.bar.mini { height: 5px; margin: 4px 0 10px; }
+.prov-name { font-size: 13px; color: #374151; display: flex; justify-content: space-between; }
+.prov-name span { color: #9ca3af; }
+#btn-reset { margin-top: 6px; width: 100%; }
+.tip { font-size: 12px; color: #9ca3af; margin-top: 10px; line-height: 1.6; }
+
+/* ---------- 浮层 ---------- */
+.overlay {
+  position: fixed; inset: 0; background: rgba(17, 24, 39, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.card {
+  background: #fff; border-radius: 14px; padding: 22px 26px;
+  min-width: 300px; max-width: 480px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.card h3 { margin-bottom: 14px; }
+.card .row { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 14px; }
+.card-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+#summary-body { font-size: 18px; text-align: center; line-height: 1.8; }
+.sum-stats { font-size: 15px; color: #374151; margin-top: 6px; }
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%) translateY(20px);
+  background: rgba(17, 24, 39, 0.92); color: #fff; padding: 10px 20px;
+  border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none;
+  transition: all 0.25s; z-index: 200; max-width: 80vw;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.hidden { display: none !important; }
