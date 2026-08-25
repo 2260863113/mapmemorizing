@@ -4,26 +4,26 @@ import type { AppData, RenderState, Unit, UnitColor } from '../types';
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 
 const FILL: Record<UnitColor, string> = {
-  green: '#2fae4e',
-  blue: '#2196f3', // 当前题目
-  red: '#e53935', // 答错标记
-  gray: '#e6e6e6',
+  green: '#7fbf8b',
+  blue: '#6fa8dc', // 当前题目
+  red: '#d98989', // 答错标记
+  gray: '#e7e2d8',
 };
 const EMPH: Record<UnitColor, string> = {
-  green: '#5cc97e',
-  blue: '#5fb4f8',
-  red: '#f26060',
-  gray: '#f2f2f2',
+  green: '#93cfa0',
+  blue: '#83b7e3',
+  red: '#e1a0a0',
+  gray: '#eee9df',
 };
-const BORDER = '#9aa0a6'; // 地级边界（细线）
-const PROV_BORDER = '#4b5563'; // 省界（粗线）
+const BORDER = '#b9b2a6'; // 地级边界（细线）
+const PROV_BORDER = '#6b7280'; // 省界（粗线）
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 2.5; // 缩放阈值：低于不显示任何标签，高于显示地级标签（防扎堆）
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
-const FOLLOW_ZOOM = 8;
-const CITY_LABEL_SIZE = 12;
+const FOLLOW_ANIMATION_MS = 650;
+const CITY_LABEL_SIZE = 14;
 const LABEL_UPDATE_DELAY = 120;
 
 const STATUS_TXT: Record<UnitColor, string> = {
@@ -38,22 +38,34 @@ export interface MapHandlers {
   onUnitDblClick: (adcode: string) => void;
 }
 
-/** 白底标签（边框/字体颜色 = 状态色） */
+/** 白底标签：无描边，使用轻阴影提高可读性 */
 function labelStyle(color: string, fontSize: number, show = true) {
   return {
     show,
     color,
     fontSize,
-    backgroundColor: '#ffffff',
-    borderColor: color,
-    borderWidth: 1.5,
-    borderRadius: 4,
-    padding: [2, 6],
+    fontWeight: 600,
+    fontFamily: 'Microsoft YaHei, PingFang SC, system-ui, sans-serif',
+    align: 'center' as const,
+    verticalAlign: 'middle' as const,
+    lineHeight: fontSize + 4,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderWidth: 0,
+    borderRadius: 5,
+    padding: [4, 9],
+    textBorderWidth: 0,
+    shadowColor: 'rgba(15, 23, 42, 0.22)',
+    shadowBlur: 8,
+    shadowOffsetY: 2,
   };
 }
 
 function clampZoom(zoom: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}
+
+function easeInOutCubic(t: number) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 /**
@@ -75,6 +87,7 @@ export class MapRenderer {
   private zoom = 1;
   private labelMode: 'none' | 'city' = 'none';
   private labelUpdateTimer: number | null = null;
+  private followRaf: number | null = null;
   private lastState: RenderState | null = null;
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
@@ -120,6 +133,10 @@ export class MapRenderer {
     // 缩放/拖动时只记录 zoom。不要在 georoam 中完整 setOption 重建 map/lines，
     // 否则 ECharts 会让地级 MapDraw 进入过渡态，而省界 lines 已经跟随新坐标系。
     this.chart.on('georoam', (p) => {
+      if (this.followRaf !== null) {
+        cancelAnimationFrame(this.followRaf);
+        this.followRaf = null;
+      }
       const params = p as { zoom?: number; totalZoom?: number };
       if (typeof params.totalZoom === 'number') {
         this.zoom = clampZoom(params.totalZoom);
@@ -321,7 +338,7 @@ export class MapRenderer {
     if (Array.isArray(regions)) {
       for (const item of regions) {
         if (item.name === u.name) {
-          item.itemStyle = { ...item.itemStyle, areaColor: '#ffe066', borderColor: '#f59e0b', borderWidth: 1.5 };
+          item.itemStyle = { ...item.itemStyle, areaColor: '#e8cf78', borderColor: '#b68b2f', borderWidth: 1.2 };
         }
       }
       this.chart.setOption({ geo: { regions } } as never);
@@ -336,23 +353,52 @@ export class MapRenderer {
     }, 900);
   }
 
-  focusUnit(adcode: string) {
+  focusUnit(adcode: string, zoom: number) {
     const u = this.units.find((item) => item.adcode === adcode);
     if (!u) return;
     if (this.viewProvince && this.viewProvince !== u.provinceAdcode) {
       this.viewProvince = null;
       if (this.lastState) this.render(this.lastState);
     }
-    this.zoom = clampZoom(FOLLOW_ZOOM);
+    this.animateViewTo(u.center, clampZoom(zoom));
+  }
+
+  private animateViewTo(targetCenter: [number, number], targetZoom: number) {
+    if (this.followRaf !== null) cancelAnimationFrame(this.followRaf);
     this.labelMode = 'city';
-    this.chart.setOption({
-      geo: {
-        map: 'china',
-        center: u.center,
-        zoom: this.zoom,
-        regions: this.lastState ? this.buildRegionData(this.lastState) : undefined,
-      },
-    } as never);
+    if (this.lastState) {
+      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) } } as never);
+    }
+    const current = this.currentGeoView();
+    const startCenter = current.center;
+    const startZoom = current.zoom;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / FOLLOW_ANIMATION_MS);
+      const k = easeInOutCubic(t);
+      const center: [number, number] = [
+        startCenter[0] + (targetCenter[0] - startCenter[0]) * k,
+        startCenter[1] + (targetCenter[1] - startCenter[1]) * k,
+      ];
+      this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
+      this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } });
+      if (t < 1) {
+        this.followRaf = requestAnimationFrame(step);
+      } else {
+        this.followRaf = null;
+      }
+    };
+    this.followRaf = requestAnimationFrame(step);
+  }
+
+  private currentGeoView(): { center: [number, number]; zoom: number } {
+    const opt = this.chart.getOption() as { geo?: { center?: number[]; zoom?: number }[] | { center?: number[]; zoom?: number } };
+    const geo = Array.isArray(opt.geo) ? opt.geo[0] : opt.geo;
+    const center = geo?.center;
+    return {
+      center: Array.isArray(center) && typeof center[0] === 'number' && typeof center[1] === 'number' ? [center[0], center[1]] : [104.5, 35],
+      zoom: typeof geo?.zoom === 'number' ? clampZoom(geo.zoom) : this.zoom,
+    };
   }
 
   /** 下钻到某省：其他区域消失，自动缩放居中（必然进入地级标签模式） */
@@ -407,6 +453,10 @@ export class MapRenderer {
     if (this.flashTimer !== null) {
       window.clearTimeout(this.flashTimer);
       this.flashTimer = null;
+    }
+    if (this.followRaf !== null) {
+      cancelAnimationFrame(this.followRaf);
+      this.followRaf = null;
     }
     this.chart.dispose();
   }

@@ -8,11 +8,13 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   const enable = $('set-self-enable') as HTMLInputElement;
   const requireEnter = $('set-require-enter') as HTMLInputElement;
   const autoFollow = $('set-auto-follow') as HTMLInputElement;
+  const followZoom = $('set-follow-zoom') as HTMLInputElement;
   const secs = $('set-self-secs') as HTMLInputElement;
   const chal = $('set-challenge-secs') as HTMLInputElement;
   enable.checked = current.selfTimerEnabled;
   requireEnter.checked = current.requireEnter;
   autoFollow.checked = current.autoFollow;
+  followZoom.value = String(current.followZoom);
   secs.value = String(current.selfTimerSeconds);
   chal.value = String(current.challengeSeconds);
   panel.classList.remove('hidden');
@@ -26,6 +28,7 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
       challengeSeconds: Math.max(3, Number(chal.value) || 10),
       requireEnter: requireEnter.checked,
       autoFollow: autoFollow.checked,
+      followZoom: Math.min(28, Math.max(2, Number(followZoom.value) || current.followZoom)),
     };
     saveSettings(s);
     onSave(s);

@@ -91,7 +91,7 @@ export class FreeMode implements ModeController {
       return;
     }
     this.ctx.store.mark(adcode, true);
-    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(adcode);
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(adcode, this.ctx.settings.followZoom);
     this.ctx.renderer.flash(adcode);
     this.ctx.toast(`已记忆：${u.name}`);
     this.ctx.search.clear();

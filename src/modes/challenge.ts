@@ -16,6 +16,7 @@ export class ChallengeMode implements ModeController {
   private ok = 0;
   private fail = 0;
   private startTime = 0;
+  private nextTimer: number | null = null;
   private countdown = new Countdown();
 
   constructor(private ctx: ModeCtx) {}
@@ -39,6 +40,10 @@ export class ChallengeMode implements ModeController {
 
   exit() {
     this.countdown.stop();
+    if (this.nextTimer !== null) {
+      window.clearTimeout(this.nextTimer);
+      this.nextTimer = null;
+    }
     this.ctx.showTimer(null);
     this.started = false;
   }
@@ -111,7 +116,7 @@ export class ChallengeMode implements ModeController {
     const u = this.ctx.randomUnit(pool);
     this.question = u.adcode;
     this.refresh();
-    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode);
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode, this.ctx.settings.followZoom);
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.countdown.start(this.ctx.settings.challengeSeconds, (r) => this.ctx.showTimer(r), () => this.answer(false, true));
@@ -127,13 +132,18 @@ export class ChallengeMode implements ModeController {
       this.green.add(q);
       this.ok++;
       this.ctx.renderer.flash(q);
-    } else {
-      this.red.add(q);
-      this.fail++;
-      const name = this.ctx.byAdcode.get(q)?.name ?? q;
-      this.ctx.toast(timedOut ? `超时，正确答案：${name}` : `正确答案：${name}`);
+      this.next();
+      return;
     }
-    this.next();
+    this.red.add(q);
+    this.fail++;
+    const name = this.ctx.byAdcode.get(q)?.name ?? q;
+    this.ctx.toast(timedOut ? `超时，正确答案：${name}` : `正确答案：${name}`);
+    this.refresh();
+    this.nextTimer = window.setTimeout(() => {
+      this.nextTimer = null;
+      this.next();
+    }, 1500);
   }
 
   private finish() {

@@ -39,6 +39,7 @@ export interface Settings {
   challengeSeconds: number;
   requireEnter: boolean;
   autoFollow: boolean;
+  followZoom: number;
 }
 
 export interface RenderState {

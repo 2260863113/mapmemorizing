@@ -73,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   challengeSeconds: 10,
   requireEnter: true,
   autoFollow: true,
+  followZoom: 12,
 };
 
 export function loadSettings(): Settings {

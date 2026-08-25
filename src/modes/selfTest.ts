@@ -14,6 +14,7 @@ export class SelfTestMode implements ModeController {
   private red = new Set<string>();
   private question: string | null = null;
   private lastGreen: string | null = null;
+  private activeProvince: string | null = null;
   private ok = 0;
   private fail = 0;
   private started = false;
@@ -27,6 +28,7 @@ export class SelfTestMode implements ModeController {
     this.red.clear();
     this.question = null;
     this.lastGreen = null;
+    this.activeProvince = null;
     this.ok = 0;
     this.fail = 0;
     this.started = true;
@@ -36,7 +38,9 @@ export class SelfTestMode implements ModeController {
         ? '蓝色 = 当前题目 ｜ 答对变绿并从相邻区域继续扩张（BFS，优先同省）｜ 答错标红并跳过'
         : '蓝色 = 当前题目 ｜ 输入正确答案后自动变绿并继续扩张 ｜ 错误输入不会标红',
     );
-    this.ask(this.ctx.randomUnit(this.unvisited()));
+    const first = this.ctx.randomUnit(this.unvisited());
+    this.activeProvince = first.provinceAdcode;
+    this.ask(first);
   }
 
   exit() {
@@ -89,7 +93,7 @@ export class SelfTestMode implements ModeController {
   private ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
-    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode);
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode, this.ctx.settings.followZoom);
     this.ctx.search.clear();
     this.ctx.search.focus();
     if (this.ctx.settings.selfTimerEnabled) {
@@ -125,23 +129,35 @@ export class SelfTestMode implements ModeController {
     this.ask(this.pickNext());
   }
 
-  /** BFS 扩张：优先取与上一个绿点相邻的未测单位，同省优先；否则回退最近未测 */
+  /** 省内优先 BFS：当前省未出完前不跨省；省内优先邻居，否则选同省最近未测点 */
   private pickNext(): Unit {
-    const last = this.lastGreen ? this.ctx.byAdcode.get(this.lastGreen) : null;
-    if (last) {
-      const cands = last.neighbors
-        .map((a) => this.ctx.byAdcode.get(a))
-        .filter((u): u is Unit => !!u && !this.green.has(u.adcode) && !this.red.has(u.adcode));
-      if (cands.length) {
-        const same = cands.filter((u) => u.provinceAdcode === last.provinceAdcode);
-        return this.ctx.randomUnit(same.length ? same : cands);
-      }
+    const last = this.lastGreen ? this.ctx.byAdcode.get(this.lastGreen) ?? null : null;
+    if (!this.activeProvince || !this.hasUnvisitedInProvince(this.activeProvince)) {
+      this.activeProvince = this.pickNextProvince(last);
     }
-    const unv = this.unvisited();
-    if (!unv.length) return unv[0];
-    const ref = last?.center ?? [104.5, 35];
-    unv.sort((a, b) => dist2(a.center, ref) - dist2(b.center, ref));
-    return unv[0];
+    const province = this.activeProvince;
+    const inProvince = this.unvisited().filter((u) => u.provinceAdcode === province);
+    if (!inProvince.length) return this.unvisited()[0];
+    if (last) {
+      const neighbors = last.neighbors
+        .map((a) => this.ctx.byAdcode.get(a))
+        .filter((u): u is Unit => !!u && u.provinceAdcode === province && !this.green.has(u.adcode) && !this.red.has(u.adcode));
+      if (neighbors.length) return this.ctx.randomUnit(neighbors);
+    }
+    const ref = last?.provinceAdcode === province ? last.center : this.ctx.data.provinces.find((p) => p.adcode === province)?.center ?? [104.5, 35];
+    inProvince.sort((a, b) => dist2(a.center, ref) - dist2(b.center, ref));
+    return inProvince[0];
+  }
+
+  private hasUnvisitedInProvince(provinceAdcode: string) {
+    return this.ctx.data.units.some((u) => u.provinceAdcode === provinceAdcode && !this.green.has(u.adcode) && !this.red.has(u.adcode));
+  }
+
+  private pickNextProvince(last: Unit | null): string {
+    const provinces = this.ctx.data.provinces
+      .filter((p) => this.hasUnvisitedInProvince(p.adcode))
+      .sort((a, b) => dist2(a.center, last?.center ?? [104.5, 35]) - dist2(b.center, last?.center ?? [104.5, 35]));
+    return provinces[0]?.adcode ?? this.unvisited()[0]?.provinceAdcode ?? '';
   }
 
   private finish() {
