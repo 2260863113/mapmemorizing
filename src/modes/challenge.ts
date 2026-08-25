@@ -12,6 +12,7 @@ export class ChallengeMode implements ModeController {
   private green = new Set<string>();
   private red = new Set<string>();
   private question: string | null = null;
+  private started = false;
   private ok = 0;
   private fail = 0;
   private startTime = 0;
@@ -24,17 +25,22 @@ export class ChallengeMode implements ModeController {
     this.green.clear();
     this.red.clear();
     this.question = null;
+    this.started = false;
     this.ok = 0;
     this.fail = 0;
-    this.startTime = Date.now();
-    this.ctx.search.setPlaceholder(`输入蓝色区域的名称（每题 ${this.ctx.settings.challengeSeconds} 秒）`);
-    this.ctx.setHint('蓝色 = 当前题目（随机）｜ 答对变绿并自动出下一题 ｜ 答错或超时变红并跳过');
-    this.next();
+    this.startTime = 0;
+    this.ctx.search.setPlaceholder(
+      this.ctx.settings.requireEnter ? `输入蓝色区域的名称（每题 ${this.ctx.settings.challengeSeconds} 秒，回车提交）` : `输入蓝色区域的名称（每题 ${this.ctx.settings.challengeSeconds} 秒）`,
+    );
+    this.showStartHint();
+    this.refresh();
+    this.ctx.search.clear();
   }
 
   exit() {
     this.countdown.stop();
     this.ctx.showTimer(null);
+    this.started = false;
   }
 
   refresh() {
@@ -49,13 +55,19 @@ export class ChallengeMode implements ModeController {
   }
 
   hasProgress() {
-    return this.ok > 0 || this.fail > 0;
+    return this.started && (this.ok > 0 || this.fail > 0 || !!this.question);
   }
 
   onSubmit(v: string) {
     if (!this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     this.answer(!!best && best.adcode === this.question);
+  }
+
+  onInput(v: string) {
+    if (!this.question || !v.trim()) return;
+    const best = this.ctx.matcher.bestUnit(v);
+    if (best?.adcode === this.question) this.answer(true);
   }
 
   onUnitClick() {
@@ -69,7 +81,26 @@ export class ChallengeMode implements ModeController {
 
   // ---------- 内部 ----------
 
+  private showStartHint() {
+    this.ctx.setHint(
+      '点击开始后随机出题 ｜ 蓝色 = 当前题目 ｜ 答对变绿并自动出下一题 ｜ 答错或超时变红并跳过 <button id="challenge-start" class="inline-action">开始</button>',
+    );
+    window.setTimeout(() => {
+      const btn = document.getElementById('challenge-start') as HTMLButtonElement | null;
+      if (btn) btn.onclick = () => this.start();
+    }, 0);
+  }
+
+  private start() {
+    if (this.started) return;
+    this.started = true;
+    this.startTime = Date.now();
+    this.ctx.setHint('蓝色 = 当前题目（随机）｜ 答对变绿并自动出下一题 ｜ 答错或超时变红并跳过');
+    this.next();
+  }
+
   private next() {
+    if (!this.started) return;
     this.countdown.stop();
     const pool = this.ctx.data.units.filter((u) => !this.green.has(u.adcode) && !this.red.has(u.adcode));
     if (!pool.length) {
@@ -80,6 +111,7 @@ export class ChallengeMode implements ModeController {
     const u = this.ctx.randomUnit(pool);
     this.question = u.adcode;
     this.refresh();
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode);
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.countdown.start(this.ctx.settings.challengeSeconds, (r) => this.ctx.showTimer(r), () => this.answer(false, true));

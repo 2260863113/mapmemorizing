@@ -56,6 +56,11 @@ button.primary {
 
 /* ---------- 主区 ---------- */
 main { flex: 1; display: flex; min-height: 0; }
+.inline-action {
+  margin-left: 10px; padding: 4px 12px; border-radius: 8px; border: 1px solid #059669;
+  background: #10b981; color: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.inline-action:hover { background: #059669; }
 #map { flex: 1; background: #eef1f4; }
 #side-panel {
   width: 300px; background: #fff; border-left: 1px solid #e5e7eb;

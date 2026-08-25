@@ -30,8 +30,12 @@ export class SelfTestMode implements ModeController {
     this.ok = 0;
     this.fail = 0;
     this.started = true;
-    this.ctx.search.setPlaceholder('输入当前蓝色区域的名称，回车提交');
-    this.ctx.setHint('蓝色 = 当前题目 ｜ 答对变绿并从相邻区域继续扩张（BFS，优先同省）｜ 答错标红并跳过');
+    this.ctx.search.setPlaceholder(this.ctx.settings.requireEnter ? '输入当前蓝色区域的名称，回车提交' : '输入当前蓝色区域的名称');
+    this.ctx.setHint(
+      this.ctx.settings.requireEnter
+        ? '蓝色 = 当前题目 ｜ 答对变绿并从相邻区域继续扩张（BFS，优先同省）｜ 答错标红并跳过'
+        : '蓝色 = 当前题目 ｜ 输入正确答案后自动变绿并继续扩张 ｜ 错误输入不会标红',
+    );
     this.ask(this.ctx.randomUnit(this.unvisited()));
   }
 
@@ -61,6 +65,12 @@ export class SelfTestMode implements ModeController {
     this.answer(!!best && best.adcode === this.question);
   }
 
+  onInput(v: string) {
+    if (!this.question || !v.trim()) return;
+    const best = this.ctx.matcher.bestUnit(v);
+    if (best?.adcode === this.question) this.answer(true);
+  }
+
   onUnitClick() {
     /* 测试模式以输入为准 */
   }
@@ -79,6 +89,7 @@ export class SelfTestMode implements ModeController {
   private ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode);
     this.ctx.search.clear();
     this.ctx.search.focus();
     if (this.ctx.settings.selfTimerEnabled) {

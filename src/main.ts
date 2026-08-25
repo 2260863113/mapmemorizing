@@ -21,6 +21,7 @@ async function boot() {
   const settings: Settings = loadSettings();
   const matcher = new Matcher(data);
   const search = new SearchBox('search-input');
+  search.setRequireEnter(settings.requireEnter);
   const stats = new StatsPanel('stats', data, store);
 
   let current: ModeController | null = null;
@@ -94,7 +95,10 @@ async function boot() {
 
   // 设置
   ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
-    openSettings(settings, (s) => Object.assign(settings, s));
+    openSettings(settings, (s) => {
+      Object.assign(settings, s);
+      search.setRequireEnter(settings.requireEnter);
+    });
   });
 
   // 重置自由模式进度
@@ -106,6 +110,7 @@ async function boot() {
 
   // 搜索框接线（无下拉联想）
   search.onSubmit((v) => current?.onSubmit(v));
+  search.onInput((v) => current?.onInput?.(v));
 
   switchMode('free');
 }

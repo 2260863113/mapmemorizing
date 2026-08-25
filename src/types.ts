@@ -37,6 +37,8 @@ export interface Settings {
   selfTimerEnabled: boolean;
   selfTimerSeconds: number;
   challengeSeconds: number;
+  requireEnter: boolean;
+  autoFollow: boolean;
 }
 
 export interface RenderState {

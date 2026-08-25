@@ -20,7 +20,11 @@ const PROV_BORDER = '#4b5563'; // 省界（粗线）
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 2.5; // 缩放阈值：低于不显示任何标签，高于显示地级标签（防扎堆）
+const MIN_ZOOM = 0.8;
+const MAX_ZOOM = 28;
+const FOLLOW_ZOOM = 8;
 const CITY_LABEL_SIZE = 12;
+const LABEL_UPDATE_DELAY = 120;
 
 const STATUS_TXT: Record<UnitColor, string> = {
   green: '已记忆',
@@ -48,6 +52,10 @@ function labelStyle(color: string, fontSize: number, show = true) {
   };
 }
 
+function clampZoom(zoom: number) {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}
+
 /**
  * ECharts 渲染器：单视图架构。
  * - geo 组件：map = 'china'（地级数据）作为唯一坐标系（roam），通过 `geo.regions`
@@ -65,7 +73,8 @@ export class MapRenderer {
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
   private viewProvince: string | null = null;
   private zoom = 1;
-  private labelMode: 'none' | 'city' = 'none'; // 缩放低于阈值 → 无标签
+  private labelMode: 'none' | 'city' = 'none';
+  private labelUpdateTimer: number | null = null;
   private lastState: RenderState | null = null;
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
@@ -79,7 +88,7 @@ export class MapRenderer {
     this.provinceLines = this.buildProvinceLines();
 
     this.chart.on('click', (p) => {
-        this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
+      this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
       const u = this.nameToUnit.get(params.name ?? '');
@@ -108,27 +117,25 @@ export class MapRenderer {
       }
     });
 
-    // 缩放（geo 组件 roam）时按阈值切换标签模式
+    // 缩放/拖动时只记录 zoom。不要在 georoam 中完整 setOption 重建 map/lines，
+    // 否则 ECharts 会让地级 MapDraw 进入过渡态，而省界 lines 已经跟随新坐标系。
     this.chart.on('georoam', (p) => {
       const params = p as { zoom?: number; totalZoom?: number };
       if (typeof params.totalZoom === 'number') {
-        this.zoom = params.totalZoom;
-        this.applyLabelMode();
+        this.zoom = clampZoom(params.totalZoom);
+      } else if (typeof params.zoom === 'number') {
+        this.zoom = clampZoom(this.zoom * params.zoom);
       }
-        else if (typeof params.zoom === 'number') {
-          this.zoom = Math.max(0.5, this.zoom * params.zoom);
-          this.applyLabelMode();
-        }
-        this.syncProvinceLines();
+      this.scheduleLabelModeUpdate();
     });
 
-    // 兜底：渲染后从 option 读回实际缩放
+    // 兜底：渲染后从 option 读回实际缩放，用于外部 setOption 改 center/zoom 的场景。
     this.chart.on('rendered', () => {
       const opt = this.chart.getOption() as { geo?: { zoom?: number }[] | { zoom?: number } };
       const z = Array.isArray(opt.geo) ? opt.geo[0]?.zoom : opt.geo?.zoom;
       if (typeof z === 'number' && Math.abs(z - this.zoom) > 0.001) {
         this.zoom = z;
-        this.applyLabelMode();
+        this.scheduleLabelModeUpdate();
       }
     });
 
@@ -158,40 +165,16 @@ export class MapRenderer {
     return out;
   }
 
-    /** 当前视图下的省界线数据（下钻时只保留当前省） */
-    private buildLineData(): { coords: number[][] }[] {
-      return this.provinceLines
-        .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
-        .map((l) => ({ coords: l.coords }));
-    }
-
-    /** 强制 lines 系列按当前 geo 视图重算布局，防止缩放/平移时省界与市界错位 */
-    private syncProvinceLines() {
-      if (!this.lastState) return;
-      this.chart.setOption({
-          series: [{
-            id: 'province-lines', coordinateSystem: 'geo', geoIndex: 0, polyline: true,
-            data: this.buildLineData(),
-          }],
-        } as never);
-    }
-
-  private applyLabelMode() {
-    const mode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
-    if (mode === this.labelMode) return;
-    this.labelMode = mode;
-    if (this.lastState) this.render(this.lastState);
+  /** 当前视图下的省界线数据（下钻时只保留当前省） */
+  private buildLineData(): { coords: number[][] }[] {
+    return this.provinceLines
+      .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
+      .map((l) => ({ coords: l.coords }));
   }
 
-  /** 按当前模式状态重绘（保留用户缩放/平移） */
-  render(state: RenderState) {
-    this.lastState = state;
+  private buildRegionData(state: RenderState): GeoRegion[] {
     const showCityLabels = this.labelMode === 'city';
-
-    // 地级面样式：必须放在 geo.regions 上。绑定 geoIndex 的 map series 不会绘制
-      // 自己的 itemStyle/label，若像旧实现那样放在 series.data 里，整张地图会变透明。
-      // 自己的 itemStyle/label，若像旧实现那样放在 series.data 里，整张地图会变透明。
-    const regionData: GeoRegion[] = this.units.map((u) => {
+    return this.units.map((u) => {
       const inView = !this.viewProvince || u.provinceAdcode === this.viewProvince;
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
       let label: GeoRegion['label'];
@@ -207,25 +190,51 @@ export class MapRenderer {
       }
       return {
         name: u.name,
-          silent: !inView,
+        silent: !inView,
         itemStyle: {
           areaColor: inView ? FILL[color] : 'rgba(0,0,0,0)',
           borderColor: inView ? BORDER : 'rgba(0,0,0,0)',
           borderWidth: inView ? 0.6 : 0,
         },
+        emphasis: {
+          itemStyle: { areaColor: EMPH[color] },
+        },
         label,
       };
     });
+  }
 
-      // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
-      const cityData = this.units.map((u) => ({ name: u.name }));
+  private applyLabelMode() {
+    const mode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+    if (mode === this.labelMode) return;
+    this.labelMode = mode;
+    if (this.lastState) {
+      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) } } as never);
+    }
+  }
 
-    // 省界粗线（lines 系列，跟随同一 geo 坐标系；下钻时只保留当前省）
-    const lineData = this.provinceLines
-      .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
-      .map((l) => ({ coords: l.coords }));
+  private scheduleLabelModeUpdate() {
+    const mode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+    if (mode === this.labelMode) return;
+    if (this.labelUpdateTimer !== null) window.clearTimeout(this.labelUpdateTimer);
+    this.labelUpdateTimer = window.setTimeout(() => {
+      this.labelUpdateTimer = null;
+      this.applyLabelMode();
+    }, LABEL_UPDATE_DELAY);
+  }
+
+  /** 按当前模式状态重绘（保留用户缩放/平移） */
+  render(state: RenderState) {
+    this.lastState = state;
+    this.labelMode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+
+    // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
+    const cityData = this.units.map((u) => ({ name: u.name }));
 
     const option: echarts.EChartsOption = {
+      animation: false,
+      animationDuration: 0,
+      animationDurationUpdate: 0,
       tooltip: state.disableTooltip
         ? { show: false }
         : {
@@ -242,99 +251,108 @@ export class MapRenderer {
       geo: {
         map: 'china', // 坐标系 = 地级数据（series 绑定后使用同一地图，地级名才能匹配上）
         roam: true,
-          selectedMode: false,
+        scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
+        silent: false,
+        selectedMode: false,
         tooltip: { show: false },
         label: { show: false },
         emphasis: {
           label: { show: false },
           itemStyle: { areaColor: 'rgba(255,255,255,0.22)' }, // 悬停高亮（半透明遮罩）
         },
-          select: { label: { show: false } },
+        select: { label: { show: false } },
         itemStyle: {
           areaColor: 'rgba(0,0,0,0)',
           borderColor: 'rgba(0,0,0,0)',
           borderWidth: 0, // geo 自身透明；地级边界由 geo.regions 绘制
         },
-          regions: regionData,
+        regions: this.buildRegionData(state),
       },
       series: [
         {
+          id: 'city-events',
           type: 'map',
           map: 'china',
           geoIndex: 0,
-            selectedMode: false,
+          selectedMode: false,
           label: { show: false },
           emphasis: { label: { show: false } },
-            select: { label: { show: false } },
+          select: { label: { show: false } },
           data: cityData,
         },
         {
+          id: 'province-lines',
           type: 'lines',
-            id: 'province-lines',
           coordinateSystem: 'geo',
           geoIndex: 0,
           z: 3, // 画在地级面之上
           silent: true,
           tooltip: { show: false },
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-            lineStyle: { color: PROV_BORDER, width: 2.4, opacity: 1 },
-          data: lineData,
+          lineStyle: { color: PROV_BORDER, width: 2.4, opacity: 1 },
+          data: this.buildLineData(),
         },
       ],
     };
     this.chart.setOption(option);
   }
 
-    /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
-    private clearFlash() {
-      if (this.flashTimer !== null) {
-        window.clearTimeout(this.flashTimer);
-        this.flashTimer = null;
-      }
-      if (this.flashAdcode) {
-        this.flashAdcode = null;
-        if (this.lastState) {
-          this.flashAdcode = null;
-          this.flashTimer = null;
-          if (this.lastState) {
-          this.flashAdcode = null;
-          this.flashTimer = null;
-          if (this.lastState) this.render(this.lastState);
-        }
-        }
-          this.flashAdcode = null;
-          this.flashTimer = null;
-          if (this.lastState) {
-        }
-      }
+  /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
+  private clearFlash() {
+    if (this.flashTimer !== null) {
+      window.clearTimeout(this.flashTimer);
+      this.flashTimer = null;
     }
+    if (!this.flashAdcode) return;
+    this.flashAdcode = null;
+    if (this.lastState) this.render(this.lastState);
+  }
 
   /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制） */
   flash(adcode: string) {
     const u = this.nameToUnit.get(adcode);
     if (!u) return;
-      this.clearFlash();
+    this.clearFlash();
     const opt = this.chart.getOption() as {
       geo?: { regions?: GeoRegion[] }[] | { regions?: GeoRegion[] };
     };
     const geos = Array.isArray(opt.geo) ? opt.geo : [opt.geo];
-      const regions = geos[0]?.regions;
+    const regions = geos[0]?.regions;
     if (Array.isArray(regions)) {
       for (const item of regions) {
         if (item.name === u.name) {
           item.itemStyle = { ...item.itemStyle, areaColor: '#ffe066', borderColor: '#f59e0b', borderWidth: 1.5 };
         }
       }
-      this.chart.setOption({ geo: [{ regions }] } as never);
+      this.chart.setOption({ geo: { regions } } as never);
     }
-      this.flashAdcode = u.adcode;
+    this.flashAdcode = u.adcode;
     this.flashTimer = window.setTimeout(() => {
-        if (this.flashAdcode === u.adcode) {
-          this.flashAdcode = null;
-          this.flashTimer = null;
-      if (this.lastState) this.render(this.lastState);
-        }
+      if (this.flashAdcode === u.adcode) {
+        this.flashAdcode = null;
+        this.flashTimer = null;
+        if (this.lastState) this.render(this.lastState);
+      }
     }, 900);
+  }
+
+  focusUnit(adcode: string) {
+    const u = this.units.find((item) => item.adcode === adcode);
+    if (!u) return;
+    if (this.viewProvince && this.viewProvince !== u.provinceAdcode) {
+      this.viewProvince = null;
+      if (this.lastState) this.render(this.lastState);
+    }
+    this.zoom = clampZoom(FOLLOW_ZOOM);
+    this.labelMode = 'city';
+    this.chart.setOption({
+      geo: {
+        map: 'china',
+        center: u.center,
+        zoom: this.zoom,
+        regions: this.lastState ? this.buildRegionData(this.lastState) : undefined,
+      },
+    } as never);
   }
 
   /** 下钻到某省：其他区域消失，自动缩放居中（必然进入地级标签模式） */
@@ -358,12 +376,12 @@ export class MapRenderer {
     if (!isFinite(minX)) return;
     const bw = Math.max(maxX - minX, 0.5);
     const bh = Math.max(maxY - minY, 0.5);
-    const zoom = Math.min(60, Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
+    const zoom = clampZoom(Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
     this.viewProvince = adcode;
     this.zoom = zoom;
     this.labelMode = 'city';
     if (this.lastState) this.render(this.lastState);
-    // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃
+    // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
     this.chart.setOption({ geo: { map: 'china', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom } });
     this.onViewChange?.();
   }
@@ -382,6 +400,14 @@ export class MapRenderer {
   }
 
   dispose() {
+    if (this.labelUpdateTimer !== null) {
+      window.clearTimeout(this.labelUpdateTimer);
+      this.labelUpdateTimer = null;
+    }
+    if (this.flashTimer !== null) {
+      window.clearTimeout(this.flashTimer);
+      this.flashTimer = null;
+    }
     this.chart.dispose();
   }
 }

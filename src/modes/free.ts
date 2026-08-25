@@ -14,9 +14,10 @@ export class FreeMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    this.ctx.search.setPlaceholder('输入地名，如：黔南（回车确认）');
+    const action = this.ctx.settings.requireEnter ? '输入地名回车' : '输入正确地名';
+    this.ctx.search.setPlaceholder(this.ctx.settings.requireEnter ? '输入地名，如：黔南（回车确认）' : '输入地名，如：黔南');
     this.ctx.setHint(
-      '点击区域或输入地名回车 = 标记已记忆 ｜ 再次点击绿色区域 = 取消 ｜ 双击区域 = 进入该省 ｜ 输入省名（如「贵州省」）= 下钻',
+      `点击区域或${action} = 标记已记忆 ｜ 再次点击绿色区域 = 取消 ｜ 双击区域 = 进入该省 ｜ 输入省名（如「贵州省」）= 下钻`,
     );
     this.refresh();
     this.unsubscribe = this.ctx.store.subscribe(() => this.refresh());
@@ -39,22 +40,11 @@ export class FreeMode implements ModeController {
   }
 
   onSubmit(v: string) {
-    const input = v.trim();
-    if (!input) return;
-    const unit = this.ctx.matcher.bestUnit(input);
-    if (unit) {
-      this.markUnit(unit.adcode);
-      return;
-    }
-    const prov = this.ctx.matcher.bestProvince(input);
-    if (prov) {
-      this.ctx.renderer.drillToProvince(prov.adcode);
-      this.ctx.toast(`已进入 ${prov.name}，双击地图可返回全国`);
-      this.ctx.search.clear();
-      return;
-    }
-    this.ctx.toast(`未找到「${input}」，试试简称如「黔南」，或输入「贵州省」进入该省`);
-    this.ctx.search.clear();
+    this.submit(v, true);
+  }
+
+  onInput(v: string) {
+    this.submit(v, false);
   }
 
   onUnitClick(adcode: string) {
@@ -71,6 +61,27 @@ export class FreeMode implements ModeController {
     if (u) this.ctx.renderer.drillToProvince(u.provinceAdcode);
   }
 
+  private submit(v: string, reportMiss: boolean) {
+    const input = v.trim();
+    if (!input) return;
+    const unit = this.ctx.matcher.bestUnit(input);
+    if (unit) {
+      this.markUnit(unit.adcode);
+      return;
+    }
+    const prov = this.ctx.matcher.bestProvince(input);
+    if (prov) {
+      this.ctx.renderer.drillToProvince(prov.adcode);
+      this.ctx.toast(`已进入 ${prov.name}，双击地图可返回全国`);
+      this.ctx.search.clear();
+      return;
+    }
+    if (reportMiss) {
+      this.ctx.toast(`未找到「${input}」，试试简称如「黔南」，或输入「贵州省」进入该省`);
+      this.ctx.search.clear();
+    }
+  }
+
   private markUnit(adcode: string) {
     const u = this.ctx.byAdcode.get(adcode);
     if (!u) return;
@@ -80,6 +91,7 @@ export class FreeMode implements ModeController {
       return;
     }
     this.ctx.store.mark(adcode, true);
+    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(adcode);
     this.ctx.renderer.flash(adcode);
     this.ctx.toast(`已记忆：${u.name}`);
     this.ctx.search.clear();

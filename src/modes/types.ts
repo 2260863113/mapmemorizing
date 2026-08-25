@@ -29,6 +29,7 @@ export interface ModeController {
   exit(): void;
   refresh(): void;
   onSubmit(v: string): void;
+  onInput?(v: string): void;
   onUnitClick(adcode: string): void;
   onUnitDblClick(adcode: string): void;
   /** 是否已有会话进度（切换模式前的确认提示用） */
