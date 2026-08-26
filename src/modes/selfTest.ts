@@ -1,6 +1,6 @@
 import type { Mode, Unit } from '../types';
 import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
-import { Countdown } from '../ui/countdown';
+import { Stopwatch } from '../ui/stopwatch';
 
 type SavedSelfProgress = {
   green?: string[];
@@ -30,11 +30,13 @@ export class SelfTestMode implements ModeController {
   private started = false;
   private order: string[] = [];
   private results: ProgressSegment[] = [];
-  private countdown = new Countdown();
+  private stopwatch = new Stopwatch();
+  private paused = false;
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
+    if (this.paused) return;
     this.exit();
     this.green.clear();
     this.red.clear();
@@ -45,6 +47,7 @@ export class SelfTestMode implements ModeController {
     this.ok = 0;
     this.fail = 0;
     this.started = false;
+    this.paused = false;
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
     this.ctx.search.setPlaceholder('地名');
@@ -55,8 +58,30 @@ export class SelfTestMode implements ModeController {
   }
 
   exit() {
-    this.countdown.stop();
+    if (!this.paused) {
+      this.stopwatch.stop();
+      this.ctx.showTimer(null);
+      this.ctx.showStopwatch(null);
+    }
+  }
+
+  pause() {
+    if (!this.started || this.paused) return;
+    this.paused = true;
+    this.stopwatch.pause();
     this.ctx.showTimer(null);
+    this.ctx.showStopwatch(this.stopwatch.elapsedMs());
+  }
+
+  resume() {
+    if (!this.started || !this.paused) return;
+    this.paused = false;
+    this.stopwatch.resume();
+    if (!this.ctx.settings.selfTimerEnabled) this.ctx.showTimer(null);
+  }
+
+  isPaused() {
+    return this.paused;
   }
 
   refresh() {
@@ -86,22 +111,30 @@ export class SelfTestMode implements ModeController {
   }
 
   onSubmit(v: string) {
-    if (!this.question || !v.trim()) return;
+    if (this.paused || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     this.answer(!!best && best.adcode === this.question);
   }
 
   onInput(v: string) {
-    if (!this.question || !v.trim()) return;
+    if (this.paused || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     if (best?.adcode === this.question) this.answer(true);
   }
 
   onUnitClick() {
+    if (this.started) {
+      this.ctx.toast('测试期间无法下钻省份');
+      return true;
+    }
     /* 测试模式以输入为准 */
   }
 
   onUnitDblClick(adcode: string) {
+    if (this.started) {
+      this.ctx.toast('测试期间无法下钻省份');
+      return;
+    }
     const u = this.ctx.byAdcode.get(adcode);
     if (u) this.ctx.renderer.drillToProvince(u.provinceAdcode);
   }
@@ -112,10 +145,13 @@ export class SelfTestMode implements ModeController {
   }
 
   onEnd() {
-    this.finish();
+    this.pause();
   }
 
   onReset() {
+    this.stopwatch.stop();
+    this.started = false;
+    this.paused = false;
     this.clearSaved();
     this.enter();
   }
@@ -208,29 +244,20 @@ export class SelfTestMode implements ModeController {
 
   private showStartHint() {
     const scope = this.activeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.activeProvince)?.name ?? '当前省份' : '全国';
-    const actions = this.hasSavedProgress()
-      ? '<div class="start-actions"><button id="self-restart" class="start-action secondary">重新开始</button><button id="self-continue" class="start-action">继续</button></div>'
-      : '<button id="self-start" class="start-action">开始</button>';
+    const actions = '<button id="self-start" class="start-action">开始</button>';
     this.ctx.setHint(`<div class="start-panel"><div class="start-title">输入模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('self-start') as HTMLButtonElement | null;
-      const restart = document.getElementById('self-restart') as HTMLButtonElement | null;
-      const resume = document.getElementById('self-continue') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start(false);
-      if (restart) restart.onclick = () => {
-        this.clearSaved();
-        this.start(false);
-      };
-      if (resume) resume.onclick = () => this.start(true);
     }, 0);
   }
 
-  private start(continueSaved: boolean) {
-    if (this.started) return;
+  private start(_continueSaved: boolean) {
+    if (this.started || this.paused) return;
     this.scopeProvince = this.ctx.renderer.currentProvince();
     this.activeProvince = this.scopeProvince;
     this.order = this.scopedUnits().map((u) => u.adcode);
-    if (continueSaved) {
+    if (_continueSaved) {
       this.restore();
     } else {
       this.clearSaved();
@@ -245,7 +272,9 @@ export class SelfTestMode implements ModeController {
       return;
     }
     this.started = true;
+    this.paused = false;
     if (!this.activeProvince) this.activeProvince = first.provinceAdcode;
+    this.stopwatch.start((elapsedMs) => this.ctx.showStopwatch(elapsedMs));
     this.ctx.updateProgress();
     this.ctx.setHint('');
     this.ask(first);
@@ -266,15 +295,10 @@ export class SelfTestMode implements ModeController {
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
-    if (this.ctx.settings.selfTimerEnabled) {
-      this.countdown.start(this.ctx.settings.selfTimerSeconds, (r) => this.ctx.showTimer(r), () => this.answer(false, true));
-    } else {
-      this.ctx.showTimer(null);
-    }
+    this.ctx.showTimer(null);
   }
 
   private answer(correct: boolean, timedOut = false, scored = true) {
-    this.countdown.stop();
     this.ctx.showTimer(null);
     const q = this.question;
     if (!q) return;
@@ -335,9 +359,11 @@ export class SelfTestMode implements ModeController {
   }
 
   private finish() {
-    this.countdown.stop();
+    this.stopwatch.stop();
     this.ctx.showTimer(null);
+    this.ctx.showStopwatch(null);
     this.started = false;
+    this.paused = false;
     this.ctx.updateProgress();
     this.ctx.showSummary(
       `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地级单位</div>`,

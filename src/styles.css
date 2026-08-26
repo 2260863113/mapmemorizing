@@ -335,6 +335,7 @@ body.theme-dark .mode-action:hover { background: rgba(30,41,59,0.58); }
   backdrop-filter: var(--floating-blur);
 }
 .start-title { color: var(--input-text); font-size: 16px; font-weight: 700; }
+.click-question .start-title { font-size: 24px; }
 .start-subtitle { color: var(--muted); font-size: 12px; }
 .start-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .start-action {

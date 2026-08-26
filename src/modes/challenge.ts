@@ -29,15 +29,18 @@ export class ChallengeMode implements ModeController {
   private startTime = 0;
   private nextTimer: number | null = null;
   private countdown = new Countdown();
+  private paused = false;
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
+    if (this.paused) return;
     this.exit();
     this.green.clear();
     this.red.clear();
     this.question = null;
     this.started = false;
+    this.paused = false;
     this.activeProvince = this.ctx.renderer.currentProvince();
     this.ok = 0;
     this.fail = 0;
@@ -52,6 +55,7 @@ export class ChallengeMode implements ModeController {
   }
 
   exit() {
+    if (this.paused) return;
     this.countdown.stop();
     if (this.nextTimer !== null) {
       window.clearTimeout(this.nextTimer);
@@ -59,6 +63,33 @@ export class ChallengeMode implements ModeController {
     }
     this.ctx.showTimer(null);
     this.started = false;
+  }
+
+  pause() {
+    if (!this.started || this.paused) return;
+    this.paused = true;
+    this.countdown.pause();
+    if (this.nextTimer !== null) {
+      window.clearTimeout(this.nextTimer);
+      this.nextTimer = null;
+    }
+    if (this.question) this.ctx.showTimer(this.countdown.remaining());
+    else this.ctx.showTimer(null);
+  }
+
+  resume() {
+    if (!this.started || !this.paused) return;
+    this.paused = false;
+    if (this.question) {
+      this.ctx.showTimer(this.countdown.remaining());
+      this.countdown.resume();
+    } else {
+      this.next();
+    }
+  }
+
+  isPaused() {
+    return this.paused;
   }
 
   refresh() {
@@ -88,22 +119,30 @@ export class ChallengeMode implements ModeController {
   }
 
   onSubmit(v: string) {
-    if (!this.question || !v.trim()) return;
+    if (this.paused || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     this.answer(!!best && best.adcode === this.question);
   }
 
   onInput(v: string) {
-    if (!this.question || !v.trim()) return;
+    if (this.paused || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     if (best?.adcode === this.question) this.answer(true);
   }
 
   onUnitClick() {
+    if (this.started) {
+      this.ctx.toast('测试期间无法下钻省份');
+      return true;
+    }
     /* 以输入为准 */
   }
 
   onUnitDblClick(adcode: string) {
+    if (this.started) {
+      this.ctx.toast('测试期间无法下钻省份');
+      return;
+    }
     const u = this.ctx.byAdcode.get(adcode);
     if (u) this.ctx.renderer.drillToProvince(u.provinceAdcode);
   }
@@ -114,10 +153,17 @@ export class ChallengeMode implements ModeController {
   }
 
   onEnd() {
-    this.finish();
+    this.pause();
   }
 
   onReset() {
+    this.countdown.stop();
+    if (this.nextTimer !== null) {
+      window.clearTimeout(this.nextTimer);
+      this.nextTimer = null;
+    }
+    this.started = false;
+    this.paused = false;
     this.clearSaved();
     this.enter();
   }
@@ -200,25 +246,16 @@ export class ChallengeMode implements ModeController {
 
   private showStartHint() {
     const scope = this.activeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.activeProvince)?.name ?? '当前省份' : '全国';
-    const actions = this.hasSavedProgress()
-      ? '<div class="start-actions"><button id="challenge-restart" class="start-action secondary">重新开始</button><button id="challenge-continue" class="start-action">继续</button></div>'
-      : '<button id="challenge-start" class="start-action">开始</button>';
+    const actions = '<button id="challenge-start" class="start-action">开始</button>';
     this.ctx.setHint(`<div class="start-panel"><div class="start-title">挑战模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('challenge-start') as HTMLButtonElement | null;
-      const restart = document.getElementById('challenge-restart') as HTMLButtonElement | null;
-      const resume = document.getElementById('challenge-continue') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start(false);
-      if (restart) restart.onclick = () => {
-        this.clearSaved();
-        this.start(false);
-      };
-      if (resume) resume.onclick = () => this.start(true);
     }, 0);
   }
 
   private start(continueSaved: boolean) {
-    if (this.started) return;
+    if (this.started || this.paused) return;
     this.activeProvince = this.ctx.renderer.currentProvince();
     this.order = this.scopedUnits().map((u) => u.adcode);
     if (continueSaved) {
@@ -236,6 +273,7 @@ export class ChallengeMode implements ModeController {
       return;
     }
     this.started = true;
+    this.paused = false;
     this.startTime = continueSaved && this.startTime ? this.startTime : Date.now();
     this.ctx.updateProgress();
     this.ctx.setHint('蓝色 = 当前题目（随机）｜ 答对变绿并自动出下一题 ｜ 答错或超时变红并跳过');
@@ -301,6 +339,7 @@ export class ChallengeMode implements ModeController {
     this.refresh();
     this.nextTimer = window.setTimeout(() => {
       this.nextTimer = null;
+      if (!this.started || this.paused) return;
       this.next();
     }, 1500);
   }

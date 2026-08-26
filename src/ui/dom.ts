@@ -26,8 +26,8 @@ export function showTimer(remain: number | null) {
     return;
   }
   el.classList.remove('hidden');
-  el.textContent = `${remain}s`;
-  el.classList.toggle('urgent', remain <= 3);
+  el.textContent = `${(remain / 1000).toFixed(2)}s`;
+  el.classList.toggle('urgent', remain <= 3000);
 }
 
 export function showStopwatch(elapsedMs: number | null) {

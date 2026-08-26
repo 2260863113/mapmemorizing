@@ -1,4 +1,5 @@
 import type { Mode, Unit } from '../types';
+import { Stopwatch } from '../ui/stopwatch';
 import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
 
 type SavedClickProgress = {
@@ -22,10 +23,13 @@ export class ClickMode implements ModeController {
   private results: ProgressSegment[] = [];
   private ok = 0;
   private fail = 0;
+  private stopwatch = new Stopwatch();
+  private paused = false;
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
+    if (this.paused) return;
     this.exit();
     this.scopeProvince = this.ctx.renderer.currentProvince();
     this.order = this.scopedUnits().map((u) => u.adcode);
@@ -36,15 +40,35 @@ export class ClickMode implements ModeController {
   }
 
   exit() {
+    if (this.paused) return;
+    this.stopwatch.stop();
     this.started = false;
     this.ctx.showTimer(null);
+    this.ctx.showStopwatch(null);
+  }
+
+  pause() {
+    if (!this.started || this.paused) return;
+    this.paused = true;
+    this.stopwatch.pause();
+    this.ctx.showStopwatch(this.stopwatch.elapsedMs());
+  }
+
+  resume() {
+    if (!this.started || !this.paused) return;
+    this.paused = false;
+    this.stopwatch.resume();
+    this.ctx.showStopwatch(this.stopwatch.elapsedMs());
+  }
+
+  isPaused() {
+    return this.paused;
   }
 
   refresh() {
     this.ctx.renderer.render({
       colorOf: (adcode) => {
         if (this.green.has(adcode)) return 'green';
-        if (this.question === adcode) return 'blue';
         if (this.red.has(adcode)) return 'red';
         return 'gray';
       },
@@ -72,6 +96,7 @@ export class ClickMode implements ModeController {
   onInput() {}
 
   onUnitClick(adcode: string) {
+    if (this.paused) return true;
     if (!this.started || !this.question) return false;
     const clicked = this.ctx.byAdcode.get(adcode);
     if (!clicked || (this.scopeProvince !== null && clicked.provinceAdcode !== this.scopeProvince)) return true;
@@ -80,7 +105,10 @@ export class ClickMode implements ModeController {
   }
 
   onUnitDblClick(adcode: string) {
-    if (this.started) return;
+    if (this.started) {
+      this.ctx.toast('测试期间无法下钻省份');
+      return;
+    }
     const u = this.ctx.byAdcode.get(adcode);
     if (u) this.ctx.renderer.drillToProvince(u.provinceAdcode);
   }
@@ -91,10 +119,14 @@ export class ClickMode implements ModeController {
   }
 
   onEnd() {
-    if (this.started) this.finish();
+    this.pause();
   }
 
   onReset() {
+    this.stopwatch.stop();
+    this.ctx.showStopwatch(null);
+    this.started = false;
+    this.paused = false;
     this.clearSaved();
     this.enter();
   }
@@ -164,20 +196,11 @@ export class ClickMode implements ModeController {
 
   private showStartHint() {
     const scope = this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
-    const actions = this.hasProgress()
-      ? '<div class="start-actions"><button id="click-restart" class="start-action secondary">重新开始</button><button id="click-continue" class="start-action">继续</button></div>'
-      : '<button id="click-start" class="start-action">开始</button>';
+    const actions = '<button id="click-start" class="start-action">开始</button>';
     this.ctx.setHint(`<div class="start-panel"><div class="start-title">点击模式</div><div class="start-subtitle">范围：${scope}，请按提示点击地图</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('click-start') as HTMLButtonElement | null;
-      const restart = document.getElementById('click-restart') as HTMLButtonElement | null;
-      const resume = document.getElementById('click-continue') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start(false);
-      if (restart) restart.onclick = () => {
-        this.clearSaved();
-        this.start(false);
-      };
-      if (resume) resume.onclick = () => this.start(true);
     }, 0);
   }
 
@@ -203,13 +226,14 @@ export class ClickMode implements ModeController {
       return;
     }
     this.started = true;
-    this.ctx.setHint('点击蓝色题目对应的地图区域；答对变绿，答错时正确答案变红');
+    this.paused = false;
+    this.stopwatch.start((elapsedMs) => this.ctx.showStopwatch(elapsedMs));
     this.ask(first);
   }
 
   private ask(unit: Unit) {
     this.question = unit.adcode;
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">请点击：${unit.name}</div><div class="start-subtitle">范围：${this.scopeLabel()}</div></div>`);
+    this.ctx.setHint(`<div class="start-panel click-question"><div class="start-title">${unit.name}</div></div>`);
     this.refresh();
     this.persist();
   }
@@ -222,6 +246,7 @@ export class ClickMode implements ModeController {
     if (correct) {
       this.green.add(q);
       this.ok += 1;
+      this.ctx.toast('回答正确');
       this.results.push('green');
       this.ctx.renderer.flash(q);
     } else {
@@ -242,8 +267,11 @@ export class ClickMode implements ModeController {
   }
 
   private finish() {
+    this.stopwatch.stop();
     this.started = false;
+    this.paused = false;
     this.ctx.showTimer(null);
+    this.ctx.showStopwatch(null);
     this.ctx.updateProgress();
     this.ctx.showSummary(
       `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地级单位</div>`,

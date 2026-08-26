@@ -3,10 +3,10 @@ export class Countdown {
   private deadline = 0;
   private remainingMs = 0;
   private timer: number | null = null;
-  private onTick: ((remain: number) => void) | null = null;
+  private onTick: ((remainingMs: number) => void) | null = null;
   private onExpire: (() => void) | null = null;
 
-  start(seconds: number, onTick: (remain: number) => void, onExpire: () => void) {
+  start(seconds: number, onTick: (remainingMs: number) => void, onExpire: () => void) {
     this.stop();
     this.remainingMs = seconds * 1000;
     this.onTick = onTick;
@@ -19,7 +19,7 @@ export class Countdown {
     this.remainingMs = Math.max(0, this.deadline - Date.now());
     window.clearInterval(this.timer);
     this.timer = null;
-    this.onTick?.(Math.ceil(this.remainingMs / 1000));
+    this.onTick?.(this.remainingMs);
   }
 
   resume() {
@@ -28,7 +28,7 @@ export class Countdown {
     const tick = () => {
       this.remainingMs = Math.max(0, this.deadline - Date.now());
       const remain = Math.ceil(this.remainingMs / 1000);
-      this.onTick?.(remain);
+      this.onTick?.(this.remainingMs);
       if (remain <= 0) {
         const expire = this.onExpire;
         this.stop();
@@ -36,7 +36,11 @@ export class Countdown {
       }
     };
     tick();
-    this.timer = window.setInterval(tick, 250);
+    this.timer = window.setInterval(tick, 10);
+  }
+
+  remaining() {
+    return this.timer === null ? this.remainingMs : Math.max(0, this.deadline - Date.now());
   }
 
   stop() {

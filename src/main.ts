@@ -36,7 +36,13 @@ async function boot() {
   const renderer = new MapRenderer($('map'), data, {
     onUnitClick: (adcode) => current?.onUnitClick(adcode),
     onUnitDblClick: (adcode) => current?.onUnitDblClick(adcode),
-    onBlankClick: () => backToNationFromMap(),
+    onBlankClick: () => {
+      if (current?.isStarted?.()) {
+        toast('测试期间无法返回全国');
+        return;
+      }
+      backToNationFromMap();
+    },
     onUnitHover: (adcode) => showHoverStats(adcode),
     onUnitHoverEnd: () => hideHoverStats(),
   });
@@ -113,6 +119,13 @@ async function boot() {
     hideSummary();
     hideHelp();
     hideHoverStats();
+    if (current?.isStarted?.()) {
+      current.pause?.();
+      if (current.isPaused?.()) showPauseOverlay();
+      syncModeChrome();
+      updateProgress();
+      return;
+    }
     current?.exit();
     current = modes[mode];
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
@@ -120,23 +133,39 @@ async function boot() {
     });
     const inputMode = mode === 'self' || mode === 'challenge';
     $('search-row').classList.toggle('hidden', !inputMode);
-    $('mode-actions').classList.toggle('hidden', mode === 'free' || mode === 'memory');
+    hidePauseOverlay();
     current.enter();
     syncModeChrome();
     updateProgress();
+  }
+
+  function showPauseOverlay() {
+    $('pause-overlay').classList.remove('hidden');
+    $('app').classList.add('test-paused');
+  }
+
+  function hidePauseOverlay() {
+    $('pause-overlay').classList.add('hidden');
+    $('app').classList.remove('test-paused');
   }
 
   function syncModeChrome() {
     const mode = current?.id;
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'challenge' || mode === 'click';
+    if (!isTest) {
+      showTimer(null);
+      showStopwatch(null);
+      hidePauseOverlay();
+    }
     $('app').dataset.mode = mode ?? '';
     $('side-panel').classList.toggle('hidden', !isAnalysis || !statsVisible);
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
-    $('mode-actions').classList.toggle('hidden', !isTest);
+    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
     $('btn-skip').classList.toggle('hidden', !isTest);
     $('btn-end').classList.toggle('hidden', !isTest);
-    $('btn-reset').classList.toggle('hidden', !isTest);
+    $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
+    ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? '重置熟练度' : '重置';
     syncViewChrome();
   }
 
@@ -160,6 +189,7 @@ async function boot() {
 
   function backToNationFromMap() {
     hideSummary();
+    hidePauseOverlay();
     current?.exit();
     renderer.backToNation();
     current?.enter();
@@ -191,6 +221,12 @@ async function boot() {
     $('hover-stats').classList.add('hidden');
   }
 
+  ($('pause-overlay') as HTMLElement).addEventListener('click', () => {
+    if (!current?.isPaused?.()) return;
+    hidePauseOverlay();
+    current.resume?.();
+  });
+
   ($('btn-help') as HTMLButtonElement).addEventListener('click', showHelp);
   ($('help-close') as HTMLButtonElement).addEventListener('click', hideHelp);
   $('help-panel').addEventListener('click', (event) => {
@@ -202,7 +238,7 @@ async function boot() {
     if (mode === 'self') {
       return {
         title: '输入模式说明',
-        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、结束和重置。',
+        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、中断和重置。',
       };
     }
     if (mode === 'challenge') {
@@ -251,17 +287,24 @@ async function boot() {
 
   ($('btn-skip') as HTMLButtonElement).addEventListener('click', () => current?.onSkip?.());
   ($('btn-end') as HTMLButtonElement).addEventListener('click', (event) => {
-    confirmAction(event.currentTarget as HTMLButtonElement, () => current?.onEnd?.());
+    confirmAction(event.currentTarget as HTMLButtonElement, () => {
+      current?.onEnd?.();
+      if (current?.isPaused?.()) showPauseOverlay();
+    });
   });
   ($('btn-reset') as HTMLButtonElement).addEventListener('click', (event) => {
     confirmAction(event.currentTarget as HTMLButtonElement, () => {
+      if (current?.id === 'free') {
+        store.resetPractice();
+        stats.refresh(renderer.currentProvince());
+        current.refresh();
+        toast('已重置熟练度');
+        return;
+      }
       if (current?.onReset) {
         current.onReset();
         updateProgress();
-        return;
       }
-      store.reset();
-      toast('已重置记忆进度');
     });
   });
 
