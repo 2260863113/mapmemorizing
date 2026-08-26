@@ -108,7 +108,7 @@ export class SelfTestMode implements ModeController {
 
   onSkip() {
     if (!this.started || !this.question) return;
-    this.answer(false);
+    this.answer(false, false, false);
   }
 
   onEnd() {
@@ -273,12 +273,13 @@ export class SelfTestMode implements ModeController {
     }
   }
 
-  private answer(correct: boolean, timedOut = false) {
+  private answer(correct: boolean, timedOut = false, scored = true) {
     this.countdown.stop();
     this.ctx.showTimer(null);
     const q = this.question;
     if (!q) return;
     this.question = null;
+    if (scored) this.ctx.store.recordAnswer(q, correct);
     if (correct) {
       this.green.add(q);
       this.ok++;
