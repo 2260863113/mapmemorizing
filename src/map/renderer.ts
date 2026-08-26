@@ -28,7 +28,7 @@ type MapTheme = {
 
 const MAP_THEMES: Record<ThemeName, MapTheme> = {
   light: {
-    background: '#eef1f4',
+    background: '#d1d5db',
     fill: {
       green: '#7fbf8b',
       blue: '#6fa8dc', // 当前题目
@@ -56,7 +56,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
     flashBorder: '#b68b2f',
   },
   dark: {
-    background: '#07111f',
+    background: '#374151',
     fill: {
       green: '#166534',
       blue: '#1d4ed8',
@@ -86,7 +86,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
 };
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
-const LABEL_ZOOM = 2.5; // 缩放阈值：低于不显示任何标签，高于显示地级标签（防扎堆）
+const LABEL_ZOOM = 4; // 缩放倍率大于 4 时显示地级标签，避免低倍率下拥挤
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
@@ -335,9 +335,8 @@ export class MapRenderer {
     });
   }
 
-  private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
-    if (state?.showAllLabels) return 'city';
-    return this.zoom < LABEL_ZOOM ? 'none' : 'city';
+  private desiredLabelMode(_state: RenderState | null = this.lastState): 'none' | 'city' {
+    return this.zoom > LABEL_ZOOM ? 'city' : 'none';
   }
 
   private applyLabelMode() {
@@ -536,10 +535,6 @@ export class MapRenderer {
 
   private animateViewTo(targetCenter: [number, number], targetZoom: number) {
     if (this.followRaf !== null) cancelAnimationFrame(this.followRaf);
-    this.labelMode = 'city';
-    if (this.lastState) {
-      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) }, series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
-    }
     const current = this.currentGeoView();
     const startCenter = current.center;
     const startZoom = current.zoom;
@@ -597,7 +592,7 @@ export class MapRenderer {
     const zoom = clampZoom(Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
     this.viewProvince = adcode;
     this.zoom = zoom;
-    this.labelMode = 'city';
+    this.labelMode = this.desiredLabelMode();
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
     this.chart.setOption({ geo: { map: 'china', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom } });

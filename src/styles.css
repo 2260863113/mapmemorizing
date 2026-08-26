@@ -7,7 +7,7 @@ html, body, #app { height: 100%; }
   --muted-strong: #4b5563;
   --panel-bg: #ffffff;
   --panel-border: #e5e7eb;
-  --map-bg: #eef1f4;
+  --map-bg: #d1d5db;
   --topbar-bg: #1f2937;
   --topbar-text: #ffffff;
   --tab-border: #374151;
@@ -57,7 +57,7 @@ body.theme-dark {
   --muted-strong: #cbd5e1;
   --panel-bg: #111827;
   --panel-border: #253245;
-  --map-bg: #07111f;
+  --map-bg: #374151;
   --topbar-bg: #070b14;
   --topbar-text: #f8fafc;
   --tab-border: #334155;
