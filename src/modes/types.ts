@@ -19,7 +19,15 @@ export interface ModeCtx {
   showTimer: (remain: number | null) => void;
   showSummary: (html: string, onRestart: () => void) => void;
   hideSummary: () => void;
+  updateProgress: () => void;
   randomUnit: (pool: Unit[]) => Unit;
+}
+
+export type ProgressSegment = 'pending' | 'green' | 'red';
+
+export interface ModeProgress {
+  total: number;
+  segments: ProgressSegment[];
 }
 
 export interface ModeController {
@@ -32,6 +40,13 @@ export interface ModeController {
   onInput?(v: string): void;
   onUnitClick(adcode: string): void;
   onUnitDblClick(adcode: string): void;
+  onSkip?(): void;
+  onEnd?(): void;
+  onReset?(): void;
+  onViewChange?(): void;
+  getProgress?(): ModeProgress | null;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
+  /** 模式会话是否已经开始（地图空白返回确认用） */
+  isStarted?(): boolean;
 }

@@ -2,21 +2,88 @@ import * as echarts from 'echarts';
 import type { AppData, RenderState, Unit, UnitColor } from '../types';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
+type LabelPoint = { name: string; value: [number, number, string, string] };
+type GeoPoint = [number, number];
+type PolygonRings = GeoPoint[][];
+type GeoFeature = { properties: { adcode?: string }; geometry: { type: string; coordinates: unknown } };
+type ThemeName = 'light' | 'dark';
+type MapTheme = {
+  background: string;
+  fill: Record<UnitColor, string>;
+  emphasis: Record<UnitColor, string>;
+  border: string;
+  provinceBorder: string;
+  hoverArea: string;
+  labelBg: string;
+  labelShadow: string;
+  labelGreen: string;
+  labelRed: string;
+  labelNeutral: string;
+  tooltipBg: string;
+  tooltipText: string;
+  tooltipBorder: string;
+  flashArea: string;
+  flashBorder: string;
+};
 
-const FILL: Record<UnitColor, string> = {
-  green: '#7fbf8b',
-  blue: '#6fa8dc', // 当前题目
-  red: '#d98989', // 答错标记
-  gray: '#e7e2d8',
+const MAP_THEMES: Record<ThemeName, MapTheme> = {
+  light: {
+    background: '#eef1f4',
+    fill: {
+      green: '#7fbf8b',
+      blue: '#6fa8dc', // 当前题目
+      red: '#d98989', // 答错标记
+      gray: '#e7e2d8',
+    },
+    emphasis: {
+      green: '#93cfa0',
+      blue: '#83b7e3',
+      red: '#e1a0a0',
+      gray: '#eee9df',
+    },
+    border: '#b9b2a6',
+    provinceBorder: '#6b7280',
+    hoverArea: 'rgba(255,255,255,0.22)',
+    labelBg: 'rgba(255,255,255,0.94)',
+    labelShadow: 'rgba(15, 23, 42, 0.22)',
+    labelGreen: '#15803d',
+    labelRed: '#b91c1c',
+    labelNeutral: '#374151',
+    tooltipBg: 'rgba(255,255,255,0.96)',
+    tooltipText: '#111827',
+    tooltipBorder: '#d1d5db',
+    flashArea: '#e8cf78',
+    flashBorder: '#b68b2f',
+  },
+  dark: {
+    background: '#07111f',
+    fill: {
+      green: '#166534',
+      blue: '#1d4ed8',
+      red: '#991b1b',
+      gray: '#1f2937',
+    },
+    emphasis: {
+      green: '#15803d',
+      blue: '#2563eb',
+      red: '#b91c1c',
+      gray: '#334155',
+    },
+    border: '#475569',
+    provinceBorder: '#94a3b8',
+    hoverArea: 'rgba(148,163,184,0.18)',
+    labelBg: 'rgba(15,23,42,0.9)',
+    labelShadow: 'rgba(0, 0, 0, 0.42)',
+    labelGreen: '#86efac',
+    labelRed: '#fca5a5',
+    labelNeutral: '#dbeafe',
+    tooltipBg: 'rgba(15,23,42,0.96)',
+    tooltipText: '#e5e7eb',
+    tooltipBorder: '#475569',
+    flashArea: '#ca8a04',
+    flashBorder: '#fde68a',
+  },
 };
-const EMPH: Record<UnitColor, string> = {
-  green: '#93cfa0',
-  blue: '#83b7e3',
-  red: '#e1a0a0',
-  gray: '#eee9df',
-};
-const BORDER = '#b9b2a6'; // 地级边界（细线）
-const PROV_BORDER = '#6b7280'; // 省界（粗线）
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 2.5; // 缩放阈值：低于不显示任何标签，高于显示地级标签（防扎堆）
@@ -36,27 +103,19 @@ const STATUS_TXT: Record<UnitColor, string> = {
 export interface MapHandlers {
   onUnitClick: (adcode: string) => void;
   onUnitDblClick: (adcode: string) => void;
+  onBlankClick: () => void;
 }
 
-/** 白底标签：无描边，使用轻阴影提高可读性 */
-function labelStyle(color: string, fontSize: number, show = true) {
+const LABEL_FONT = `600 ${CITY_LABEL_SIZE}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
+
+function labelShape(name: string, point: number[]) {
+  const width = Math.max(34, name.length * CITY_LABEL_SIZE + 16);
+  const height = CITY_LABEL_SIZE + 12;
   return {
-    show,
-    color,
-    fontSize,
-    fontWeight: 600,
-    fontFamily: 'Microsoft YaHei, PingFang SC, system-ui, sans-serif',
-    align: 'center' as const,
-    verticalAlign: 'middle' as const,
-    lineHeight: fontSize + 4,
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderWidth: 0,
-    borderRadius: 5,
-    padding: [4, 9],
-    textBorderWidth: 0,
-    shadowColor: 'rgba(15, 23, 42, 0.22)',
-    shadowBlur: 8,
-    shadowOffsetY: 2,
+    x: point[0] - width / 2,
+    y: point[1] - height / 2,
+    width,
+    height,
   };
 }
 
@@ -83,12 +142,14 @@ export class MapRenderer {
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
+  private labelAnchors = new Map<string, GeoPoint>();
   private viewProvince: string | null = null;
   private zoom = 1;
   private labelMode: 'none' | 'city' = 'none';
   private labelUpdateTimer: number | null = null;
   private followRaf: number | null = null;
   private lastState: RenderState | null = null;
+  private themeName: ThemeName = 'light';
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   onViewChange: (() => void) | null = null;
@@ -99,21 +160,37 @@ export class MapRenderer {
     this.units = data.allUnits;
     for (const u of this.units) this.nameToUnit.set(u.name, u);
     this.provinceLines = this.buildProvinceLines();
+    this.labelAnchors = this.buildLabelAnchors();
 
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
       const params = p as { componentType?: string; seriesType?: string; name?: string };
-      if (params.componentType !== 'series' || params.seriesType !== 'map') return;
+      const isUnitHit = params.componentType === 'series' && params.seriesType === 'map';
+      if (!isUnitHit) {
+        if (this.viewProvince) this.handlers.onBlankClick();
+        return;
+      }
       const u = this.nameToUnit.get(params.name ?? '');
-      if (!u || u.decorative) return;
-      if (this.viewProvince && u.provinceAdcode !== this.viewProvince) return;
+      if (!u || u.decorative) {
+        if (this.viewProvince) this.handlers.onBlankClick();
+        return;
+      }
+      if (!this.viewProvince) {
+        this.drillToProvince(u.provinceAdcode);
+        return;
+      }
+      if (u.provinceAdcode !== this.viewProvince) return;
       this.handlers.onUnitClick(u.adcode);
+    });
+
+    this.chart.getZr().on('click', (event) => {
+      if (!event.target && this.viewProvince) this.handlers.onBlankClick();
     });
 
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (this.viewProvince) {
-        this.backToNation();
+        this.handlers.onBlankClick();
         return;
       }
       if (params.componentType === 'series' && params.seriesType === 'map') {
@@ -159,6 +236,17 @@ export class MapRenderer {
     window.addEventListener('resize', () => this.chart.resize());
   }
 
+  setDarkMode(darkMode: boolean) {
+    const next: ThemeName = darkMode ? 'dark' : 'light';
+    if (next === this.themeName) return;
+    this.themeName = next;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private theme(): MapTheme {
+    return MAP_THEMES[this.themeName];
+  }
+
   /** 省界折线：省界 GeoJSON 的每个环转为线坐标（用于 lines 系列粗线渲染） */
   private buildProvinceLines(): { adcode: string; coords: number[][] }[] {
     const geo = this.data.provincesGeoJson as {
@@ -189,49 +277,77 @@ export class MapRenderer {
       .map((l) => ({ coords: l.coords }));
   }
 
+  /** 标签锚点只服务文字位置，不影响聚焦和下钻使用的地图相机中心。 */
+  private buildLabelAnchors(): Map<string, GeoPoint> {
+    const geo = this.data.geoJson as { features?: GeoFeature[] };
+    const out = new Map<string, GeoPoint>();
+    for (const feature of geo.features ?? []) {
+      const adcode = feature.properties.adcode;
+      if (!adcode) continue;
+      const polygons = polygonsOf(feature);
+      if (!polygons.length) continue;
+      out.set(adcode, bestLabelAnchor(polygons));
+    }
+    return out;
+  }
+
+  private labelAnchorOf(u: Unit): GeoPoint {
+    return this.labelAnchors.get(u.adcode) ?? u.center;
+  }
+
   private buildRegionData(state: RenderState): GeoRegion[] {
-    const showCityLabels = this.labelMode === 'city';
+    const theme = this.theme();
     return this.units.map((u) => {
       const inView = !this.viewProvince || u.provinceAdcode === this.viewProvince;
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-      let label: GeoRegion['label'];
-      if (u.decorative) {
-        label = { show: false }; // 县级填充面/南海诸岛不显示标签
-      } else if (showCityLabels) {
-        if (color === 'green') label = labelStyle('#15803d', CITY_LABEL_SIZE);
-        else if (color === 'red') label = labelStyle('#b91c1c', CITY_LABEL_SIZE);
-        else if (state.showAllLabels) label = labelStyle('#374151', CITY_LABEL_SIZE); // 记忆模式中性色
-        else label = { show: false }; // 蓝色题目（防答案泄漏）与灰色不显示
-      } else {
-        label = { show: false }; // 缩得太小 → 全部不显示，防扎堆
-      }
       return {
         name: u.name,
         silent: !inView,
         itemStyle: {
-          areaColor: inView ? FILL[color] : 'rgba(0,0,0,0)',
-          borderColor: inView ? BORDER : 'rgba(0,0,0,0)',
+          areaColor: inView ? theme.fill[color] : 'rgba(0,0,0,0)',
+          borderColor: inView ? theme.border : 'rgba(0,0,0,0)',
           borderWidth: inView ? 0.6 : 0,
         },
         emphasis: {
-          itemStyle: { areaColor: EMPH[color] },
+          itemStyle: { areaColor: theme.emphasis[color] },
+          label: { show: false },
         },
-        label,
+        label: { show: false },
       };
     });
   }
 
+  private buildLabelData(state: RenderState): LabelPoint[] {
+    if (this.labelMode !== 'city') return [];
+    return this.units.flatMap((u) => {
+      if (u.decorative || (this.viewProvince && u.provinceAdcode !== this.viewProvince)) return [];
+      const color = state.colorOf(u.adcode);
+      const theme = this.theme();
+      if (color === 'blue') return []; // 答题模式不泄露当前题目答案
+      const anchor = this.labelAnchorOf(u);
+      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen] }];
+      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed] }];
+      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral] }];
+      return [];
+    });
+  }
+
+  private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
+    if (state?.showAllLabels) return 'city';
+    return this.zoom < LABEL_ZOOM ? 'none' : 'city';
+  }
+
   private applyLabelMode() {
-    const mode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+    const mode = this.desiredLabelMode();
     if (mode === this.labelMode) return;
     this.labelMode = mode;
     if (this.lastState) {
-      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) } } as never);
+      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) }, series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
     }
   }
 
   private scheduleLabelModeUpdate() {
-    const mode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+    const mode = this.desiredLabelMode();
     if (mode === this.labelMode) return;
     if (this.labelUpdateTimer !== null) window.clearTimeout(this.labelUpdateTimer);
     this.labelUpdateTimer = window.setTimeout(() => {
@@ -243,12 +359,15 @@ export class MapRenderer {
   /** 按当前模式状态重绘（保留用户缩放/平移） */
   render(state: RenderState) {
     this.lastState = state;
-    this.labelMode = this.zoom < LABEL_ZOOM ? 'none' : 'city';
+    this.labelMode = this.desiredLabelMode(state);
 
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
     const cityData = this.units.map((u) => ({ name: u.name }));
+    const labelData = this.buildLabelData(state);
+    const theme = this.theme();
 
     const option: echarts.EChartsOption = {
+      backgroundColor: theme.background,
       animation: false,
       animationDuration: 0,
       animationDurationUpdate: 0,
@@ -256,6 +375,9 @@ export class MapRenderer {
         ? { show: false }
         : {
             trigger: 'item',
+            backgroundColor: theme.tooltipBg,
+            borderColor: theme.tooltipBorder,
+            textStyle: { color: theme.tooltipText },
             formatter: (p) => {
               const params = p as { name?: string };
               const u = this.nameToUnit.get(params.name ?? '');
@@ -275,7 +397,7 @@ export class MapRenderer {
         label: { show: false },
         emphasis: {
           label: { show: false },
-          itemStyle: { areaColor: 'rgba(255,255,255,0.22)' }, // 悬停高亮（半透明遮罩）
+          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩）
         },
         select: { label: { show: false } },
         itemStyle: {
@@ -306,8 +428,53 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-          lineStyle: { color: PROV_BORDER, width: 2.4, opacity: 1 },
+          lineStyle: { color: theme.provinceBorder, width: 2.4, opacity: 1 },
           data: this.buildLineData(),
+        },
+        {
+          id: 'city-labels',
+          type: 'custom',
+          coordinateSystem: 'geo',
+          geoIndex: 0,
+          zlevel: 10,
+          z: 10,
+          silent: true,
+          tooltip: { show: false },
+          renderItem: (_params, api) => {
+            const value = [api.value(0), api.value(1)] as [number, number];
+            const name = String(api.value(2));
+            const color = String(api.value(3));
+            const point = api.coord(value) as number[];
+            const shape = labelShape(name, point);
+            return {
+              type: 'group',
+              children: [
+                {
+                  type: 'rect',
+                  shape,
+                  style: {
+                    fill: theme.labelBg,
+                    shadowColor: theme.labelShadow,
+                    shadowBlur: 8,
+                    shadowOffsetY: 2,
+                  },
+                },
+                {
+                  type: 'text',
+                  style: {
+                    x: point[0],
+                    y: point[1],
+                    text: name,
+                    fill: color,
+                    font: LABEL_FONT,
+                    align: 'center',
+                    verticalAlign: 'middle',
+                  },
+                },
+              ],
+            };
+          },
+          data: labelData,
         },
       ],
     };
@@ -335,10 +502,11 @@ export class MapRenderer {
     };
     const geos = Array.isArray(opt.geo) ? opt.geo : [opt.geo];
     const regions = geos[0]?.regions;
+    const theme = this.theme();
     if (Array.isArray(regions)) {
       for (const item of regions) {
         if (item.name === u.name) {
-          item.itemStyle = { ...item.itemStyle, areaColor: '#e8cf78', borderColor: '#b68b2f', borderWidth: 1.2 };
+          item.itemStyle = { ...item.itemStyle, areaColor: theme.flashArea, borderColor: theme.flashBorder, borderWidth: 1.2 };
         }
       }
       this.chart.setOption({ geo: { regions } } as never);
@@ -367,7 +535,7 @@ export class MapRenderer {
     if (this.followRaf !== null) cancelAnimationFrame(this.followRaf);
     this.labelMode = 'city';
     if (this.lastState) {
-      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) } } as never);
+      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) }, series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
     }
     const current = this.currentGeoView();
     const startCenter = current.center;
@@ -381,7 +549,7 @@ export class MapRenderer {
         startCenter[1] + (targetCenter[1] - startCenter[1]) * k,
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
-      this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } });
+      this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
       if (t < 1) {
         this.followRaf = requestAnimationFrame(step);
       } else {
@@ -481,4 +649,155 @@ function bboxOf(feature: { geometry: { coordinates: unknown } }): [number, numbe
   };
   walk(feature.geometry.coordinates);
   return [minX, minY, maxX, maxY];
+}
+
+function polygonsOf(feature: GeoFeature): PolygonRings[] {
+  const geometry = feature.geometry;
+  if (geometry.type === 'Polygon') return [ringsOf(geometry.coordinates)].filter((rings) => rings.length > 0);
+  if (geometry.type !== 'MultiPolygon' || !Array.isArray(geometry.coordinates)) return [];
+  return geometry.coordinates.map((poly) => ringsOf(poly)).filter((rings) => rings.length > 0);
+}
+
+function ringsOf(raw: unknown): PolygonRings {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((ring) => {
+      if (!Array.isArray(ring)) return [];
+      return ring.filter(isGeoPoint).map((p) => [p[0], p[1]] as GeoPoint);
+    })
+    .filter((ring) => ring.length >= 3);
+}
+
+function isGeoPoint(value: unknown): value is GeoPoint {
+  return Array.isArray(value) && typeof value[0] === 'number' && typeof value[1] === 'number';
+}
+
+function bestLabelAnchor(polygons: PolygonRings[]): GeoPoint {
+  const polygon = largestPolygon(polygons);
+  const outer = polygon[0];
+  const [minX, minY, maxX, maxY] = bboxOfRings(polygon);
+  const centroid = ringCentroid(outer);
+  let best = pointInPolygon(centroid, polygon) ? centroid : firstInsidePoint(polygon) ?? [(minX + maxX) / 2, (minY + maxY) / 2];
+  let bestScore = anchorScore(best, polygon);
+
+  const search = (fromX: number, fromY: number, toX: number, toY: number, steps: number) => {
+    const dx = (toX - fromX) / steps;
+    const dy = (toY - fromY) / steps;
+    for (let ix = 0; ix <= steps; ix += 1) {
+      for (let iy = 0; iy <= steps; iy += 1) {
+        const point: GeoPoint = [fromX + dx * ix, fromY + dy * iy];
+        const score = anchorScore(point, polygon);
+        if (score > bestScore) {
+          best = point;
+          bestScore = score;
+        }
+      }
+    }
+  };
+
+  search(minX, minY, maxX, maxY, 14);
+  let spanX = (maxX - minX) / 6;
+  let spanY = (maxY - minY) / 6;
+  for (let i = 0; i < 2; i += 1) {
+    search(best[0] - spanX, best[1] - spanY, best[0] + spanX, best[1] + spanY, 10);
+    spanX /= 3;
+    spanY /= 3;
+  }
+  return best;
+}
+
+function largestPolygon(polygons: PolygonRings[]): PolygonRings {
+  return polygons.reduce((best, current) => (Math.abs(ringArea(current[0])) > Math.abs(ringArea(best[0])) ? current : best));
+}
+
+function bboxOfRings(rings: PolygonRings): [number, number, number, number] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const ring of rings) {
+    for (const [x, y] of ring) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  return [minX, minY, maxX, maxY];
+}
+
+function firstInsidePoint(polygon: PolygonRings): GeoPoint | null {
+  for (const ring of polygon) {
+    for (const point of ring) {
+      if (pointInPolygon(point, polygon)) return point;
+    }
+  }
+  return null;
+}
+
+function anchorScore(point: GeoPoint, polygon: PolygonRings): number {
+  if (!pointInPolygon(point, polygon)) return -Infinity;
+  let minDistance = Infinity;
+  for (const ring of polygon) {
+    for (let i = 0; i < ring.length; i += 1) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      minDistance = Math.min(minDistance, distanceToSegment(point, a, b));
+    }
+  }
+  return minDistance;
+}
+
+function ringCentroid(ring: GeoPoint[]): GeoPoint {
+  let area2 = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const [x0, y0] = ring[i];
+    const [x1, y1] = ring[(i + 1) % ring.length];
+    const cross = x0 * y1 - x1 * y0;
+    area2 += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  if (Math.abs(area2) < 1e-9) return averagePoint(ring);
+  return [cx / (3 * area2), cy / (3 * area2)];
+}
+
+function averagePoint(points: GeoPoint[]): GeoPoint {
+  const sum = points.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y] as GeoPoint, [0, 0]);
+  return [sum[0] / points.length, sum[1] / points.length];
+}
+
+function ringArea(ring: GeoPoint[]): number {
+  let area = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const [x0, y0] = ring[i];
+    const [x1, y1] = ring[(i + 1) % ring.length];
+    area += x0 * y1 - x1 * y0;
+  }
+  return area / 2;
+}
+
+function pointInPolygon(point: GeoPoint, polygon: PolygonRings): boolean {
+  if (!pointInRing(point, polygon[0])) return false;
+  return polygon.slice(1).every((hole) => !pointInRing(point, hole));
+}
+
+function pointInRing([x, y]: GeoPoint, ring: GeoPoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSegment(point: GeoPoint, a: GeoPoint, b: GeoPoint): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  if (dx === 0 && dy === 0) return Math.hypot(point[0] - a[0], point[1] - a[1]);
+  const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy)));
+  const x = a[0] + t * dx;
+  const y = a[1] + t * dy;
+  return Math.hypot(point[0] - x, point[1] - y);
 }

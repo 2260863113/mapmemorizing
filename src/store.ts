@@ -74,6 +74,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requireEnter: true,
   autoFollow: true,
   followZoom: 12,
+  darkMode: false,
 };
 
 export function loadSettings(): Settings {

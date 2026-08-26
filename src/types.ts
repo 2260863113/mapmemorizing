@@ -40,6 +40,7 @@ export interface Settings {
   requireEnter: boolean;
   autoFollow: boolean;
   followZoom: number;
+  darkMode: boolean;
 }
 
 export interface RenderState {
