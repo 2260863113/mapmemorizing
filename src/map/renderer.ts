@@ -92,6 +92,7 @@ const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
 const CITY_LABEL_SIZE = 14;
 const LABEL_UPDATE_DELAY = 120;
+const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
 const STATUS_TXT: Record<UnitColor, string> = {
   green: '已记忆',
@@ -144,6 +145,7 @@ export class MapRenderer {
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
   private viewProvince: string | null = null;
+  private center: [number, number] = [104.5, 35];
   private zoom = 1;
   private labelMode: 'none' | 'city' = 'none';
   private labelUpdateTimer: number | null = null;
@@ -215,7 +217,10 @@ export class MapRenderer {
         cancelAnimationFrame(this.followRaf);
         this.followRaf = null;
       }
-      const params = p as { zoom?: number; totalZoom?: number };
+      const params = p as { zoom?: number; totalZoom?: number; center?: number[] };
+      if (Array.isArray(params.center) && typeof params.center[0] === 'number' && typeof params.center[1] === 'number') {
+        this.center = [params.center[0], params.center[1]];
+      }
       if (typeof params.totalZoom === 'number') {
         this.zoom = clampZoom(params.totalZoom);
       } else if (typeof params.zoom === 'number') {
@@ -223,17 +228,6 @@ export class MapRenderer {
       }
       this.scheduleLabelModeUpdate();
       this.onZoomChange?.();
-    });
-
-    // 兜底：渲染后从 option 读回实际缩放，用于外部 setOption 改 center/zoom 的场景。
-    this.chart.on('rendered', () => {
-      const opt = this.chart.getOption() as { geo?: { zoom?: number }[] | { zoom?: number } };
-      const z = Array.isArray(opt.geo) ? opt.geo[0]?.zoom : opt.geo?.zoom;
-      if (typeof z === 'number' && Math.abs(z - this.zoom) > 0.001) {
-        this.zoom = z;
-        this.scheduleLabelModeUpdate();
-        this.onZoomChange?.();
-      }
     });
 
     window.addEventListener('resize', () => this.chart.resize());
@@ -344,7 +338,7 @@ export class MapRenderer {
     if (mode === this.labelMode) return;
     this.labelMode = mode;
     if (this.lastState) {
-      this.chart.setOption({ geo: { regions: this.buildRegionData(this.lastState) }, series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
+      this.chart.setOption({ series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
     }
   }
 
@@ -438,7 +432,6 @@ export class MapRenderer {
           type: 'custom',
           coordinateSystem: 'geo',
           geoIndex: 0,
-          zlevel: 10,
           z: 10,
           silent: true,
           tooltip: { show: false },
@@ -539,36 +532,44 @@ export class MapRenderer {
     const startCenter = current.center;
     const startZoom = current.zoom;
     const start = performance.now();
+    let lastFrame = start - FOLLOW_FRAME_INTERVAL;
     const step = (now: number) => {
       const t = Math.min(1, (now - start) / FOLLOW_ANIMATION_MS);
+      if (t < 1 && now - lastFrame < FOLLOW_FRAME_INTERVAL) {
+        this.followRaf = requestAnimationFrame(step);
+        return;
+      }
       const k = easeInOutCubic(t);
       const center: [number, number] = [
         startCenter[0] + (targetCenter[0] - startCenter[0]) * k,
         startCenter[1] + (targetCenter[1] - startCenter[1]) * k,
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
+      this.center = center;
       this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      lastFrame = now;
       this.onZoomChange?.();
       if (t < 1) {
         this.followRaf = requestAnimationFrame(step);
       } else {
         this.followRaf = null;
+        this.applyLabelMode();
       }
     };
     this.followRaf = requestAnimationFrame(step);
   }
 
   private currentGeoView(): { center: [number, number]; zoom: number } {
-    const opt = this.chart.getOption() as { geo?: { center?: number[]; zoom?: number }[] | { center?: number[]; zoom?: number } };
+    const opt = this.chart.getOption() as { geo?: { center?: number[] }[] | { center?: number[] } };
     const geo = Array.isArray(opt.geo) ? opt.geo[0] : opt.geo;
     const center = geo?.center;
-    return {
-      center: Array.isArray(center) && typeof center[0] === 'number' && typeof center[1] === 'number' ? [center[0], center[1]] : [104.5, 35],
-      zoom: typeof geo?.zoom === 'number' ? clampZoom(geo.zoom) : this.zoom,
-    };
+    if (Array.isArray(center) && typeof center[0] === 'number' && typeof center[1] === 'number') {
+      this.center = [center[0], center[1]];
+    }
+    return { center: this.center, zoom: this.zoom };
   }
 
-  /** 下钻到某省：其他区域消失，自动缩放居中（必然进入地级标签模式） */
+  /** 下钻到某省：其他区域消失，自动缩放居中。 */
   drillToProvince(adcode: string) {
     if (this.viewProvince === adcode) return; // 幂等
     const units = this.units.filter((u) => u.provinceAdcode === adcode && !u.decorative);
@@ -591,21 +592,23 @@ export class MapRenderer {
     const bh = Math.max(maxY - minY, 0.5);
     const zoom = clampZoom(Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
     this.viewProvince = adcode;
+    this.center = [(minX + maxX) / 2, (minY + maxY) / 2];
     this.zoom = zoom;
     this.labelMode = this.desiredLabelMode();
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
-    this.chart.setOption({ geo: { map: 'china', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom } });
+    this.chart.setOption({ geo: { map: 'china', center: this.center, zoom } });
     this.onZoomChange?.();
     this.onViewChange?.();
   }
 
   backToNation() {
     this.viewProvince = null;
+    this.center = [104.5, 35];
     this.zoom = 1;
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
-    this.chart.setOption({ geo: { map: 'china', center: [104.5, 35], zoom: 1 } });
+    this.chart.setOption({ geo: { map: 'china', center: this.center, zoom: 1 } });
     this.onZoomChange?.();
     this.onViewChange?.();
   }
