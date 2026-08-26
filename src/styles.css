@@ -188,6 +188,18 @@ button.primary:hover { background: var(--accent-strong); }
   text-align: center;
   pointer-events: none;
 }
+#test-timer.timer-inline {
+  top: auto;
+  bottom: 16px;
+  left: 178px;
+  transform: none;
+}
+#test-timer.urgent {
+  color: var(--danger);
+}
+body.theme-dark #test-timer.urgent {
+  color: #fecaca;
+}
 #pause-overlay {
   position: absolute;
   inset: 0;

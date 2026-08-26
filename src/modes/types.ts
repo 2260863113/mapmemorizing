@@ -16,7 +16,7 @@ export interface ModeCtx {
   byAdcode: Map<string, Unit>;
   toast: (msg: string) => void;
   setHint: (html: string) => void;
-  showTimer: (remain: number | null) => void;
+  showTimer: (remain: number | null, urgent?: boolean) => void;
   showStopwatch: (elapsedMs: number | null) => void;
   showSummary: (html: string, onRestart: () => void) => void;
   hideSummary: () => void;

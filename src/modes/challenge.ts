@@ -55,7 +55,6 @@ export class ChallengeMode implements ModeController {
   }
 
   exit() {
-    if (this.paused) return;
     this.countdown.stop();
     if (this.nextTimer !== null) {
       window.clearTimeout(this.nextTimer);
@@ -63,6 +62,7 @@ export class ChallengeMode implements ModeController {
     }
     this.ctx.showTimer(null);
     this.started = false;
+    this.paused = false;
   }
 
   pause() {
@@ -73,7 +73,7 @@ export class ChallengeMode implements ModeController {
       window.clearTimeout(this.nextTimer);
       this.nextTimer = null;
     }
-    if (this.question) this.ctx.showTimer(this.countdown.remaining());
+    if (this.question) this.showCountdown(this.countdown.remaining());
     else this.ctx.showTimer(null);
   }
 
@@ -81,7 +81,7 @@ export class ChallengeMode implements ModeController {
     if (!this.started || !this.paused) return;
     this.paused = false;
     if (this.question) {
-      this.ctx.showTimer(this.countdown.remaining());
+      this.showCountdown(this.countdown.remaining());
       this.countdown.resume();
     } else {
       this.next();
@@ -307,7 +307,12 @@ export class ChallengeMode implements ModeController {
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
-    this.countdown.start(this.ctx.settings.challengeSeconds, (r) => this.ctx.showTimer(r), () => this.answer(false, true));
+    this.countdown.start(this.ctx.settings.challengeSeconds, (r) => this.showCountdown(r), () => this.answer(false, true));
+  }
+
+  private showCountdown(remainingMs: number) {
+    const urgentMs = this.ctx.settings.challengeSeconds * 1000 * 0.3;
+    this.ctx.showTimer(remainingMs, remainingMs < urgentMs);
   }
 
   private answer(correct: boolean, timedOut = false, scored = true) {

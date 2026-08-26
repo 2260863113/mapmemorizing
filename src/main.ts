@@ -119,14 +119,17 @@ async function boot() {
     hideSummary();
     hideHelp();
     hideHoverStats();
-    if (current?.isStarted?.()) {
-      current.pause?.();
-      if (current.isPaused?.()) showPauseOverlay();
+    const active = current;
+    const currentStarted = active?.isStarted?.() ?? false;
+    const currentPaused = active?.isPaused?.() ?? false;
+    if (active && currentStarted && !currentPaused) {
+      active.pause?.();
+      if (active.isPaused?.()) showPauseOverlay();
       syncModeChrome();
       updateProgress();
       return;
     }
-    current?.exit();
+    active?.exit();
     current = modes[mode];
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
@@ -286,11 +289,9 @@ async function boot() {
   });
 
   ($('btn-skip') as HTMLButtonElement).addEventListener('click', () => current?.onSkip?.());
-  ($('btn-end') as HTMLButtonElement).addEventListener('click', (event) => {
-    confirmAction(event.currentTarget as HTMLButtonElement, () => {
-      current?.onEnd?.();
-      if (current?.isPaused?.()) showPauseOverlay();
-    });
+  ($('btn-end') as HTMLButtonElement).addEventListener('click', () => {
+    current?.onEnd?.();
+    if (current?.isPaused?.()) showPauseOverlay();
   });
   ($('btn-reset') as HTMLButtonElement).addEventListener('click', (event) => {
     confirmAction(event.currentTarget as HTMLButtonElement, () => {

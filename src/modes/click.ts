@@ -40,9 +40,9 @@ export class ClickMode implements ModeController {
   }
 
   exit() {
-    if (this.paused) return;
     this.stopwatch.stop();
     this.started = false;
+    this.paused = false;
     this.ctx.showTimer(null);
     this.ctx.showStopwatch(null);
   }

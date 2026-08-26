@@ -58,11 +58,11 @@ export class SelfTestMode implements ModeController {
   }
 
   exit() {
-    if (!this.paused) {
-      this.stopwatch.stop();
-      this.ctx.showTimer(null);
-      this.ctx.showStopwatch(null);
-    }
+    this.stopwatch.stop();
+    this.started = false;
+    this.paused = false;
+    this.ctx.showTimer(null);
+    this.ctx.showStopwatch(null);
   }
 
   pause() {

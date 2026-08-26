@@ -19,21 +19,25 @@ export function setHint(html: string) {
   host.innerHTML = html;
 }
 
-export function showTimer(remain: number | null) {
+export function showTimer(remain: number | null, urgent = false) {
   const el = $('test-timer');
+  el.classList.remove('timer-inline');
   if (remain === null) {
     el.classList.add('hidden');
+    el.classList.remove('urgent');
     return;
   }
   el.classList.remove('hidden');
   el.textContent = `${(remain / 1000).toFixed(2)}s`;
-  el.classList.toggle('urgent', remain <= 3000);
+  el.classList.toggle('urgent', urgent);
 }
 
 export function showStopwatch(elapsedMs: number | null) {
   const el = $('test-timer');
+  el.classList.add('timer-inline');
   if (elapsedMs === null) {
     el.classList.add('hidden');
+    el.classList.remove('urgent');
     return;
   }
   el.classList.remove('hidden');
