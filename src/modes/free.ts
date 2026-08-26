@@ -14,11 +14,8 @@ export class FreeMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    const action = this.ctx.settings.requireEnter ? '输入地名回车' : '输入正确地名';
     this.ctx.search.setPlaceholder(this.ctx.settings.requireEnter ? '输入地名，如：黔南（回车确认）' : '输入地名，如：黔南');
-    this.ctx.setHint(
-      `点击区域或${action} = 标记已记忆 ｜ 再次点击绿色区域 = 取消 ｜ 双击区域 = 进入该省 ｜ 输入省名（如「贵州省」）= 下钻`,
-    );
+    this.ctx.setHint('');
     this.refresh();
     this.unsubscribe = this.ctx.store.subscribe(() => this.refresh());
   }

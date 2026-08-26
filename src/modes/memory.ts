@@ -9,7 +9,7 @@ export class MemoryMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    this.ctx.setHint('纯浏览模式：查看全部地级市名称（标签位于区域中心），可自由缩放、双击区域进入该省');
+    this.ctx.setHint('');
     this.refresh();
   }
 

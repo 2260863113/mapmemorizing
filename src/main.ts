@@ -237,7 +237,6 @@ async function boot() {
       toast('已重置记忆进度');
     });
   });
-  ($('btn-search') as HTMLButtonElement).addEventListener('click', () => search.submit());
 
   // 搜索框接线（无下拉联想）
   search.onSubmit((v) => current?.onSubmit(v));

@@ -21,7 +21,7 @@ export class SearchBox {
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        this.submit();
+        this.onSubmitCb(this.input.value);
       }
     });
   }
@@ -36,10 +36,6 @@ export class SearchBox {
 
   onInput(fn: (v: string) => void) {
     this.onInputCb = fn;
-  }
-
-  submit() {
-    this.onSubmitCb(this.input.value);
   }
 
   clear() {
