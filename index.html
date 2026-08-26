@@ -16,10 +16,6 @@
         <button data-mode="memory">记忆模式</button>
       </nav>
       <div class="top-actions">
-        <select id="province-select">
-          <option value="">选择省份（下钻）</option>
-        </select>
-        <button id="btn-back" class="ghost">返回全国</button>
         <button id="btn-stats" class="ghost">进度</button>
         <button id="btn-settings" class="ghost">设置</button>
       </div>
@@ -35,9 +31,14 @@
       </div>
       <div id="search-row">
         <input id="search-input" type="text" placeholder="输入地名，如：黔南" autocomplete="off" spellcheck="false" />
+        <button id="btn-search" class="mode-action search-confirm" type="button">确认</button>
         <div id="timer-pill" class="hidden">10s</div>
       </div>
       <div id="mode-hint"></div>
+      <div id="mode-info">
+        <button id="btn-help" class="mode-action">说明</button>
+        <div id="zoom-pill">1.00x</div>
+      </div>
       <div id="map"></div>
       <aside id="side-panel">
         <h3>自由模式进度</h3>
@@ -53,6 +54,16 @@
       <div class="card-actions">
         <button id="summary-restart" class="primary">再来一轮</button>
         <button id="summary-close" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-panel" class="overlay hidden">
+    <div class="card help-card">
+      <h3 id="help-title">说明</h3>
+      <div id="help-body"></div>
+      <div class="card-actions">
+        <button id="help-close" class="ghost">关闭</button>
       </div>
     </div>
   </div>

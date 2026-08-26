@@ -153,6 +153,7 @@ export class MapRenderer {
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   onViewChange: (() => void) | null = null;
+  onZoomChange: (() => void) | null = null;
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
@@ -221,6 +222,7 @@ export class MapRenderer {
         this.zoom = clampZoom(this.zoom * params.zoom);
       }
       this.scheduleLabelModeUpdate();
+      this.onZoomChange?.();
     });
 
     // 兜底：渲染后从 option 读回实际缩放，用于外部 setOption 改 center/zoom 的场景。
@@ -230,6 +232,7 @@ export class MapRenderer {
       if (typeof z === 'number' && Math.abs(z - this.zoom) > 0.001) {
         this.zoom = z;
         this.scheduleLabelModeUpdate();
+        this.onZoomChange?.();
       }
     });
 
@@ -550,6 +553,7 @@ export class MapRenderer {
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
       this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      this.onZoomChange?.();
       if (t < 1) {
         this.followRaf = requestAnimationFrame(step);
       } else {
@@ -597,6 +601,7 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
     this.chart.setOption({ geo: { map: 'china', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom } });
+    this.onZoomChange?.();
     this.onViewChange?.();
   }
 
@@ -606,11 +611,16 @@ export class MapRenderer {
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
     this.chart.setOption({ geo: { map: 'china', center: [104.5, 35], zoom: 1 } });
+    this.onZoomChange?.();
     this.onViewChange?.();
   }
 
   currentProvince(): string | null {
     return this.viewProvince;
+  }
+
+  currentZoom() {
+    return this.zoom;
   }
 
   dispose() {

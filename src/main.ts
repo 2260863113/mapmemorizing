@@ -31,17 +31,22 @@ async function boot() {
 
   let current: ModeController | null = null;
   let statsVisible = true;
+  let zoomDisplay = 1;
   const renderer = new MapRenderer($('map'), data, {
     onUnitClick: (adcode) => current?.onUnitClick(adcode),
     onUnitDblClick: (adcode) => current?.onUnitDblClick(adcode),
     onBlankClick: () => backToNationFromMap(),
   });
   renderer.setDarkMode(settings.darkMode);
+  zoomDisplay = renderer.currentZoom();
   renderer.onViewChange = () => {
-    syncProvinceSelect();
     current?.onViewChange?.();
     current?.refresh();
     updateProgress();
+  };
+  renderer.onZoomChange = () => {
+    zoomDisplay = renderer.currentZoom();
+    syncViewChrome();
   };
 
   const ctx: ModeCtx = {
@@ -101,6 +106,7 @@ async function boot() {
     if (current === modes[mode]) return;
     resetConfirmButtons();
     hideSummary();
+    hideHelp();
     current?.exit();
     current = modes[mode];
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
@@ -124,6 +130,11 @@ async function boot() {
     $('btn-skip').classList.toggle('hidden', !isTest);
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', mode === 'memory');
+    syncViewChrome();
+  }
+
+  function syncViewChrome() {
+    $('zoom-pill').textContent = `${zoomDisplay.toFixed(2)}x`;
   }
 
   function updateProgress() {
@@ -140,13 +151,7 @@ async function boot() {
       .join('');
   }
 
-  function syncProvinceSelect() {
-    const sel = $('province-select') as HTMLSelectElement;
-    sel.value = renderer.currentProvince() ?? '';
-  }
-
   function backToNationFromMap() {
-    if (!renderer.currentProvince()) return;
     hideSummary();
     current?.exit();
     renderer.backToNation();
@@ -154,32 +159,54 @@ async function boot() {
     updateProgress();
   }
 
+  function showHelp() {
+    const help = currentModeHelp();
+    ($('help-title') as HTMLElement).textContent = help.title;
+    ($('help-body') as HTMLElement).innerHTML = `<div class="help-text">${help.body}</div>`;
+    $('help-panel').classList.remove('hidden');
+  }
+
+  function hideHelp() {
+    $('help-panel').classList.add('hidden');
+  }
+
+  ($('btn-help') as HTMLButtonElement).addEventListener('click', showHelp);
+  ($('help-close') as HTMLButtonElement).addEventListener('click', hideHelp);
+  $('help-panel').addEventListener('click', (event) => {
+    if (event.target === $('help-panel')) hideHelp();
+  });
+
+  function currentModeHelp(): { title: string; body: string } {
+    const mode = current?.id;
+    if (mode === 'self') {
+      return {
+        title: '自测模式说明',
+        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色。可以使用跳过、结束和重置。',
+      };
+    }
+    if (mode === 'challenge') {
+      return {
+        title: '挑战模式说明',
+        body: '系统会连续随机出题。输入正确立即进入下一题；答错或超时会显示正确答案并继续。',
+      };
+    }
+    if (mode === 'free') {
+      return {
+        title: '自由模式说明',
+        body: '这是自由浏览和练习模式。可以查看进度、切换省份、使用搜索定位单位。',
+      };
+    }
+    return {
+      title: '记忆模式说明',
+      body: '该模式用于回顾已记忆内容，界面会隐藏辅助控件，专注于地图查看。',
+    };
+  }
+
   // 模式切换
   document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((btn) => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode as Mode));
   });
 
-  // 省份下钻
-  const sel = $('province-select') as HTMLSelectElement;
-  for (const p of data.provinces) {
-    const opt = document.createElement('option');
-    opt.value = p.adcode;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener('change', () => {
-    if (!sel.value) {
-      backToNationFromMap();
-      syncProvinceSelect();
-      return;
-    }
-    hideSummary();
-    current?.exit();
-    renderer.drillToProvince(sel.value);
-    current?.enter();
-    updateProgress();
-  });
-  ($('btn-back') as HTMLButtonElement).addEventListener('click', () => backToNationFromMap());
   ($('btn-stats') as HTMLButtonElement).addEventListener('click', () => {
     statsVisible = !statsVisible;
     syncModeChrome();
@@ -210,6 +237,7 @@ async function boot() {
       toast('已重置记忆进度');
     });
   });
+  ($('btn-search') as HTMLButtonElement).addEventListener('click', () => search.submit());
 
   // 搜索框接线（无下拉联想）
   search.onSubmit((v) => current?.onSubmit(v));

@@ -14,7 +14,9 @@ export function toast(msg: string, ms = 2400) {
 }
 
 export function setHint(html: string) {
-  $('mode-hint').innerHTML = html;
+  const host = $('mode-hint');
+  host.classList.toggle('start-host', html.includes('start-panel'));
+  host.innerHTML = html;
 }
 
 export function showTimer(remain: number | null) {
