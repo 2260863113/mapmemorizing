@@ -209,6 +209,7 @@ export class ClickMode implements ModeController {
 
   private ask(unit: Unit) {
     this.question = unit.adcode;
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">请点击：${unit.name}</div><div class="start-subtitle">范围：${this.scopeLabel()}</div></div>`);
     this.refresh();
     this.persist();
   }
@@ -251,6 +252,10 @@ export class ClickMode implements ModeController {
         this.enter();
       },
     );
+  }
+
+  private scopeLabel() {
+    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
   }
 
   private scopedUnits() {

@@ -211,7 +211,7 @@ export class SelfTestMode implements ModeController {
     const actions = this.hasSavedProgress()
       ? '<div class="start-actions"><button id="self-restart" class="start-action secondary">重新开始</button><button id="self-continue" class="start-action">继续</button></div>'
       : '<button id="self-start" class="start-action">开始</button>';
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">自测模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">输入模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('self-start') as HTMLButtonElement | null;
       const restart = document.getElementById('self-restart') as HTMLButtonElement | null;

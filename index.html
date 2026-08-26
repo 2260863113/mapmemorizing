@@ -10,10 +10,11 @@
     <header class="topbar">
       <div class="brand">中国行政区记忆</div>
       <nav id="mode-tabs">
-        <button data-mode="free" class="active">自由模式</button>
-        <button data-mode="self">自测模式</button>
+        <button data-mode="free" class="active">熟练度分析</button>
+        <button data-mode="self">输入模式</button>
         <button data-mode="challenge">挑战模式</button>
-        <button data-mode="memory">记忆模式</button>
+        <button data-mode="click">点击模式</button>
+        <button data-mode="memory">自由模式</button>
       </nav>
       <div class="top-actions">
         <button id="btn-stats" class="ghost">进度</button>
@@ -34,13 +35,14 @@
         <div id="timer-pill" class="hidden">10s</div>
       </div>
       <div id="mode-hint"></div>
+      <div id="hover-stats" class="hidden" aria-live="polite"></div>
       <div id="mode-info">
         <button id="btn-help" class="mode-action">说明</button>
         <div id="zoom-pill">1.00x</div>
       </div>
       <div id="map"></div>
       <aside id="side-panel">
-        <h3>自由模式进度</h3>
+        <h3>熟练度分析</h3>
         <div id="stats"></div>
         <p class="tip">进度自动保存在本机浏览器（localStorage）</p>
       </aside>

@@ -37,6 +37,8 @@ async function boot() {
     onUnitClick: (adcode) => current?.onUnitClick(adcode),
     onUnitDblClick: (adcode) => current?.onUnitDblClick(adcode),
     onBlankClick: () => backToNationFromMap(),
+    onUnitHover: (adcode) => showHoverStats(adcode),
+    onUnitHoverEnd: () => hideHoverStats(),
   });
   renderer.setDarkMode(settings.darkMode);
   zoomDisplay = renderer.currentZoom();
@@ -109,13 +111,15 @@ async function boot() {
     resetConfirmButtons();
     hideSummary();
     hideHelp();
+    hideHoverStats();
     current?.exit();
     current = modes[mode];
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
     });
-    $('search-row').classList.toggle('hidden', mode === 'memory');
-    $('mode-actions').classList.toggle('hidden', mode === 'memory');
+    const inputMode = mode === 'self' || mode === 'challenge';
+    $('search-row').classList.toggle('hidden', !inputMode);
+    $('mode-actions').classList.toggle('hidden', mode === 'free' || mode === 'memory');
     current.enter();
     syncModeChrome();
     updateProgress();
@@ -123,15 +127,15 @@ async function boot() {
 
   function syncModeChrome() {
     const mode = current?.id;
-    const isFree = mode === 'free';
-    const isTest = mode === 'self' || mode === 'challenge';
+    const isAnalysis = mode === 'free';
+    const isTest = mode === 'self' || mode === 'challenge' || mode === 'click';
     $('app').dataset.mode = mode ?? '';
-    $('side-panel').classList.toggle('hidden', !isFree || !statsVisible);
-    $('btn-stats').classList.toggle('hidden', !isFree);
-    $('mode-actions').classList.toggle('hidden', mode === 'memory');
+    $('side-panel').classList.toggle('hidden', !isAnalysis || !statsVisible);
+    $('btn-stats').classList.toggle('hidden', !isAnalysis);
+    $('mode-actions').classList.toggle('hidden', !isTest);
     $('btn-skip').classList.toggle('hidden', !isTest);
     $('btn-end').classList.toggle('hidden', !isTest);
-    $('btn-reset').classList.toggle('hidden', mode === 'memory');
+    $('btn-reset').classList.toggle('hidden', !isTest);
     syncViewChrome();
   }
 
@@ -142,7 +146,7 @@ async function boot() {
   function updateProgress() {
     const el = $('mode-progress');
     const progress = current?.getProgress?.() ?? null;
-    if (!progress || (current?.id !== 'self' && current?.id !== 'challenge')) {
+    if (!progress || (current?.id !== 'self' && current?.id !== 'challenge' && current?.id !== 'click')) {
       el.classList.add('hidden');
       el.innerHTML = '';
       return;
@@ -172,6 +176,20 @@ async function boot() {
     $('help-panel').classList.add('hidden');
   }
 
+  function showHoverStats(adcode: string) {
+    if (current?.id !== 'free') return;
+    const unit = idx.byAdcode.get(adcode);
+    if (!unit) return;
+    const practice = store.getPractice(adcode);
+    const card = $('hover-stats');
+    card.textContent = `${unit.name}  正确次数：${practice.correctCount}次 ｜ 错误次数：${practice.wrongCount}次`;
+    card.classList.remove('hidden');
+  }
+
+  function hideHoverStats() {
+    $('hover-stats').classList.add('hidden');
+  }
+
   ($('btn-help') as HTMLButtonElement).addEventListener('click', showHelp);
   ($('help-close') as HTMLButtonElement).addEventListener('click', hideHelp);
   $('help-panel').addEventListener('click', (event) => {
@@ -182,8 +200,8 @@ async function boot() {
     const mode = current?.id;
     if (mode === 'self') {
       return {
-        title: '自测模式说明',
-        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色。可以使用跳过、结束和重置。',
+        title: '输入模式说明',
+        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、结束和重置。',
       };
     }
     if (mode === 'challenge') {
@@ -194,13 +212,19 @@ async function boot() {
     }
     if (mode === 'free') {
       return {
-        title: '自由模式说明',
-        body: '这是自由浏览和练习模式。可以查看进度、切换省份、使用搜索定位单位。',
+        title: '熟练度分析说明',
+        body: '地图按累计答题分数分层着色。悬停地级市可查看正确和错误次数；此模式不响应点击和输入。',
+      };
+    }
+    if (mode === 'click') {
+      return {
+        title: '点击模式说明',
+        body: '按照顶部提示点击对应地级市。答对变绿，答错时正确答案变红；本模式不使用自动跟随。',
       };
     }
     return {
-      title: '记忆模式说明',
-      body: '该模式用于回顾已记忆内容，界面会隐藏辅助控件，专注于地图查看。',
+      title: '自由模式说明',
+      body: '这是自由浏览模式，可以查看全部地级市名称并自由缩放、双击区域进入该省。',
     };
   }
 

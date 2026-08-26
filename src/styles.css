@@ -168,6 +168,26 @@ button.primary:hover { background: var(--accent-strong); }
   gap: 10px;
   flex-wrap: nowrap;
 }
+#hover-stats {
+  position: absolute;
+  z-index: 25;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 9px 16px;
+  border: 1px solid var(--floating-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  box-shadow: var(--floating-shadow);
+  backdrop-filter: var(--floating-blur);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  white-space: nowrap;
+}
 #mode-info {
   left: 16px;
   bottom: 16px;
@@ -188,13 +208,6 @@ button.primary:hover { background: var(--accent-strong); }
   bottom: 60px;
   right: 16px;
   max-width: min(720px, calc(100vw - 32px));
-}
-#app[data-mode="free"] #search-row {
-  right: 316px;
-}
-#app[data-mode="free"] #side-panel.hidden ~ #search-row,
-#app[data-mode="free"] main:has(#side-panel.hidden) #search-row {
-  right: 16px;
 }
 #search-input {
   width: min(420px, calc(100vw - 180px));
@@ -310,20 +323,25 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
   color: var(--control-text);
   z-index: 4;
 }
-#app:not([data-mode="free"]) #side-panel,
-#app[data-mode="memory"] #side-panel {
+#app:not([data-mode="free"]) #side-panel {
   display: none !important;
 }
 #side-panel h3 { font-size: 14px; margin-bottom: 10px; color: var(--control-text); }
 .stat-head { font-size: 14px; margin-bottom: 6px; }
 .stat-head b { font-size: 20px; color: var(--accent); }
 .pct { color: var(--muted); font-size: 12px; margin-left: 6px; }
-.bar { height: 8px; background: var(--bar-bg); border-radius: 999px; overflow: hidden; margin-bottom: 12px; }
-.bar-fill {
-  height: 100%; background: linear-gradient(90deg, var(--bar-fill-a), var(--bar-fill-b));
-  border-radius: 999px; transition: width 0.4s;
+.mastery-bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bar-bg);
+  margin: 4px 0 12px;
 }
-.bar.mini { height: 5px; margin: 4px 0 10px; }
+.mastery-bar span { height: 100%; transition: width 0.25s; }
+.mastery-positive { background: var(--progress-green); }
+.mastery-zero { background: var(--map-bg); }
+.mastery-negative { background: var(--progress-red); }
 .prov-name { font-size: 13px; color: var(--control-text); display: flex; justify-content: space-between; }
 .prov-name span { color: var(--muted); }
 .tip { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
