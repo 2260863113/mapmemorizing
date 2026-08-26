@@ -27,7 +27,7 @@
     <main>
       <div id="mode-actions">
         <button id="btn-skip" class="mode-action">跳过</button>
-        <button id="btn-end" class="mode-action danger-hover">结束</button>
+        <button id="btn-end" class="mode-action danger-hover">中断</button>
         <button id="btn-reset" class="mode-action">重置</button>
       </div>
       <div id="search-row">
@@ -35,7 +35,9 @@
         <div id="timer-pill" class="hidden">10s</div>
       </div>
       <div id="mode-hint"></div>
-      <div id="hover-stats" class="hidden" aria-live="polite"></div>
+      <div id="test-timer" class="hidden" aria-live="polite">0.00s</div>
+      <div id="pause-overlay" class="hidden" aria-live="polite"><span>点击任意处继续</span></div>
+      <div id="hover-stats" class="hidden" aria-live="polite">
       <div id="mode-info">
         <button id="btn-help" class="mode-action">说明</button>
         <div id="zoom-pill">1.00x</div>

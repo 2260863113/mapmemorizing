@@ -6,7 +6,7 @@ import { MemoryStore, loadSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
-import { $, toast, setHint, showTimer, showSummary, hideSummary } from './ui/dom';
+import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary } from './ui/dom';
 import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { ChallengeMode } from './modes/challenge';
@@ -64,6 +64,7 @@ async function boot() {
     toast,
     setHint,
     showTimer,
+    showStopwatch,
     showSummary,
     hideSummary,
     updateProgress,

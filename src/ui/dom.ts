@@ -20,7 +20,7 @@ export function setHint(html: string) {
 }
 
 export function showTimer(remain: number | null) {
-  const el = $('timer-pill');
+  const el = $('test-timer');
   if (remain === null) {
     el.classList.add('hidden');
     return;
@@ -28,6 +28,17 @@ export function showTimer(remain: number | null) {
   el.classList.remove('hidden');
   el.textContent = `${remain}s`;
   el.classList.toggle('urgent', remain <= 3);
+}
+
+export function showStopwatch(elapsedMs: number | null) {
+  const el = $('test-timer');
+  if (elapsedMs === null) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.classList.remove('urgent');
+  el.textContent = `${(elapsedMs / 1000).toFixed(2)}s`;
 }
 
 export function showSummary(html: string, onRestart: () => void) {

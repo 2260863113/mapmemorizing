@@ -168,6 +168,46 @@ button.primary:hover { background: var(--accent-strong); }
   gap: 10px;
   flex-wrap: nowrap;
 }
+#test-timer {
+  position: absolute;
+  z-index: 26;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 92px;
+  padding: 8px 14px;
+  border: 1px solid var(--floating-border);
+  border-radius: 999px;
+  background: var(--floating-bg);
+  color: var(--input-text);
+  box-shadow: var(--floating-shadow);
+  backdrop-filter: var(--floating-blur);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: none;
+}
+#pause-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+  pointer-events: auto;
+}
+#pause-overlay span {
+  padding: 10px 14px;
+  background: transparent;
+}
+#app.test-paused #map {
+  filter: blur(12px);
+  transform: scale(1.02);
+}
 #hover-stats {
   position: absolute;
   z-index: 25;

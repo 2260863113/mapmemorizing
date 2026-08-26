@@ -17,6 +17,7 @@ export interface ModeCtx {
   toast: (msg: string) => void;
   setHint: (html: string) => void;
   showTimer: (remain: number | null) => void;
+  showStopwatch: (elapsedMs: number | null) => void;
   showSummary: (html: string, onRestart: () => void) => void;
   hideSummary: () => void;
   updateProgress: () => void;
@@ -46,6 +47,9 @@ export interface ModeController {
   onEnd?(): void;
   onReset?(): void;
   onViewChange?(): void;
+  pause?(): void;
+  resume?(): void;
+  isPaused?(): boolean;
   getProgress?(): ModeProgress | null;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
