@@ -1,5 +1,15 @@
-export type Mode = 'free' | 'self' | 'challenge' | 'memory';
-export type UnitColor = 'green' | 'blue' | 'red' | 'gray';
+export type Mode = 'free' | 'self' | 'challenge' | 'click' | 'memory';
+export type UnitColor =
+  | 'green'
+  | 'blue'
+  | 'red'
+  | 'gray'
+  | 'scoreGreenLight'
+  | 'scoreGreenMedium'
+  | 'scoreGreenDark'
+  | 'scoreRedLight'
+  | 'scoreRedMedium'
+  | 'scoreRedDark';
 
 export interface Unit {
   adcode: string;
@@ -26,7 +36,13 @@ export interface AppData {
   provincesGeoJson: unknown; // 省界图层（粗线）
 }
 
-export interface MemoryRecord {
+export interface PracticeRecord {
+  correctCount: number;
+  wrongCount: number;
+  score: number;
+}
+
+export interface MemoryRecord extends PracticeRecord {
   learned: boolean;
   firstLearnedAt: number;
   reviewCount: number;

@@ -11,6 +11,7 @@ import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { ChallengeMode } from './modes/challenge';
 import { MemoryMode } from './modes/memory';
+import { ClickMode } from './modes/click';
 import type { Mode, Settings, Unit } from './types';
 import type { ModeCtx, ModeController } from './modes/types';
 
@@ -71,6 +72,7 @@ async function boot() {
     free: new FreeMode(ctx),
     self: new SelfTestMode(ctx),
     challenge: new ChallengeMode(ctx),
+    click: new ClickMode(ctx),
     memory: new MemoryMode(ctx),
   };
 

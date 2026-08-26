@@ -38,8 +38,10 @@ export interface ModeController {
   refresh(): void;
   onSubmit(v: string): void;
   onInput?(v: string): void;
-  onUnitClick(adcode: string): void;
+  onUnitClick(adcode: string): boolean | void;
   onUnitDblClick(adcode: string): void;
+  onUnitHover?(adcode: string): void;
+  onUnitHoverEnd?(): void;
   onSkip?(): void;
   onEnd?(): void;
   onReset?(): void;

@@ -34,12 +34,24 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       blue: '#6fa8dc', // 当前题目
       red: '#d98989', // 答错标记
       gray: '#e7e2d8',
+      scoreGreenLight: '#c7e8ce',
+      scoreGreenMedium: '#86c993',
+      scoreGreenDark: '#4f9d60',
+      scoreRedLight: '#f0c8c8',
+      scoreRedMedium: '#dc9292',
+      scoreRedDark: '#bd5d5d',
     },
     emphasis: {
       green: '#93cfa0',
       blue: '#83b7e3',
       red: '#e1a0a0',
       gray: '#eee9df',
+      scoreGreenLight: '#d7f0dc',
+      scoreGreenMedium: '#a2d8ac',
+      scoreGreenDark: '#6bb87a',
+      scoreRedLight: '#f6dada',
+      scoreRedMedium: '#e5aaaa',
+      scoreRedDark: '#cf7777',
     },
     border: '#b9b2a6',
     provinceBorder: '#6b7280',
@@ -62,12 +74,24 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       blue: '#1d4ed8',
       red: '#991b1b',
       gray: '#1f2937',
+      scoreGreenLight: '#3b7a4b',
+      scoreGreenMedium: '#23703a',
+      scoreGreenDark: '#166534',
+      scoreRedLight: '#8b4b4b',
+      scoreRedMedium: '#a23737',
+      scoreRedDark: '#991b1b',
     },
     emphasis: {
       green: '#15803d',
       blue: '#2563eb',
       red: '#b91c1c',
       gray: '#334155',
+      scoreGreenLight: '#4f985f',
+      scoreGreenMedium: '#2d8a46',
+      scoreGreenDark: '#15803d',
+      scoreRedLight: '#a65b5b',
+      scoreRedMedium: '#b83f3f',
+      scoreRedDark: '#b91c1c',
     },
     border: '#475569',
     provinceBorder: '#94a3b8',
@@ -99,12 +123,20 @@ const STATUS_TXT: Record<UnitColor, string> = {
   blue: '当前题目',
   red: '答错',
   gray: '未涉及',
+  scoreGreenLight: '初步掌握',
+  scoreGreenMedium: '稳定掌握',
+  scoreGreenDark: '熟练掌握',
+  scoreRedLight: '需复习',
+  scoreRedMedium: '掌握较弱',
+  scoreRedDark: '重点复习',
 };
 
 export interface MapHandlers {
-  onUnitClick: (adcode: string) => void;
+  onUnitClick: (adcode: string) => boolean | void;
   onUnitDblClick: (adcode: string) => void;
   onBlankClick: () => void;
+  onUnitHover?: (adcode: string) => void;
+  onUnitHoverEnd?: () => void;
 }
 
 const LABEL_FONT = `600 ${CITY_LABEL_SIZE}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
@@ -179,6 +211,7 @@ export class MapRenderer {
         return;
       }
       if (!this.viewProvince) {
+        if (this.handlers.onUnitClick(u.adcode) === true) return;
         this.drillToProvince(u.provinceAdcode);
         return;
       }
@@ -188,6 +221,17 @@ export class MapRenderer {
 
     this.chart.getZr().on('click', (event) => {
       if (!event.target && this.viewProvince) this.handlers.onBlankClick();
+    });
+
+    this.chart.on('mouseover', (p) => {
+      const params = p as { componentType?: string; seriesType?: string; name?: string };
+      if (params.componentType !== 'series' || params.seriesType !== 'map') return;
+      const u = this.nameToUnit.get(params.name ?? '');
+      if (u && !u.decorative) this.handlers.onUnitHover?.(u.adcode);
+    });
+    this.chart.on('mouseout', (p) => {
+      const params = p as { componentType?: string; seriesType?: string };
+      if (params.componentType === 'series' && params.seriesType === 'map') this.handlers.onUnitHoverEnd?.();
     });
 
     this.chart.on('dblclick', (p) => {
