@@ -123,6 +123,88 @@ button.primary {
   border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
 }
 button.primary:hover { background: var(--accent-strong); }
+.user-center-wrap {
+  position: relative;
+}
+.user-center {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 116px;
+  height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--tab-border);
+  border-radius: 8px;
+  background: var(--dark-control-bg);
+  color: var(--dark-control-text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.user-center:hover,
+.user-center[aria-expanded="true"] {
+  background: var(--tab-hover);
+}
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 50%;
+  background-color: #9ca3af;
+  background-position: center;
+  background-size: cover;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+.user-avatar.default-avatar {
+  background: #e5e7eb;
+  border: 1px solid #cbd5e1;
+}
+.user-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 120;
+  display: grid;
+  gap: 4px;
+  min-width: 132px;
+  padding: 8px;
+  border: 1px solid var(--floating-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--floating-shadow);
+}
+.user-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.user-menu button:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+.user-menu button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
 
 /* ---------- 搜索行 ---------- */
 #mode-progress {
@@ -408,11 +490,118 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 .card h3 { margin-bottom: 14px; }
 .card .row { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 14px; color: var(--text); }
 .card input[type="number"],
+.card input[type="text"],
+.card input[type="password"],
 .card select {
   background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border);
   border-radius: 8px; padding: 5px 8px;
 }
 .card input[type="checkbox"] { accent-color: var(--accent); }
+.auth-card {
+  width: min(480px, calc(100vw - 32px));
+}
+.form-row {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.form-row input {
+  width: 100%;
+  min-height: 34px;
+  font-size: 14px;
+  font-weight: 400;
+}
+.profile-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 8px 0 14px;
+}
+.profile-avatar {
+  flex-basis: 46px;
+  width: 46px;
+  height: 46px;
+  font-size: 20px;
+}
+.avatar-upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--control-text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+.avatar-upload:hover {
+  background: var(--control-hover);
+}
+.avatar-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.location-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 10px;
+  margin-top: 6px;
+}
+.auth-options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  overflow-x: auto;
+}
+.auth-options button {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--control-text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.auth-options button:hover {
+  background: var(--control-hover);
+  border-color: var(--muted);
+}
+.auth-message {
+  min-height: 20px;
+  margin-top: 8px;
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.auth-switch {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.auth-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+@media (max-width: 620px) {
+  .topbar { gap: 10px; }
+  .user-center { min-width: 104px; }
+  .location-grid { grid-template-columns: 1fr; }
+}
+
 .settings-section-title {
   margin: 16px 0 8px;
   color: var(--muted);

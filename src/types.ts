@@ -63,6 +63,34 @@ export interface Settings {
   darkMode: boolean;
 }
 
+export interface UserHometown {
+  provinceAdcode: string;
+  cityAdcode: string;
+}
+
+export interface UserAvatar {
+  dataUrl: string;
+  name: string;
+  size: number;
+  type: string;
+}
+
+export interface PasswordHash {
+  algorithm: 'PBKDF2-SHA-256';
+  salt: string;
+  hash: string;
+  iterations: number;
+}
+
+export interface AuthUser {
+  username: string;
+  password: PasswordHash;
+  hometown: UserHometown | null;
+  avatar: UserAvatar | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface RenderState {
   colorOf: (adcode: string) => UnitColor;
   showAllLabels?: boolean; // 记忆模式：全部显示地名标签

@@ -19,6 +19,10 @@
       <div class="top-actions">
         <button id="btn-stats" class="ghost">进度</button>
         <button id="btn-settings" class="ghost">设置</button>
+        <div class="user-center-wrap">
+          <button id="user-center" class="user-center" type="button" aria-haspopup="menu" aria-expanded="false"></button>
+          <div id="user-menu" class="user-menu hidden" role="menu"></div>
+        </div>
       </div>
     </header>
 
@@ -71,6 +75,10 @@
         <button id="help-close" class="ghost">关闭</button>
       </div>
     </div>
+  </div>
+
+  <div id="auth-panel" class="overlay hidden">
+    <div id="auth-card" class="card auth-card"></div>
   </div>
 
   <div id="settings-panel" class="overlay hidden">

@@ -2,8 +2,10 @@ import './styles.css';
 import { loadData, buildIndex } from './data';
 import { Matcher } from './matcher';
 import { MapRenderer } from './map/renderer';
+import { AuthStore } from './authStore';
 import { MemoryStore, loadSettings } from './store';
 import { SearchBox } from './ui/searchBox';
+import { AuthPanel } from './ui/authPanel';
 import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary } from './ui/dom';
@@ -29,6 +31,7 @@ async function boot() {
   const search = new SearchBox('search-input');
   search.setRequireEnter(settings.requireEnter);
   const stats = new StatsPanel('stats', data, store);
+  new AuthPanel(new AuthStore(), data);
 
   let current: ModeController | null = null;
   let statsVisible = true;
