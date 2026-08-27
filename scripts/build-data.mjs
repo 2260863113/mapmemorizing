@@ -37,7 +37,7 @@ const ETHNIC_WORDS = [
   '仫佬', '仡佬', '京', '独龙', '德昂', '阿昌', '普米', '怒', '基诺', '布朗', '维吾尔',
 ];
 const ETHNIC_RE = new RegExp(`(?:${ETHNIC_WORDS.join('|')})(?:族)?(?=自治)`, 'g');
-const SUFFIXES = ['自治州', '地区', '盟', '州', '市'];
+const SUFFIXES = ['自治州', '自治县', '自治旗', '地区', '林区', '新区', '盟', '州', '市', '县', '旗'];
 
 function normalize(raw) {
   let s = String(raw).trim().toLowerCase();
@@ -160,21 +160,21 @@ for (const [adcode, pname, special] of PROVINCES) {
   }
 }
 
-// 省直辖县级填充面：adcode 前 4 位不属于任何地级 → 不隶属任何地级市（如海南直辖县、仙桃、济源、兵团城市），
-// 作为装饰面补齐省地图空白（灰色、不参与匹配/统计/测试/邻接）
-console.log('[3/5] 分拣省直辖县级填充面...');
+// 省直辖县级单位：adcode 前 4 位不属于任何地级 → 不隶属任何地级市（如海南直辖县、仙桃、济源、兵团城市），
+// 作为独立可交互单位补齐地图空白，并参与匹配/统计/测试。
+console.log('[3/5] 分拣省直辖县级单位...');
 const cityPrefixes = new Set(units.filter((u) => !u.decorative).map((u) => u.adcode.slice(0, 4)));
 let countyN = 0;
 for (const c of pendingCounty) {
   if (cityPrefixes.has(c.adcode.slice(0, 4))) continue; // 属于某地级市（普通区县），不需要
   units.push({
-    adcode: c.adcode, name: c.name, shortName: c.name, province: c.province, provinceAdcode: c.provinceAdcode,
-    center: c.feature.properties.center || c.feature.properties.centroid || [104.5, 35], neighbors: [], decorative: true,
+    adcode: c.adcode, name: c.name, shortName: normalize(c.name) || c.name, province: c.province, provinceAdcode: c.provinceAdcode,
+    center: c.feature.properties.center || c.feature.properties.centroid || [104.5, 35], neighbors: [],
   });
   features.push({ type: 'Feature', properties: { adcode: c.adcode, name: c.name }, geometry: c.feature.geometry });
   countyN++;
 }
-console.log(`  省直辖县级填充面: ${countyN} 个（${pendingCounty.length} 个县级候选中分拣）`);
+console.log(`  省直辖县级单位: ${countyN} 个（${pendingCounty.length} 个县级候选中分拣）`);
 
 // 南海诸岛（装饰性）
 const nanhai = national.features.find((f) => String(f.properties.adcode) === '100000_JD');

@@ -13,7 +13,7 @@ export type UnitColor =
 
 export interface Unit {
   adcode: string;
-  name: string; // 官方全名（地级）或短名（北京/上海等整体单位）
+  name: string; // 官方全名（地图单位）或短名（北京/上海等整体单位）
   shortName: string; // 去限定词后的简称，如「黔南」
   province: string; // 所属省全名
   provinceAdcode: string;
@@ -30,7 +30,7 @@ export interface Province {
 
 export interface AppData {
   units: Unit[]; // 真实记忆单位（不含装饰）
-  allUnits: Unit[]; // 含装饰（省直辖县级填充面、南海诸岛）
+  allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
   provinces: Province[];
   geoJson: unknown; // 地级 + 装饰面
   provincesGeoJson: unknown; // 省界图层（粗线）
@@ -62,5 +62,6 @@ export interface Settings {
 export interface RenderState {
   colorOf: (adcode: string) => UnitColor;
   showAllLabels?: boolean; // 记忆模式：全部显示地名标签
+  labelZoomThreshold?: number; // 地名标签显示倍率阈值
   disableTooltip?: boolean; // 记忆模式：关闭提示
 }

@@ -10,7 +10,7 @@ export const ETHNIC_WORDS = [
 // 民族词 + 可选「族」+ 后随「自治」（仅剥离自治地名，避免误伤「白山市」「满洲里」等普通地名）
 // 注意：伊犁哈萨克自治州没有「族」字，因此「族」为可选；循环剥离处理「土家族苗族」连写
 const ETHNIC_RE = new RegExp(`(?:${ETHNIC_WORDS.join('|')})(?:族)?(?=自治)`, 'g');
-const SUFFIXES = ['自治州', '地区', '盟', '州', '市'];
+const SUFFIXES = ['自治州', '自治县', '自治旗', '地区', '林区', '新区', '盟', '州', '市', '县', '旗'];
 
 /** 地级单位名规范化：去民族词 + 去行政后缀。例：黔南布依族苗族自治州 → 黔南 */
 export function normalize(raw: string): string {
@@ -148,7 +148,7 @@ export class Matcher {
       if (score > 0) {
         out.push({
           kind: 'province', adcode: province.adcode, label: province.name,
-          sub: `省级 · ${count} 个地级单位，点击进入`, score: score - 1,
+          sub: `省级 · ${count} 个地图单位，点击进入`, score: score - 1,
         });
       }
     }

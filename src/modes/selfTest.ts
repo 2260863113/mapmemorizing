@@ -36,7 +36,15 @@ export class SelfTestMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    if (this.paused) return;
+    if (this.paused) {
+      this.ctx.search.setPlaceholder('地名');
+      this.ctx.setHint('');
+      this.refresh();
+      this.ctx.showStopwatch(this.stopwatch.elapsedMs());
+      this.ctx.updateProgress();
+      this.ctx.search.clear();
+      return;
+    }
     this.exit();
     this.green.clear();
     this.red.clear();
@@ -366,7 +374,7 @@ export class SelfTestMode implements ModeController {
     this.paused = false;
     this.ctx.updateProgress();
     this.ctx.showSummary(
-      `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地级单位</div>`,
+      `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
       () => {
         this.clearSaved();
         this.enter();

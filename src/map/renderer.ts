@@ -110,7 +110,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
 };
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
-const LABEL_ZOOM = 4; // 缩放倍率大于 4 时显示地级标签，避免低倍率下拥挤
+const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
@@ -174,6 +174,7 @@ export class MapRenderer {
   private chart: echarts.ECharts;
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
+  private adcodeToUnit = new Map<string, Unit>();
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
   private viewProvince: string | null = null;
@@ -193,7 +194,10 @@ export class MapRenderer {
     echarts.registerMap('china', data.geoJson as never);
     this.chart = echarts.init(el);
     this.units = data.allUnits;
-    for (const u of this.units) this.nameToUnit.set(u.name, u);
+    for (const u of this.units) {
+      this.nameToUnit.set(u.name, u);
+      this.adcodeToUnit.set(u.adcode, u);
+    }
     this.provinceLines = this.buildProvinceLines();
     this.labelAnchors = this.buildLabelAnchors();
 
@@ -206,7 +210,7 @@ export class MapRenderer {
         return;
       }
       const u = this.nameToUnit.get(params.name ?? '');
-      if (!u || u.decorative) {
+      if (!u) {
         if (this.viewProvince) this.handlers.onBlankClick();
         return;
       }
@@ -227,7 +231,7 @@ export class MapRenderer {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
       const u = this.nameToUnit.get(params.name ?? '');
-      if (u && !u.decorative) this.handlers.onUnitHover?.(u.adcode);
+      if (u) this.handlers.onUnitHover?.(u.adcode);
     });
     this.chart.on('mouseout', (p) => {
       const params = p as { componentType?: string; seriesType?: string };
@@ -242,14 +246,14 @@ export class MapRenderer {
       }
       if (params.componentType === 'series' && params.seriesType === 'map') {
         const u = this.nameToUnit.get(params.name ?? '');
-        if (!u || u.decorative) return;
+        if (!u) return;
         this.handlers.onUnitDblClick(u.adcode);
         return;
       }
       // geo 兜底：空白/边界附近点击命中的地级 region
       if (params.componentType === 'geo') {
         const u = this.nameToUnit.get(params.name ?? '');
-        if (!u || u.decorative) return;
+        if (!u) return;
         this.handlers.onUnitDblClick(u.adcode);
       }
     });
@@ -361,8 +365,8 @@ export class MapRenderer {
   private buildLabelData(state: RenderState): LabelPoint[] {
     if (this.labelMode !== 'city') return [];
     return this.units.flatMap((u) => {
-      if (u.decorative || (this.viewProvince && u.provinceAdcode !== this.viewProvince)) return [];
-      const color = state.colorOf(u.adcode);
+      if (this.viewProvince && u.provinceAdcode !== this.viewProvince) return [];
+      const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
       const theme = this.theme();
       if (color === 'blue') return []; // 答题模式不泄露当前题目答案
       const anchor = this.labelAnchorOf(u);
@@ -373,8 +377,9 @@ export class MapRenderer {
     });
   }
 
-  private desiredLabelMode(_state: RenderState | null = this.lastState): 'none' | 'city' {
-    return this.zoom > LABEL_ZOOM ? 'city' : 'none';
+  private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
+    const threshold = state?.labelZoomThreshold ?? LABEL_ZOOM;
+    return this.zoom > threshold ? 'city' : 'none';
   }
 
   private applyLabelMode() {
@@ -533,7 +538,7 @@ export class MapRenderer {
 
   /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制） */
   flash(adcode: string) {
-    const u = this.nameToUnit.get(adcode);
+    const u = this.adcodeToUnit.get(adcode);
     if (!u) return;
     this.clearFlash();
     const opt = this.chart.getOption() as {

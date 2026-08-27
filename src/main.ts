@@ -120,25 +120,17 @@ async function boot() {
     hideHelp();
     hideHoverStats();
     const active = current;
-    const currentStarted = active?.isStarted?.() ?? false;
-    const currentPaused = active?.isPaused?.() ?? false;
-    if (active && currentStarted && !currentPaused) {
-      active.pause?.();
-      if (active.isPaused?.()) showPauseOverlay();
-      syncModeChrome();
-      updateProgress();
-      return;
-    }
-    active?.exit();
+    if (active?.isStarted?.() && !active.isPaused?.()) active.pause?.();
+    if (active && !active.isPaused?.()) active.exit();
     current = modes[mode];
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
     });
     const inputMode = mode === 'self' || mode === 'challenge';
     $('search-row').classList.toggle('hidden', !inputMode);
-    hidePauseOverlay();
     current.enter();
     syncModeChrome();
+    syncPauseOverlay();
     updateProgress();
   }
 
@@ -152,6 +144,11 @@ async function boot() {
     $('app').classList.remove('test-paused');
   }
 
+  function syncPauseOverlay() {
+    if (current?.isPaused?.()) showPauseOverlay();
+    else hidePauseOverlay();
+  }
+
   function syncModeChrome() {
     const mode = current?.id;
     const isAnalysis = mode === 'free';
@@ -159,7 +156,6 @@ async function boot() {
     if (!isTest) {
       showTimer(null);
       showStopwatch(null);
-      hidePauseOverlay();
     }
     $('app').dataset.mode = mode ?? '';
     $('side-panel').classList.toggle('hidden', !isAnalysis || !statsVisible);
@@ -226,8 +222,10 @@ async function boot() {
 
   ($('pause-overlay') as HTMLElement).addEventListener('click', () => {
     if (!current?.isPaused?.()) return;
-    hidePauseOverlay();
     current.resume?.();
+    syncPauseOverlay();
+    syncModeChrome();
+    updateProgress();
   });
 
   ($('btn-help') as HTMLButtonElement).addEventListener('click', showHelp);
@@ -241,7 +239,7 @@ async function boot() {
     if (mode === 'self') {
       return {
         title: '输入模式说明',
-        body: '输入地名进行作答。答对后题目会沿相邻地级单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、中断和重置。',
+        body: '输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、中断和重置。',
       };
     }
     if (mode === 'challenge') {
@@ -253,18 +251,18 @@ async function boot() {
     if (mode === 'free') {
       return {
         title: '熟练度分析说明',
-        body: '地图按累计答题分数分层着色。悬停地级市可查看正确和错误次数；此模式不响应点击和输入。',
+        body: '地图按累计答题分数分层着色。悬停地图单位可查看正确和错误次数；此模式不响应点击和输入。',
       };
     }
     if (mode === 'click') {
       return {
         title: '点击模式说明',
-        body: '按照顶部提示点击对应地级市。答对变绿，答错时正确答案变红；本模式不使用自动跟随。',
+        body: '按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。',
       };
     }
     return {
       title: '自由模式说明',
-      body: '这是自由浏览模式，可以查看全部地级市名称并自由缩放、双击区域进入该省。',
+      body: '这是自由浏览模式，可以查看全部地图单位名称并自由缩放、双击区域进入该省。',
     };
   }
 

@@ -10,7 +10,7 @@ type SavedClickProgress = {
   scopeProvince?: string | null;
 };
 
-/** 点击模式：根据顶部题目提示，在地图上点击对应的地级单位。 */
+/** 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。 */
 export class ClickMode implements ModeController {
   id: Mode = 'click';
   title = '点击模式';
@@ -29,7 +29,13 @@ export class ClickMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    if (this.paused) return;
+    if (this.paused) {
+      this.ctx.setHint('');
+      this.refresh();
+      this.ctx.showStopwatch(this.stopwatch.elapsedMs());
+      this.ctx.updateProgress();
+      return;
+    }
     this.exit();
     this.scopeProvince = this.ctx.renderer.currentProvince();
     this.order = this.scopedUnits().map((u) => u.adcode);
@@ -57,6 +63,8 @@ export class ClickMode implements ModeController {
   resume() {
     if (!this.started || !this.paused) return;
     this.paused = false;
+    const unit = this.question ? this.ctx.byAdcode.get(this.question) ?? null : null;
+    if (unit) this.showQuestionHint(unit);
     this.stopwatch.resume();
     this.ctx.showStopwatch(this.stopwatch.elapsedMs());
   }
@@ -233,9 +241,13 @@ export class ClickMode implements ModeController {
 
   private ask(unit: Unit) {
     this.question = unit.adcode;
-    this.ctx.setHint(`<div class="start-panel click-question"><div class="start-title">${unit.name}</div></div>`);
+    this.showQuestionHint(unit);
     this.refresh();
     this.persist();
+  }
+
+  private showQuestionHint(unit: Unit) {
+    this.ctx.setHint(`<div class="start-panel click-question"><div class="start-title">${unit.name}</div></div>`);
   }
 
   private answer(correct: boolean, scored = true) {
@@ -274,7 +286,7 @@ export class ClickMode implements ModeController {
     this.ctx.showStopwatch(null);
     this.ctx.updateProgress();
     this.ctx.showSummary(
-      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地级单位</div>`,
+      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
       () => {
         this.clearSaved();
         this.enter();

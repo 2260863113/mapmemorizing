@@ -16,7 +16,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<unknown>('data/china_units.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
   ]);
-  const allUnits = meta.units;
+  const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
   cache = { units, allUnits, provinces: meta.provinces, geoJson: geo, provincesGeoJson: provGeo };
   return cache;
@@ -25,7 +25,7 @@ export async function loadData(): Promise<AppData> {
 /** 常用索引 */
 export function buildIndex(data: AppData) {
   const byAdcode = new Map<string, Unit>();
-  for (const u of data.units) byAdcode.set(u.adcode, u);
+  for (const u of data.allUnits) byAdcode.set(u.adcode, u);
   const provinceUnits = new Map<string, Unit[]>();
   for (const u of data.units) {
     const list = provinceUnits.get(u.provinceAdcode) ?? [];
@@ -33,6 +33,10 @@ export function buildIndex(data: AppData) {
     provinceUnits.set(u.provinceAdcode, list);
   }
   return { byAdcode, provinceUnits };
+}
+
+function isPureDecoration(unit: Unit) {
+  return unit.adcode === '100000_JD';
 }
 
 export type Index = ReturnType<typeof buildIndex>;

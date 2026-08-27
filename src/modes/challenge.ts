@@ -11,7 +11,7 @@ type SavedChallengeProgress = {
 };
 
 /**
- * 挑战模式：随机标蓝一个地级单位作为题目，输入正确变绿并立即随机出下一题；
+ * 挑战模式：随机标蓝一个地图单位作为题目，输入正确变绿并立即随机出下一题；
  * 答错或超时变红（错误标记）并跳过。每题默认 10 秒（设置中可调）。
  */
 export class ChallengeMode implements ModeController {
@@ -34,7 +34,16 @@ export class ChallengeMode implements ModeController {
   constructor(private ctx: ModeCtx) {}
 
   enter() {
-    if (this.paused) return;
+    if (this.paused) {
+      this.ctx.search.setPlaceholder('地名');
+      this.ctx.setHint('');
+      this.refresh();
+      if (this.question) this.showCountdown(this.countdown.remaining());
+      else this.ctx.showTimer(null);
+      this.ctx.updateProgress();
+      this.ctx.search.clear();
+      return;
+    }
     this.exit();
     this.green.clear();
     this.red.clear();

@@ -21,7 +21,6 @@ export function setHint(html: string) {
 
 export function showTimer(remain: number | null, urgent = false) {
   const el = $('test-timer');
-  el.classList.remove('timer-inline');
   if (remain === null) {
     el.classList.add('hidden');
     el.classList.remove('urgent');
@@ -34,7 +33,6 @@ export function showTimer(remain: number | null, urgent = false) {
 
 export function showStopwatch(elapsedMs: number | null) {
   const el = $('test-timer');
-  el.classList.add('timer-inline');
   if (elapsedMs === null) {
     el.classList.add('hidden');
     el.classList.remove('urgent');
