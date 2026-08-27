@@ -1,8 +1,8 @@
 import { $ } from './dom';
-import type { Settings } from '../types';
+import type { BoundaryTone, Settings } from '../types';
 import { saveSettings } from '../store';
 
-/** 设置面板：自测倒计时 / 挑战每题秒数 */
+/** 设置面板：测试选项 / 个性化 */
 export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   const panel = $('settings-panel');
   const enable = $('set-self-enable') as HTMLInputElement;
@@ -10,6 +10,8 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   const autoFollow = $('set-auto-follow') as HTMLInputElement;
   const darkMode = $('set-dark-mode') as HTMLInputElement;
   const followZoom = $('set-follow-zoom') as HTMLInputElement;
+  const cityBoundaryTone = $('set-city-boundary-tone') as HTMLSelectElement;
+  const provinceBoundaryTone = $('set-province-boundary-tone') as HTMLSelectElement;
   const secs = $('set-self-secs') as HTMLInputElement;
   const chal = $('set-challenge-secs') as HTMLInputElement;
   enable.checked = current.selfTimerEnabled;
@@ -17,6 +19,8 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   autoFollow.checked = current.autoFollow;
   darkMode.checked = current.darkMode;
   followZoom.value = String(current.followZoom);
+  cityBoundaryTone.value = current.cityBoundaryTone;
+  provinceBoundaryTone.value = current.provinceBoundaryTone;
   secs.value = String(current.selfTimerSeconds);
   chal.value = String(current.challengeSeconds);
   panel.classList.remove('hidden');
@@ -31,10 +35,16 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
       requireEnter: requireEnter.checked,
       autoFollow: autoFollow.checked,
       followZoom: Math.min(28, Math.max(2, Number(followZoom.value) || current.followZoom)),
+      cityBoundaryTone: boundaryToneOf(cityBoundaryTone.value, current.cityBoundaryTone),
+      provinceBoundaryTone: boundaryToneOf(provinceBoundaryTone.value, current.provinceBoundaryTone),
       darkMode: darkMode.checked,
     };
     saveSettings(s);
     onSave(s);
     close();
   };
+}
+
+function boundaryToneOf(value: string, fallback: BoundaryTone): BoundaryTone {
+  return value === 'light' || value === 'mid' || value === 'dark' ? value : fallback;
 }

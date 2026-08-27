@@ -1,4 +1,4 @@
-import type { MemoryRecord, Settings } from './types';
+import type { BoundaryTone, MemoryRecord, Settings } from './types';
 
 const MEM_KEY = 'china-admin-memory-v1';
 const SET_KEY = 'china-admin-settings-v1';
@@ -125,17 +125,30 @@ export const DEFAULT_SETTINGS: Settings = {
   requireEnter: true,
   autoFollow: true,
   followZoom: 12,
+  cityBoundaryTone: 'light',
+  provinceBoundaryTone: 'dark',
   darkMode: false,
 };
-
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SET_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Settings>;
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        cityBoundaryTone: boundaryToneOf(parsed.cityBoundaryTone, DEFAULT_SETTINGS.cityBoundaryTone),
+        provinceBoundaryTone: boundaryToneOf(parsed.provinceBoundaryTone, DEFAULT_SETTINGS.provinceBoundaryTone),
+      };
+    }
   } catch {
     /* 忽略 */
   }
   return { ...DEFAULT_SETTINGS };
+}
+
+function boundaryToneOf(value: unknown, fallback: BoundaryTone): BoundaryTone {
+  return value === 'light' || value === 'mid' || value === 'dark' ? value : fallback;
 }
 
 export function saveSettings(s: Settings) {

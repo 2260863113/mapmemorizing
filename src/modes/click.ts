@@ -25,11 +25,14 @@ export class ClickMode implements ModeController {
   private fail = 0;
   private stopwatch = new Stopwatch();
   private paused = false;
+  private scopeLoaded = false;
+  private syncingScope = false;
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
     if (this.paused) {
+      this.syncScopeView();
       this.ctx.setHint('');
       this.refresh();
       this.ctx.showStopwatch(this.stopwatch.elapsedMs());
@@ -37,9 +40,10 @@ export class ClickMode implements ModeController {
       return;
     }
     this.exit();
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
+    this.syncScopeView();
     this.showStartHint();
     this.refresh();
     this.ctx.updateProgress();
@@ -140,12 +144,63 @@ export class ClickMode implements ModeController {
   }
 
   onViewChange() {
-    if (this.started) return;
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    if (this.started || this.syncingScope) return;
+    this.setScopeProvince(this.ctx.renderer.currentProvince());
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
     this.showStartHint();
     this.ctx.updateProgress();
+  }
+
+  private scopeStorageKey() {
+    return 'china-admin-mode-scope:click';
+  }
+
+  private ensureScopeProvince() {
+    if (this.scopeLoaded) return;
+    const saved = this.loadScopeProvince();
+    this.scopeProvince = saved === undefined ? this.ctx.renderer.currentProvince() : saved;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private loadScopeProvince(): string | null | undefined {
+    try {
+      const raw = localStorage.getItem(this.scopeStorageKey());
+      if (!raw) return undefined;
+      const saved = JSON.parse(raw) as { scopeProvince?: unknown };
+      if (saved.scopeProvince === null) return null;
+      if (typeof saved.scopeProvince === 'string' && this.ctx.data.provinces.some((p) => p.adcode === saved.scopeProvince)) return saved.scopeProvince;
+    } catch {
+      /* 忽略损坏的范围记录 */
+    }
+    return undefined;
+  }
+
+  private setScopeProvince(scopeProvince: string | null) {
+    this.scopeProvince = scopeProvince;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private persistScopeProvince() {
+    try {
+      localStorage.setItem(this.scopeStorageKey(), JSON.stringify({ scopeProvince: this.scopeProvince }));
+    } catch {
+      /* 忽略存储失败 */
+    }
+  }
+
+  private syncScopeView() {
+    this.ensureScopeProvince();
+    if (this.ctx.renderer.currentProvince() === this.scopeProvince) return;
+    this.syncingScope = true;
+    try {
+      if (this.scopeProvince) this.ctx.renderer.drillToProvince(this.scopeProvince);
+      else this.ctx.renderer.backToNation();
+    } finally {
+      this.syncingScope = false;
+    }
   }
 
   private storageKey() {
@@ -214,7 +269,8 @@ export class ClickMode implements ModeController {
 
   private start(continueSaved: boolean) {
     if (this.started) return;
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
+    this.syncScopeView();
     this.order = this.scopedUnits().map((u) => u.adcode);
     if (continueSaved) this.restore();
     else {

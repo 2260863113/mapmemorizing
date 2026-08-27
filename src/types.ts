@@ -28,6 +28,8 @@ export interface Province {
   center: [number, number];
 }
 
+export type BoundaryTone = 'light' | 'mid' | 'dark';
+
 export interface AppData {
   units: Unit[]; // 真实记忆单位（不含装饰）
   allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
@@ -56,6 +58,8 @@ export interface Settings {
   requireEnter: boolean;
   autoFollow: boolean;
   followZoom: number;
+  cityBoundaryTone: BoundaryTone;
+  provinceBoundaryTone: BoundaryTone;
   darkMode: boolean;
 }
 

@@ -27,20 +27,22 @@
     <main>
       <div id="mode-actions">
         <button id="btn-skip" class="mode-action">跳过</button>
-        <button id="btn-end" class="mode-action danger-hover">中断</button>
+        <button id="btn-end" class="mode-action danger-hover">暂停</button>
         <button id="btn-reset" class="mode-action">重置</button>
       </div>
       <div id="search-row">
         <input id="search-input" type="text" placeholder="输入地名，如：黔南" autocomplete="off" spellcheck="false" />
-        <div id="timer-pill" class="hidden">10s</div>
       </div>
-      <div id="mode-hint"></div>
+      <div id="top-status">
+        <div id="top-hint" class="hidden"></div>
+        <div id="test-timer" class="hidden" aria-live="polite">0.00s</div>
+      </div>
+      <div id="mode-hint" class="hidden"></div>
       <div id="pause-overlay" class="hidden" aria-live="polite"><span>点击任意处继续</span></div>
       <div id="hover-stats" class="hidden" aria-live="polite"></div>
       <div id="mode-info">
         <button id="btn-help" class="mode-action">说明</button>
         <div id="zoom-pill">1.00x</div>
-        <div id="test-timer" class="hidden" aria-live="polite">0.00s</div>
       </div>
       <div id="map"></div>
       <aside id="side-panel">
@@ -74,13 +76,29 @@
   <div id="settings-panel" class="overlay hidden">
     <div class="card">
       <h3>设置</h3>
-      <label class="row"><input type="checkbox" id="set-self-enable" /> 自测模式开启倒计时</label>
+      <div class="settings-section-title">测试</div>
+      <label class="row"><input type="checkbox" id="set-self-enable" /> 输入模式开启倒计时</label>
       <label class="row"><input type="checkbox" id="set-require-enter" /> 按下 Enter 确认</label>
       <label class="row"><input type="checkbox" id="set-auto-follow" /> 自动跟随</label>
-      <label class="row"><input type="checkbox" id="set-dark-mode" /> 黑夜模式</label>
-      <label class="row">自测每题秒数 <input type="number" id="set-self-secs" min="5" max="600" style="width:80px" /></label>
+      <label class="row">输入每题秒数 <input type="number" id="set-self-secs" min="5" max="600" style="width:80px" /></label>
       <label class="row">自动跟随倍率 <input type="number" id="set-follow-zoom" min="2" max="28" step="0.5" style="width:80px" /></label>
       <label class="row">挑战模式每题秒数 <input type="number" id="set-challenge-secs" min="3" max="120" style="width:80px" /></label>
+      <div class="settings-section-title">个性化</div>
+      <label class="row"><input type="checkbox" id="set-dark-mode" /> 黑夜模式</label>
+      <label class="row">地级市边界
+        <select id="set-city-boundary-tone">
+          <option value="light">浅灰色</option>
+          <option value="mid">灰色</option>
+          <option value="dark">深灰色</option>
+        </select>
+      </label>
+      <label class="row">省级边界
+        <select id="set-province-boundary-tone">
+          <option value="light">浅灰色</option>
+          <option value="mid">灰色</option>
+          <option value="dark">深灰色</option>
+        </select>
+      </label>
       <div class="card-actions">
         <button id="set-save" class="primary">保存</button>
         <button id="set-cancel" class="ghost">取消</button>

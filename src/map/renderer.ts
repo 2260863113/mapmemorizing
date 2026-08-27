@@ -1,5 +1,5 @@
 import * as echarts from 'echarts';
-import type { AppData, RenderState, Unit, UnitColor } from '../types';
+import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string] };
@@ -11,8 +11,7 @@ type MapTheme = {
   background: string;
   fill: Record<UnitColor, string>;
   emphasis: Record<UnitColor, string>;
-  border: string;
-  provinceBorder: string;
+  boundary: Record<BoundaryTone, string>;
   hoverArea: string;
   labelBg: string;
   labelShadow: string;
@@ -53,8 +52,11 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#e5aaaa',
       scoreRedDark: '#cf7777',
     },
-    border: '#b9b2a6',
-    provinceBorder: '#6b7280',
+    boundary: {
+      light: '#b9b2a6',
+      mid: '#90969d',
+      dark: '#6b7280',
+    },
     hoverArea: 'rgba(255,255,255,0.22)',
     labelBg: 'rgba(255,255,255,0.94)',
     labelShadow: 'rgba(15, 23, 42, 0.22)',
@@ -93,8 +95,11 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#b83f3f',
       scoreRedDark: '#b91c1c',
     },
-    border: '#475569',
-    provinceBorder: '#94a3b8',
+    boundary: {
+      light: '#475569',
+      mid: '#6b8197',
+      dark: '#94a3b8',
+    },
     hoverArea: 'rgba(148,163,184,0.18)',
     labelBg: 'rgba(15,23,42,0.9)',
     labelShadow: 'rgba(0, 0, 0, 0.42)',
@@ -114,6 +119,8 @@ const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 Render
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
+const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
+const HAINAN_PROVINCE = '460000';
 const CITY_LABEL_SIZE = 14;
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
@@ -185,6 +192,8 @@ export class MapRenderer {
   private followRaf: number | null = null;
   private lastState: RenderState | null = null;
   private themeName: ThemeName = 'light';
+  private cityBoundaryTone: BoundaryTone = 'light';
+  private provinceBoundaryTone: BoundaryTone = 'dark';
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   onViewChange: (() => void) | null = null;
@@ -288,6 +297,13 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
+  setBoundaryTones(cityBoundaryTone: BoundaryTone, provinceBoundaryTone: BoundaryTone) {
+    if (cityBoundaryTone === this.cityBoundaryTone && provinceBoundaryTone === this.provinceBoundaryTone) return;
+    this.cityBoundaryTone = cityBoundaryTone;
+    this.provinceBoundaryTone = provinceBoundaryTone;
+    if (this.lastState) this.render(this.lastState);
+  }
+
   private theme(): MapTheme {
     return MAP_THEMES[this.themeName];
   }
@@ -350,7 +366,7 @@ export class MapRenderer {
         silent: !inView,
         itemStyle: {
           areaColor: inView ? theme.fill[color] : 'rgba(0,0,0,0)',
-          borderColor: inView ? theme.border : 'rgba(0,0,0,0)',
+          borderColor: inView ? theme.boundary[this.cityBoundaryTone] : 'rgba(0,0,0,0)',
           borderWidth: inView ? 0.6 : 0,
         },
         emphasis: {
@@ -473,7 +489,7 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-          lineStyle: { color: theme.provinceBorder, width: 2.4, opacity: 1 },
+          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
           data: this.buildLineData(),
         },
         {
@@ -565,14 +581,20 @@ export class MapRenderer {
     }, 900);
   }
 
-  focusUnit(adcode: string, zoom: number) {
+  focusUnit(adcode: string, _zoom: number) {
     const u = this.units.find((item) => item.adcode === adcode);
     if (!u) return;
     if (this.viewProvince && this.viewProvince !== u.provinceAdcode) {
       this.viewProvince = null;
       if (this.lastState) this.render(this.lastState);
     }
-    this.animateViewTo(u.center, clampZoom(zoom));
+    this.animateViewTo(u.center, this.followZoomFor(u.provinceAdcode));
+  }
+
+  private followZoomFor(provinceAdcode: string) {
+    if (WIDE_FOLLOW_PROVINCES.has(provinceAdcode)) return 6;
+    if (provinceAdcode === HAINAN_PROVINCE) return 28;
+    return 12;
   }
 
   private animateViewTo(targetCenter: [number, number], targetZoom: number) {

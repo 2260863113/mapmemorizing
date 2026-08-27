@@ -21,7 +21,7 @@ export class ChallengeMode implements ModeController {
   private red = new Set<string>();
   private question: string | null = null;
   private started = false;
-  private activeProvince: string | null = null;
+  private scopeProvince: string | null = null;
   private ok = 0;
   private fail = 0;
   private order: string[] = [];
@@ -30,11 +30,14 @@ export class ChallengeMode implements ModeController {
   private nextTimer: number | null = null;
   private countdown = new Countdown();
   private paused = false;
+  private scopeLoaded = false;
+  private syncingScope = false;
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
     if (this.paused) {
+      this.syncScopeView();
       this.ctx.search.setPlaceholder('地名');
       this.ctx.setHint('');
       this.refresh();
@@ -50,12 +53,13 @@ export class ChallengeMode implements ModeController {
     this.question = null;
     this.started = false;
     this.paused = false;
-    this.activeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
     this.ok = 0;
     this.fail = 0;
     this.startTime = 0;
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
+    this.syncScopeView();
     this.ctx.search.setPlaceholder('地名');
     this.showStartHint();
     this.refresh();
@@ -178,8 +182,8 @@ export class ChallengeMode implements ModeController {
   }
 
   onViewChange() {
-    if (this.started) return;
-    this.activeProvince = this.ctx.renderer.currentProvince();
+    if (this.started || this.syncingScope) return;
+    this.setScopeProvince(this.ctx.renderer.currentProvince());
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
     this.showStartHint();
@@ -188,8 +192,59 @@ export class ChallengeMode implements ModeController {
 
   // ---------- 内部 ----------
 
+  private scopeStorageKey() {
+    return 'china-admin-mode-scope:challenge';
+  }
+
+  private ensureScopeProvince() {
+    if (this.scopeLoaded) return;
+    const saved = this.loadScopeProvince();
+    this.scopeProvince = saved === undefined ? this.ctx.renderer.currentProvince() : saved;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private loadScopeProvince(): string | null | undefined {
+    try {
+      const raw = localStorage.getItem(this.scopeStorageKey());
+      if (!raw) return undefined;
+      const saved = JSON.parse(raw) as { scopeProvince?: unknown };
+      if (saved.scopeProvince === null) return null;
+      if (typeof saved.scopeProvince === 'string' && this.ctx.data.provinces.some((p) => p.adcode === saved.scopeProvince)) return saved.scopeProvince;
+    } catch {
+      /* 忽略损坏的范围记录 */
+    }
+    return undefined;
+  }
+
+  private setScopeProvince(scopeProvince: string | null) {
+    this.scopeProvince = scopeProvince;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private persistScopeProvince() {
+    try {
+      localStorage.setItem(this.scopeStorageKey(), JSON.stringify({ scopeProvince: this.scopeProvince }));
+    } catch {
+      /* 忽略存储失败 */
+    }
+  }
+
+  private syncScopeView() {
+    this.ensureScopeProvince();
+    if (this.ctx.renderer.currentProvince() === this.scopeProvince) return;
+    this.syncingScope = true;
+    try {
+      if (this.scopeProvince) this.ctx.renderer.drillToProvince(this.scopeProvince);
+      else this.ctx.renderer.backToNation();
+    } finally {
+      this.syncingScope = false;
+    }
+  }
+
   private storageKey() {
-    return `china-admin-mode-progress:challenge:${this.activeProvince ?? 'nation'}`;
+    return `china-admin-mode-progress:challenge:${this.scopeProvince ?? 'nation'}`;
   }
 
   private restore() {
@@ -254,7 +309,7 @@ export class ChallengeMode implements ModeController {
   }
 
   private showStartHint() {
-    const scope = this.activeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.activeProvince)?.name ?? '当前省份' : '全国';
+    const scope = this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
     const actions = '<button id="challenge-start" class="start-action">开始</button>';
     this.ctx.setHint(`<div class="start-panel"><div class="start-title">挑战模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
     window.setTimeout(() => {
@@ -265,7 +320,8 @@ export class ChallengeMode implements ModeController {
 
   private start(continueSaved: boolean) {
     if (this.started || this.paused) return;
-    this.activeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
+    this.syncScopeView();
     this.order = this.scopedUnits().map((u) => u.adcode);
     if (continueSaved) {
       this.restore();
@@ -290,7 +346,7 @@ export class ChallengeMode implements ModeController {
   }
 
   private scopedUnits(): Unit[] {
-    return this.ctx.data.units.filter((u) => !this.activeProvince || u.provinceAdcode === this.activeProvince);
+    return this.ctx.data.units.filter((u) => !this.scopeProvince || u.provinceAdcode === this.scopeProvince);
   }
 
   private unvisited(): Unit[] {

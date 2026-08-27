@@ -14,9 +14,14 @@ export function toast(msg: string, ms = 2400) {
 }
 
 export function setHint(html: string) {
-  const host = $('mode-hint');
-  host.classList.toggle('start-host', html.includes('start-panel'));
-  host.innerHTML = html;
+  const topHost = $('top-hint');
+  const bottomHost = $('mode-hint');
+  const useTop = html.includes('start-panel');
+  topHost.classList.toggle('start-host', useTop);
+  topHost.classList.toggle('hidden', !useTop);
+  topHost.innerHTML = useTop ? html : '';
+  bottomHost.classList.toggle('hidden', useTop || html === '');
+  bottomHost.innerHTML = useTop ? '' : html;
 }
 
 export function showTimer(remain: number | null, urgent = false) {

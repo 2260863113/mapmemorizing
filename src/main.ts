@@ -47,6 +47,7 @@ async function boot() {
     onUnitHoverEnd: () => hideHoverStats(),
   });
   renderer.setDarkMode(settings.darkMode);
+  renderer.setBoundaryTones(settings.cityBoundaryTone, settings.provinceBoundaryTone);
   zoomDisplay = renderer.currentZoom();
   renderer.onViewChange = () => {
     current?.onViewChange?.();
@@ -239,7 +240,7 @@ async function boot() {
     if (mode === 'self') {
       return {
         title: '输入模式说明',
-        body: '输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、中断和重置。',
+        body: '输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、暂停和重置。',
       };
     }
     if (mode === 'challenge') {
@@ -283,6 +284,7 @@ async function boot() {
       search.setRequireEnter(settings.requireEnter);
       applyTheme(settings.darkMode);
       renderer.setDarkMode(settings.darkMode);
+      renderer.setBoundaryTones(settings.cityBoundaryTone, settings.provinceBoundaryTone);
     });
   });
 

@@ -25,6 +25,8 @@ export class SelfTestMode implements ModeController {
   private lastGreen: string | null = null;
   private activeProvince: string | null = null;
   private scopeProvince: string | null = null;
+  private scopeLoaded = false;
+  private syncingScope = false;
   private ok = 0;
   private fail = 0;
   private started = false;
@@ -37,6 +39,7 @@ export class SelfTestMode implements ModeController {
 
   enter() {
     if (this.paused) {
+      this.syncScopeView();
       this.ctx.search.setPlaceholder('地名');
       this.ctx.setHint('');
       this.refresh();
@@ -50,7 +53,7 @@ export class SelfTestMode implements ModeController {
     this.red.clear();
     this.question = null;
     this.lastGreen = null;
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
     this.activeProvince = this.scopeProvince;
     this.ok = 0;
     this.fail = 0;
@@ -58,6 +61,7 @@ export class SelfTestMode implements ModeController {
     this.paused = false;
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
+    this.syncScopeView();
     this.ctx.search.setPlaceholder('地名');
     this.showStartHint();
     this.refresh();
@@ -165,8 +169,8 @@ export class SelfTestMode implements ModeController {
   }
 
   onViewChange() {
-    if (this.started) return;
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    if (this.started || this.syncingScope) return;
+    this.setScopeProvince(this.ctx.renderer.currentProvince());
     this.activeProvince = this.scopeProvince;
     this.order = this.scopedUnits().map((u) => u.adcode);
     this.restore();
@@ -175,6 +179,57 @@ export class SelfTestMode implements ModeController {
   }
 
   // ---------- 内部 ----------
+
+  private scopeStorageKey() {
+    return 'china-admin-mode-scope:self';
+  }
+
+  private ensureScopeProvince() {
+    if (this.scopeLoaded) return;
+    const saved = this.loadScopeProvince();
+    this.scopeProvince = saved === undefined ? this.ctx.renderer.currentProvince() : saved;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private loadScopeProvince(): string | null | undefined {
+    try {
+      const raw = localStorage.getItem(this.scopeStorageKey());
+      if (!raw) return undefined;
+      const saved = JSON.parse(raw) as { scopeProvince?: unknown };
+      if (saved.scopeProvince === null) return null;
+      if (typeof saved.scopeProvince === 'string' && this.ctx.data.provinces.some((p) => p.adcode === saved.scopeProvince)) return saved.scopeProvince;
+    } catch {
+      /* 忽略损坏的范围记录 */
+    }
+    return undefined;
+  }
+
+  private setScopeProvince(scopeProvince: string | null) {
+    this.scopeProvince = scopeProvince;
+    this.scopeLoaded = true;
+    this.persistScopeProvince();
+  }
+
+  private persistScopeProvince() {
+    try {
+      localStorage.setItem(this.scopeStorageKey(), JSON.stringify({ scopeProvince: this.scopeProvince }));
+    } catch {
+      /* 忽略存储失败 */
+    }
+  }
+
+  private syncScopeView() {
+    this.ensureScopeProvince();
+    if (this.ctx.renderer.currentProvince() === this.scopeProvince) return;
+    this.syncingScope = true;
+    try {
+      if (this.scopeProvince) this.ctx.renderer.drillToProvince(this.scopeProvince);
+      else this.ctx.renderer.backToNation();
+    } finally {
+      this.syncingScope = false;
+    }
+  }
 
   private storageKey() {
     return `china-admin-mode-progress:self:${this.scopeProvince ?? 'nation'}`;
@@ -251,7 +306,7 @@ export class SelfTestMode implements ModeController {
   }
 
   private showStartHint() {
-    const scope = this.activeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.activeProvince)?.name ?? '当前省份' : '全国';
+    const scope = this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
     const actions = '<button id="self-start" class="start-action">开始</button>';
     this.ctx.setHint(`<div class="start-panel"><div class="start-title">输入模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
     window.setTimeout(() => {
@@ -262,7 +317,8 @@ export class SelfTestMode implements ModeController {
 
   private start(_continueSaved: boolean) {
     if (this.started || this.paused) return;
-    this.scopeProvince = this.ctx.renderer.currentProvince();
+    this.ensureScopeProvince();
+    this.syncScopeView();
     this.activeProvince = this.scopeProvince;
     this.order = this.scopedUnits().map((u) => u.adcode);
     if (_continueSaved) {
