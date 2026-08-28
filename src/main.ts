@@ -213,10 +213,11 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
-    const showSidePanel = isAnalysis ? statsVisible : isTest;
+    const showSidePanel = isAnalysis || isTest;
+    const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
-    $('side-panel').classList.toggle('collapsed', isTest && !sidePanelOpen);
-    ($('side-panel-toggle') as HTMLButtonElement).setAttribute('aria-expanded', String(!isTest || sidePanelOpen));
+    $('side-panel').classList.toggle('collapsed', showSidePanel && !panelOpen);
+    ($('side-panel-toggle') as HTMLButtonElement).setAttribute('aria-expanded', String(panelOpen));
     $('stats').classList.toggle('hidden', !isAnalysis);
     $('leaderboard').classList.toggle('hidden', !isTest);
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
@@ -422,7 +423,7 @@ async function boot() {
 
   const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
   sidePanelToggle.addEventListener('pointerdown', (event) => {
-    if (!isLeaderboardMode(current?.id)) return;
+    if (current?.id !== 'free' && !isLeaderboardMode(current?.id)) return;
     sidePanelDrag = { pointerId: event.pointerId, x: event.clientX, width: sidePanelWidth, moved: false };
     sidePanelToggle.setPointerCapture(event.pointerId);
   });
@@ -430,7 +431,8 @@ async function boot() {
     if (!sidePanelDrag || sidePanelDrag.pointerId !== event.pointerId) return;
     const nextWidth = clamp(sidePanelDrag.width - (event.clientX - sidePanelDrag.x), SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
     if (Math.abs(nextWidth - sidePanelDrag.width) > 4) sidePanelDrag.moved = true;
-    sidePanelOpen = true;
+    if (current?.id === 'free') statsVisible = true;
+    else sidePanelOpen = true;
     updateSidePanelWidth(nextWidth);
     syncModeChrome();
   });
@@ -446,7 +448,7 @@ async function boot() {
       return;
     }
     if (current?.id === 'free') {
-      statsVisible = false;
+      statsVisible = !statsVisible;
     } else {
       sidePanelOpen = !sidePanelOpen;
       saveSidePanelState(sidePanelOpen, sidePanelWidth);

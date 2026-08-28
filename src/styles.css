@@ -242,7 +242,7 @@ button.primary:hover { background: var(--accent-strong); }
   flex-wrap: wrap;
 }
 #search-row {
-  top: 60px;
+  top: 65px;
   left: 16px;
   display: flex;
   align-items: center;
@@ -486,26 +486,29 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 .inline-action:hover { background: var(--accent-strong); }
 #map { flex: 1; min-width: 0; background: var(--map-bg); }
 #side-panel {
-  position: relative;
-  flex: 0 0 var(--side-panel-width, 300px);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: var(--side-panel-width, 300px);
   padding: 14px;
   overflow: visible;
-  border-left: 1px solid var(--floating-border);
+  border: 1px solid var(--floating-border);
+  border-left: 0;
+  border-right: 0;
   background: var(--floating-bg);
   color: var(--control-text);
   box-shadow: var(--floating-shadow);
   backdrop-filter: var(--floating-blur);
-  z-index: 4;
-  transition: flex-basis 0.2s ease, width 0.2s ease, padding 0.2s ease;
+  z-index: 18;
+  transition: width 0.2s ease, padding 0.2s ease;
 }
 #side-panel-content {
   height: 100%;
   overflow-y: auto;
 }
 #side-panel.collapsed {
-  flex-basis: 16px;
-  width: 16px;
+  width: 12px;
   padding: 0;
 }
 #side-panel.collapsed #side-panel-content {
@@ -514,19 +517,18 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 .side-panel-toggle {
   position: absolute;
   top: 50%;
-  left: -24px;
+  left: -18px;
   z-index: 6;
   display: grid;
   place-items: center;
-  width: 26px;
+  width: 18px;
   height: 88px;
   border: 1px solid var(--floating-border);
   border-right: 0;
-  border-radius: 8px 0 0 8px;
+  border-radius: 12px 0 0 12px;
   background: var(--floating-bg);
   box-shadow: var(--floating-shadow);
   backdrop-filter: var(--floating-blur);
-  clip-path: polygon(0 12%, 100% 0, 100% 100%, 0 88%);
   cursor: ew-resize;
   touch-action: none;
   transform: translateY(-50%);
