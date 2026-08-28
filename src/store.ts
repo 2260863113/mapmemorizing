@@ -26,15 +26,17 @@ export class MemoryStore {
   private normalizeRecord(value: Partial<MemoryRecord>): MemoryRecord {
     const correctCount = finiteCount(value.correctCount);
     const wrongCount = finiteCount(value.wrongCount);
-    return {
+    const record: MemoryRecord = {
       learned: value.learned === true,
       firstLearnedAt: finiteNumber(value.firstLearnedAt),
       reviewCount: finiteCount(value.reviewCount),
       lastReviewAt: finiteNumber(value.lastReviewAt),
       correctCount,
       wrongCount,
-      score: correctCount - wrongCount,
+      score: 0,
     };
+    this.syncScore(record);
+    return record;
   }
 
   subscribe(fn: () => void): () => void {
@@ -44,6 +46,10 @@ export class MemoryStore {
 
   private emit() {
     for (const fn of this.listeners) fn();
+  }
+
+  private syncScore(record: MemoryRecord) {
+    record.score = record.correctCount - record.wrongCount;
   }
 
   private persist() {
@@ -72,7 +78,7 @@ export class MemoryStore {
     const rec = this.data[adcode] ?? this.normalizeRecord({});
     if (correct) rec.correctCount += 1;
     else rec.wrongCount += 1;
-    rec.score = rec.correctCount - rec.wrongCount;
+    this.syncScore(rec);
     this.data[adcode] = rec;
     this.persist();
   }
@@ -81,7 +87,7 @@ export class MemoryStore {
     for (const rec of Object.values(this.data)) {
       rec.correctCount = 0;
       rec.wrongCount = 0;
-      rec.score = 0;
+      this.syncScore(rec);
     }
     this.persist();
   }
@@ -96,6 +102,7 @@ export class MemoryStore {
     } else {
       rec.learned = false;
     }
+    this.syncScore(rec);
     this.data[adcode] = rec;
     this.persist();
   }

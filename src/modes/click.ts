@@ -1,14 +1,8 @@
 import type { Mode, RoundResult, Unit } from '../types';
 import { Stopwatch } from '../ui/stopwatch';
-import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
-
-type SavedClickProgress = {
-  green?: string[];
-  red?: string[];
-  results?: ProgressSegment[];
-  question?: string | null;
-  scopeProvince?: string | null;
-};
+import type { ModeCtx, ModeController, ProgressSegment } from './types';
+import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
+import { formatElapsedSeconds } from '../ui/format';
 
 /** 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。 */
 export class ClickMode implements ModeController {
@@ -41,7 +35,7 @@ export class ClickMode implements ModeController {
     }
     this.exit();
     this.ensureScopeProvince();
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     this.restore();
     this.syncScopeView();
     this.showStartHint();
@@ -88,11 +82,8 @@ export class ClickMode implements ModeController {
     });
   }
 
-  getProgress(): ModeProgress {
-    return {
-      total: this.order.length,
-      segments: [...this.results, ...Array<ProgressSegment>(Math.max(0, this.order.length - this.results.length)).fill('pending')],
-    };
+  getProgress() {
+    return progressOf(this.order.length, this.results);
   }
 
   hasProgress() {
@@ -146,7 +137,7 @@ export class ClickMode implements ModeController {
   onViewChange() {
     if (this.started || this.syncingScope) return;
     this.setScopeProvince(this.ctx.renderer.currentProvince());
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     this.restore();
     this.showStartHint();
     this.ctx.updateProgress();
@@ -158,46 +149,23 @@ export class ClickMode implements ModeController {
 
   private ensureScopeProvince() {
     if (this.scopeLoaded) return;
-    const saved = this.loadScopeProvince();
+    const saved = loadScopeProvince(this.ctx.data, this.scopeStorageKey());
     this.scopeProvince = saved === undefined ? this.ctx.renderer.currentProvince() : saved;
     this.scopeLoaded = true;
-    this.persistScopeProvince();
-  }
-
-  private loadScopeProvince(): string | null | undefined {
-    try {
-      const raw = localStorage.getItem(this.scopeStorageKey());
-      if (!raw) return undefined;
-      const saved = JSON.parse(raw) as { scopeProvince?: unknown };
-      if (saved.scopeProvince === null) return null;
-      if (typeof saved.scopeProvince === 'string' && this.ctx.data.provinces.some((p) => p.adcode === saved.scopeProvince)) return saved.scopeProvince;
-    } catch {
-      /* 忽略损坏的范围记录 */
-    }
-    return undefined;
+    saveScopeProvince(this.scopeStorageKey(), this.scopeProvince);
   }
 
   private setScopeProvince(scopeProvince: string | null) {
     this.scopeProvince = scopeProvince;
     this.scopeLoaded = true;
-    this.persistScopeProvince();
-  }
-
-  private persistScopeProvince() {
-    try {
-      localStorage.setItem(this.scopeStorageKey(), JSON.stringify({ scopeProvince: this.scopeProvince }));
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
   private syncScopeView() {
     this.ensureScopeProvince();
-    if (this.ctx.renderer.currentProvince() === this.scopeProvince) return;
     this.syncingScope = true;
     try {
-      if (this.scopeProvince) this.ctx.renderer.drillToProvince(this.scopeProvince);
-      else this.ctx.renderer.backToNation();
+      syncScopeView(this.scopeProvince, this.ctx.renderer.currentProvince(), this.ctx.renderer);
     } finally {
       this.syncingScope = false;
     }
@@ -214,47 +182,27 @@ export class ClickMode implements ModeController {
     this.results = [];
     this.ok = 0;
     this.fail = 0;
-    try {
-      const raw = localStorage.getItem(this.storageKey());
-      if (!raw) return;
-      const saved = JSON.parse(raw) as SavedClickProgress;
-      this.green = new Set((saved.green ?? []).filter((a) => this.order.includes(a)));
-      this.red = new Set((saved.red ?? []).filter((a) => this.order.includes(a)));
-      this.results = (saved.results ?? [])
-        .filter((segment): segment is ProgressSegment => segment === 'green' || segment === 'red')
-        .slice(0, Math.min(this.order.length, this.green.size + this.red.size));
-      this.question = saved.question && this.order.includes(saved.question) ? saved.question : null;
-      this.ok = this.green.size;
-      this.fail = this.red.size;
-    } catch {
-      /* 忽略损坏的本地进度 */
-    }
+    const saved = loadProgress(this.storageKey(), this.order);
+    this.green = saved.green;
+    this.red = saved.red;
+    this.results = saved.results;
+    this.question = saved.question;
+    this.ok = this.green.size;
+    this.fail = this.red.size;
   }
 
   private persist() {
-    try {
-      localStorage.setItem(
-        this.storageKey(),
-        JSON.stringify({
-          green: [...this.green],
-          red: [...this.red],
-          results: this.results,
-          question: this.question,
-          scopeProvince: this.scopeProvince,
-        }),
-      );
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveProgress(this.storageKey(), {
+      green: this.green,
+      red: this.red,
+      results: this.results,
+      question: this.question,
+    }, { scopeProvince: this.scopeProvince });
     this.ctx.updateProgress();
   }
 
   private clearSaved() {
-    try {
-      localStorage.removeItem(this.storageKey());
-    } catch {
-      /* 忽略存储失败 */
-    }
+    clearProgress(this.storageKey());
   }
 
   private showStartHint() {
@@ -271,7 +219,7 @@ export class ClickMode implements ModeController {
     if (this.started) return;
     this.ensureScopeProvince();
     this.syncScopeView();
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     if (continueSaved) this.restore();
     else {
       this.clearSaved();
@@ -283,7 +231,7 @@ export class ClickMode implements ModeController {
       this.fail = 0;
     }
     const resumed = this.question ? this.ctx.byAdcode.get(this.question) ?? null : null;
-    const pool = this.unvisited();
+    const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
     const first = resumed ?? (pool.length ? this.ctx.randomUnit(pool) : null);
     if (!first) {
       this.finish();
@@ -325,7 +273,7 @@ export class ClickMode implements ModeController {
       this.ctx.toast(`正确答案：${name}`);
     }
     this.persist();
-    const pool = this.unvisited();
+    const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
     if (!pool.length) {
       this.refresh();
       this.finish();
@@ -353,7 +301,7 @@ export class ClickMode implements ModeController {
       finishedAt: Date.now(),
     };
     this.ctx.showSummary(
-      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsed(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
+      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsedSeconds(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
       () => {
         this.clearSaved();
         this.enter();
@@ -370,18 +318,4 @@ export class ClickMode implements ModeController {
     return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
   }
 
-  private scopedUnits() {
-    return this.ctx.data.units.filter((u) => !this.scopeProvince || u.provinceAdcode === this.scopeProvince);
-  }
-
-  private unvisited() {
-    return this.scopedUnits().filter((u) => !this.green.has(u.adcode) && !this.red.has(u.adcode));
-  }
-}
-
-function formatElapsed(elapsedMs: number) {
-  const secs = Math.round(elapsedMs / 1000);
-  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
-  const ss = String(secs % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
 }

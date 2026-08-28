@@ -1,17 +1,10 @@
 import type { Mode, RoundResult, Unit } from '../types';
-import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
+import type { ModeCtx, ModeController, ProgressSegment } from './types';
 import { Stopwatch } from '../ui/stopwatch';
+import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
+import { formatElapsedSeconds } from '../ui/format';
 
 type SelfOrderMode = 'sequential' | 'random';
-
-type SavedSelfProgress = {
-  green?: string[];
-  red?: string[];
-  results?: ProgressSegment[];
-  question?: string | null;
-  lastGreen?: string | null;
-  activeProvince?: string | null;
-};
 
 /**
  * 自测模式（BFS 扩张）：
@@ -62,7 +55,7 @@ export class SelfTestMode implements ModeController {
     this.fail = 0;
     this.started = false;
     this.paused = false;
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     this.restore();
     this.syncScopeView();
     this.ctx.search.setPlaceholder('地名');
@@ -123,11 +116,8 @@ export class SelfTestMode implements ModeController {
     return this.green.size > 0 || this.red.size > 0 || !!this.question;
   }
 
-  getProgress(): ModeProgress {
-    return {
-      total: this.order.length,
-      segments: [...this.results, ...Array<ProgressSegment>(Math.max(0, this.order.length - this.results.length)).fill('pending')],
-    };
+  getProgress() {
+    return progressOf(this.order.length, this.results);
   }
 
   isStarted() {
@@ -184,7 +174,7 @@ export class SelfTestMode implements ModeController {
     if (this.started || this.syncingScope) return;
     this.setScopeProvince(this.ctx.renderer.currentProvince());
     this.activeProvince = this.scopeProvince;
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     this.restore();
     this.showStartHint();
     this.ctx.updateProgress();
@@ -219,46 +209,23 @@ export class SelfTestMode implements ModeController {
 
   private ensureScopeProvince() {
     if (this.scopeLoaded) return;
-    const saved = this.loadScopeProvince();
+    const saved = loadScopeProvince(this.ctx.data, this.scopeStorageKey());
     this.scopeProvince = saved === undefined ? this.ctx.renderer.currentProvince() : saved;
     this.scopeLoaded = true;
-    this.persistScopeProvince();
-  }
-
-  private loadScopeProvince(): string | null | undefined {
-    try {
-      const raw = localStorage.getItem(this.scopeStorageKey());
-      if (!raw) return undefined;
-      const saved = JSON.parse(raw) as { scopeProvince?: unknown };
-      if (saved.scopeProvince === null) return null;
-      if (typeof saved.scopeProvince === 'string' && this.ctx.data.provinces.some((p) => p.adcode === saved.scopeProvince)) return saved.scopeProvince;
-    } catch {
-      /* 忽略损坏的范围记录 */
-    }
-    return undefined;
+    saveScopeProvince(this.scopeStorageKey(), this.scopeProvince);
   }
 
   private setScopeProvince(scopeProvince: string | null) {
     this.scopeProvince = scopeProvince;
     this.scopeLoaded = true;
-    this.persistScopeProvince();
-  }
-
-  private persistScopeProvince() {
-    try {
-      localStorage.setItem(this.scopeStorageKey(), JSON.stringify({ scopeProvince: this.scopeProvince }));
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
   private syncScopeView() {
     this.ensureScopeProvince();
-    if (this.ctx.renderer.currentProvince() === this.scopeProvince) return;
     this.syncingScope = true;
     try {
-      if (this.scopeProvince) this.ctx.renderer.drillToProvince(this.scopeProvince);
-      else this.ctx.renderer.backToNation();
+      syncScopeView(this.scopeProvince, this.ctx.renderer.currentProvince(), this.ctx.renderer);
     } finally {
       this.syncingScope = false;
     }
@@ -270,61 +237,29 @@ export class SelfTestMode implements ModeController {
 
   private restore() {
     this.resetProgressState();
-    try {
-      const raw = localStorage.getItem(this.storageKey());
-      if (!raw) return;
-      const saved = JSON.parse(raw) as SavedSelfProgress;
-      this.green = new Set((saved.green ?? []).filter((a) => this.order.includes(a)));
-      this.red = new Set((saved.red ?? []).filter((a) => this.order.includes(a)));
-      const legacyResults: ProgressSegment[] = [...Array(this.green.size).fill('green'), ...Array(this.red.size).fill('red')];
-      this.results = (saved.results ?? legacyResults).filter((segment): segment is ProgressSegment => segment === 'green' || segment === 'red');
-      this.results = this.results.slice(0, Math.min(this.order.length, this.green.size + this.red.size));
-      this.question = saved.question && this.order.includes(saved.question) ? saved.question : null;
-      this.lastGreen = saved.lastGreen && this.green.has(saved.lastGreen) ? saved.lastGreen : null;
-      this.activeProvince = saved.activeProvince ?? this.scopeProvince;
-      this.ok = this.green.size;
-      this.fail = this.red.size;
-    } catch {
-      /* 忽略损坏的本地进度 */
-    }
-  }
-
-  private hasSavedProgress() {
-    try {
-      const raw = localStorage.getItem(this.storageKey());
-      if (!raw) return false;
-      const saved = JSON.parse(raw) as SavedSelfProgress;
-      return !!saved.question || !!saved.green?.length || !!saved.red?.length || !!saved.results?.length;
-    } catch {
-      return false;
-    }
+    const saved = loadProgress(this.storageKey(), this.order, true);
+    this.green = saved.green;
+    this.red = saved.red;
+    this.results = saved.results;
+    this.question = saved.question;
+    this.lastGreen = typeof saved.record.lastGreen === 'string' && this.green.has(saved.record.lastGreen) ? saved.record.lastGreen : null;
+    this.activeProvince = typeof saved.record.activeProvince === 'string' ? saved.record.activeProvince : this.scopeProvince;
+    this.ok = this.green.size;
+    this.fail = this.red.size;
   }
 
   private persist() {
-    try {
-      localStorage.setItem(
-        this.storageKey(),
-        JSON.stringify({
-          green: [...this.green],
-          red: [...this.red],
-          results: this.results,
-          question: this.question,
-          lastGreen: this.lastGreen,
-          activeProvince: this.activeProvince,
-        }),
-      );
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveProgress(this.storageKey(), {
+      green: this.green,
+      red: this.red,
+      results: this.results,
+      question: this.question,
+    }, { lastGreen: this.lastGreen, activeProvince: this.activeProvince });
     this.ctx.updateProgress();
   }
 
   private clearSaved() {
-    try {
-      localStorage.removeItem(this.storageKey());
-    } catch {
-      /* 忽略存储失败 */
-    }
+    clearProgress(this.storageKey());
   }
 
   private resetProgressState() {
@@ -353,7 +288,7 @@ export class SelfTestMode implements ModeController {
     this.ensureScopeProvince();
     this.syncScopeView();
     this.activeProvince = this.scopeProvince;
-    this.order = this.scopedUnits().map((u) => u.adcode);
+    this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     if (_continueSaved) {
       this.restore();
     } else {
@@ -362,7 +297,7 @@ export class SelfTestMode implements ModeController {
     }
 
     const resumed = this.question ? this.ctx.byAdcode.get(this.question) ?? null : null;
-    const pool = this.unvisited();
+    const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
     const first = resumed ?? (pool.length ? this.ctx.randomUnit(pool) : null);
     if (!first) {
       this.finish();
@@ -375,14 +310,6 @@ export class SelfTestMode implements ModeController {
     this.ctx.updateProgress();
     this.ctx.setHint('');
     this.ask(first);
-  }
-
-  private scopedUnits(): Unit[] {
-    return this.ctx.data.units.filter((u) => !this.scopeProvince || u.provinceAdcode === this.scopeProvince);
-  }
-
-  private unvisited(): Unit[] {
-    return this.scopedUnits().filter((u) => !this.green.has(u.adcode) && !this.red.has(u.adcode));
   }
 
   private ask(u: Unit) {
@@ -415,7 +342,7 @@ export class SelfTestMode implements ModeController {
       this.ctx.toast(timedOut ? `超时，正确答案：${name}` : `正确答案：${name}`);
     }
     this.persist();
-    const remain = this.unvisited();
+    const remain = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
     if (!remain.length) {
       this.refresh();
       this.finish();
@@ -431,8 +358,8 @@ export class SelfTestMode implements ModeController {
       this.activeProvince = this.pickNextProvince(last);
     }
     const province = this.activeProvince;
-    const inProvince = this.unvisited().filter((u) => u.provinceAdcode === province);
-    if (!inProvince.length) return this.unvisited()[0];
+    const inProvince = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red).filter((u) => u.provinceAdcode === province);
+    if (!inProvince.length) return unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red)[0];
     if (last) {
       const neighbors = last.neighbors
         .map((a) => this.ctx.byAdcode.get(a))
@@ -452,7 +379,7 @@ export class SelfTestMode implements ModeController {
     const provinces = this.ctx.data.provinces
       .filter((p) => this.hasUnvisitedInProvince(p.adcode))
       .sort((a, b) => dist2(a.center, last?.center ?? [104.5, 35]) - dist2(b.center, last?.center ?? [104.5, 35]));
-    return provinces[0]?.adcode ?? this.unvisited()[0]?.provinceAdcode ?? '';
+    return provinces[0]?.adcode ?? unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red)[0]?.provinceAdcode ?? '';
   }
 
   private finish() {
@@ -474,7 +401,7 @@ export class SelfTestMode implements ModeController {
       finishedAt: Date.now(),
     };
     this.ctx.showSummary(
-      `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsed(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
+      `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsedSeconds(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
       () => {
         this.clearSaved();
         this.enter();
@@ -490,13 +417,6 @@ export class SelfTestMode implements ModeController {
   private scopeLabel() {
     return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
   }
-}
-
-function formatElapsed(elapsedMs: number) {
-  const secs = Math.round(elapsedMs / 1000);
-  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
-  const ss = String(secs % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
 }
 
 function dist2(a: [number, number], b: [number, number]): number {
