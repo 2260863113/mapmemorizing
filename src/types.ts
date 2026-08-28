@@ -63,6 +63,17 @@ export interface Settings {
   darkMode: boolean;
 }
 
+export interface RoundResult {
+  mode: Extract<Mode, 'self' | 'challenge' | 'click'>;
+  scopeProvince: string | null;
+  scopeLabel: string;
+  totalUnits: number;
+  correct: number;
+  wrong: number;
+  elapsedMs: number;
+  finishedAt: number;
+}
+
 export interface UserHometown {
   provinceAdcode: string;
   cityAdcode: string;

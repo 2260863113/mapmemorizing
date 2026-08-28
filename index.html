@@ -54,9 +54,13 @@
       </div>
       <div id="map"></div>
       <aside id="side-panel">
-        <h3>熟练度分析</h3>
-        <div id="stats"></div>
-        <p class="tip">进度自动保存在本机浏览器（localStorage）</p>
+        <button id="side-panel-toggle" class="side-panel-toggle" type="button" aria-controls="side-panel" aria-expanded="true">榜</button>
+        <div id="side-panel-content">
+          <h3 id="side-panel-title">熟练度分析</h3>
+          <div id="stats"></div>
+          <div id="leaderboard" class="hidden"></div>
+          <p id="side-panel-tip" class="tip">进度自动保存在本机浏览器（localStorage）</p>
+        </div>
       </aside>
     </main>
   </div>
@@ -65,8 +69,9 @@
     <div class="card">
       <div id="summary-body"></div>
       <div class="card-actions">
-        <button id="summary-restart" class="primary">再来一轮</button>
-        <button id="summary-close" class="ghost">关闭</button>
+        <button id="summary-submit" class="primary hidden" type="button">提交成绩</button>
+        <button id="summary-restart" class="primary" type="button">再来一轮</button>
+        <button id="summary-close" class="ghost" type="button">关闭</button>
       </div>
     </div>
   </div>

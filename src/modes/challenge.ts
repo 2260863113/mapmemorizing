@@ -1,4 +1,4 @@
-import type { Mode, Unit } from '../types';
+import type { Mode, RoundResult, Unit } from '../types';
 import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
 import { Countdown } from '../ui/countdown';
 
@@ -422,16 +422,41 @@ export class ChallengeMode implements ModeController {
     }
     this.ctx.showTimer(null);
     this.started = false;
+    this.paused = false;
     this.ctx.updateProgress();
-    const secs = this.startTime ? Math.round((Date.now() - this.startTime) / 1000) : 0;
-    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
-    const ss = String(secs % 60).padStart(2, '0');
+    const elapsedMs = this.startTime ? Date.now() - this.startTime : 0;
+    const result: RoundResult = {
+      mode: 'challenge',
+      scopeProvince: this.scopeProvince,
+      scopeLabel: this.scopeLabel(),
+      totalUnits: this.order.length,
+      correct: this.ok,
+      wrong: this.fail,
+      elapsedMs,
+      finishedAt: Date.now(),
+    };
     this.ctx.showSummary(
-      `挑战完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${mm}:${ss}</div>`,
+      `挑战完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsed(elapsedMs)}</div>`,
       () => {
         this.clearSaved();
         this.enter();
       },
+      result,
     );
   }
+
+  getScopeProvince() {
+    return this.scopeProvince;
+  }
+
+  private scopeLabel() {
+    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
+  }
+}
+
+function formatElapsed(elapsedMs: number) {
+  const secs = Math.round(elapsedMs / 1000);
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
 }

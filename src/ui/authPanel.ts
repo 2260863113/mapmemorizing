@@ -19,6 +19,7 @@ export class AuthPanel {
   private card: HTMLElement;
   private location: LocationState = { provinceAdcode: '', cityAdcode: '' };
   private avatar: UserAvatar | null = null;
+  private onSuccess: (() => void) | null = null;
 
   constructor(private store: AuthStore, private data: AppData) {
     this.menu = $('user-menu');
@@ -27,6 +28,12 @@ export class AuthPanel {
     this.bindShell();
     this.store.subscribe(() => this.renderTrigger());
     this.renderTrigger();
+  }
+
+  requestLogin(onSuccess?: () => void) {
+    this.onSuccess = onSuccess ?? null;
+    this.closeMenu();
+    this.openLogin();
   }
 
   private bindShell() {
@@ -120,8 +127,15 @@ export class AuthPanel {
     this.renderView(view);
   }
 
-  private closeOverlay() {
+  private closeOverlay(clearSuccess = true) {
     this.overlay.classList.add('hidden');
+    if (clearSuccess) this.onSuccess = null;
+  }
+
+  private completeSuccess() {
+    const onSuccess = this.onSuccess;
+    this.onSuccess = null;
+    onSuccess?.();
   }
 
   private renderView(view: AuthView) {
@@ -266,8 +280,9 @@ export class AuthPanel {
     const password = ($('auth-login-password') as HTMLInputElement).value;
     try {
       await this.store.login(username, password);
-      this.closeOverlay();
+      this.closeOverlay(false);
       toast('已登录');
+      this.completeSuccess();
     } catch (error) {
       this.showMessage(errorMessage(error));
     }
@@ -278,8 +293,9 @@ export class AuthPanel {
     const password = ($('auth-register-password') as HTMLInputElement).value;
     try {
       const user = await this.store.register(username, password);
-      this.closeOverlay();
+      this.closeOverlay(false);
       toast(`已注册并登录：${user.username}`);
+      this.completeSuccess();
     } catch (error) {
       this.showMessage(errorMessage(error));
     }

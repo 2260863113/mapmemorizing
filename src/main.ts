@@ -3,9 +3,11 @@ import { loadData, buildIndex } from './data';
 import { Matcher } from './matcher';
 import { MapRenderer } from './map/renderer';
 import { AuthStore } from './authStore';
+import { LeaderboardStore, type LeaderboardMode } from './leaderboardStore';
 import { MemoryStore, loadSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { AuthPanel } from './ui/authPanel';
+import { LeaderboardPanel } from './ui/leaderboardPanel';
 import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary } from './ui/dom';
@@ -14,11 +16,49 @@ import { SelfTestMode } from './modes/selfTest';
 import { ChallengeMode } from './modes/challenge';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
-import type { Mode, Settings, Unit } from './types';
+import type { AuthUser, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController } from './modes/types';
+
+const SIDE_PANEL_KEY = 'china-admin-leaderboard-panel-v1';
+const SIDE_PANEL_MIN_WIDTH = 240;
+const SIDE_PANEL_MAX_WIDTH = 420;
+const SIDE_PANEL_DEFAULT_WIDTH = 300;
 
 function applyTheme(darkMode: boolean) {
   document.body.classList.toggle('theme-dark', darkMode);
+}
+
+function loadSidePanelOpen() {
+  try {
+    const raw = localStorage.getItem(SIDE_PANEL_KEY);
+    if (!raw) return true;
+    return JSON.parse(raw)?.open !== false;
+  } catch {
+    return true;
+  }
+}
+
+function loadSidePanelWidth() {
+  try {
+    const raw = localStorage.getItem(SIDE_PANEL_KEY);
+    const width = raw ? Number(JSON.parse(raw)?.width) : SIDE_PANEL_DEFAULT_WIDTH;
+    return clamp(width, SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
+  } catch {
+    return SIDE_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function saveSidePanelState(open: boolean, width: number) {
+  try {
+    localStorage.setItem(SIDE_PANEL_KEY, JSON.stringify({ open, width }));
+  } catch {
+    /* 忽略存储失败 */
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 async function boot() {
@@ -31,11 +71,19 @@ async function boot() {
   const search = new SearchBox('search-input');
   search.setRequireEnter(settings.requireEnter);
   const stats = new StatsPanel('stats', data, store);
-  new AuthPanel(new AuthStore(), data);
+  const authStore = new AuthStore();
+  const authPanel = new AuthPanel(authStore, data);
+  const leaderboardStore = new LeaderboardStore();
+  const leaderboard = new LeaderboardPanel('leaderboard', leaderboardStore);
 
+  let pendingLeaderboardResult: RoundResult | null = null;
   let current: ModeController | null = null;
   let statsVisible = true;
+  let sidePanelOpen = loadSidePanelOpen();
+  let sidePanelWidth = loadSidePanelWidth();
+  let suppressSidePanelClick = false;
   let zoomDisplay = 1;
+  $('side-panel').style.setProperty('--side-panel-width', `${sidePanelWidth}px`);
   const renderer = new MapRenderer($('map'), data, {
     onUnitClick: (adcode) => current?.onUnitClick(adcode),
     onUnitDblClick: (adcode) => current?.onUnitDblClick(adcode),
@@ -56,6 +104,7 @@ async function boot() {
     current?.onViewChange?.();
     current?.refresh();
     updateProgress();
+    refreshSidePanel();
   };
   renderer.onZoomChange = () => {
     zoomDisplay = renderer.currentZoom();
@@ -75,7 +124,7 @@ async function boot() {
     setHint,
     showTimer,
     showStopwatch,
-    showSummary,
+    showSummary: (html, onRestart, result) => showSummary(html, onRestart, result ? () => submitRoundResult(result) : undefined),
     hideSummary,
     updateProgress,
     randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
@@ -137,6 +186,7 @@ async function boot() {
     syncModeChrome();
     syncPauseOverlay();
     updateProgress();
+    refreshSidePanel();
   }
 
   function showPauseOverlay() {
@@ -163,7 +213,15 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
-    $('side-panel').classList.toggle('hidden', !isAnalysis || !statsVisible);
+    const showSidePanel = isAnalysis ? statsVisible : isTest;
+    $('side-panel').classList.toggle('hidden', !showSidePanel);
+    $('side-panel').classList.toggle('collapsed', isTest && !sidePanelOpen);
+    ($('side-panel-toggle') as HTMLButtonElement).textContent = isAnalysis ? '收' : '榜';
+    ($('side-panel-toggle') as HTMLButtonElement).setAttribute('aria-expanded', String(!isTest || sidePanelOpen));
+    $('stats').classList.toggle('hidden', !isAnalysis);
+    $('leaderboard').classList.toggle('hidden', !isTest);
+    $('side-panel-title').textContent = isAnalysis ? '熟练度分析' : '排行榜';
+    $('side-panel-tip').textContent = isAnalysis ? '进度自动保存在本机浏览器（localStorage）' : '排行榜按当前测试范围筛选，仅保存本机成绩';
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
     $('btn-skip').classList.toggle('hidden', !isTest);
@@ -236,6 +294,75 @@ async function boot() {
     $('hover-stats').classList.add('hidden');
   }
 
+  function submitRoundResult(result: RoundResult) {
+    hideSummary();
+    if (!canSubmit(result)) {
+      toast('本轮有错题或跳过，未提交成绩');
+      return;
+    }
+    const user = authStore.currentUser();
+    if (!user) {
+      pendingLeaderboardResult = result;
+      authPanel.requestLogin(() => submitPendingLeaderboard());
+      toast('请先登录，登录后将自动提交');
+      return;
+    }
+    submitLeaderboard(result, user);
+  }
+
+  function submitPendingLeaderboard() {
+    const result = pendingLeaderboardResult;
+    pendingLeaderboardResult = null;
+    if (!result) return;
+    if (!canSubmit(result)) {
+      toast('本轮有错题或跳过，未提交成绩');
+      return;
+    }
+    const user = authStore.currentUser();
+    if (!user) return;
+    submitLeaderboard(result, user);
+  }
+
+  function submitLeaderboard(result: RoundResult, user: AuthUser) {
+    const status = leaderboardStore.submit(result, user);
+    refreshSidePanel();
+    if (status === 'kept') {
+      toast('已有更快成绩，本次未更新');
+      return;
+    }
+    toast(status === 'improved' ? '成绩已刷新' : '成绩已提交');
+  }
+
+  function canSubmit(result: RoundResult) {
+    return result.totalUnits > 0 && result.correct + result.wrong === result.totalUnits && result.correct === result.totalUnits && result.wrong === 0;
+  }
+
+  function refreshSidePanel() {
+    if (current?.id === 'free') {
+      stats.refresh(renderer.currentProvince());
+      return;
+    }
+    if (!isLeaderboardMode(current?.id)) return;
+    const scopeProvince = current.getScopeProvince?.() ?? null;
+    leaderboard.refresh(current.id, scopeProvince, scopeLabel(scopeProvince));
+  }
+
+  function scopeLabel(scopeProvince: string | null) {
+    return scopeProvince ? data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? '当前省份' : '全国';
+  }
+
+  function isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
+    return mode === 'self' || mode === 'challenge' || mode === 'click';
+  }
+
+  let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean } | null = null;
+
+  function updateSidePanelWidth(width: number) {
+    sidePanelWidth = clamp(width, SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
+    $('side-panel').style.setProperty('--side-panel-width', `${sidePanelWidth}px`);
+    saveSidePanelState(sidePanelOpen, sidePanelWidth);
+  }
+
   ($('pause-overlay') as HTMLElement).addEventListener('click', () => {
     if (!current?.isPaused?.()) return;
     current.resume?.();
@@ -290,6 +417,42 @@ async function boot() {
   ($('btn-stats') as HTMLButtonElement).addEventListener('click', () => {
     statsVisible = !statsVisible;
     syncModeChrome();
+    refreshSidePanel();
+  });
+
+  const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
+  sidePanelToggle.addEventListener('pointerdown', (event) => {
+    if (!isLeaderboardMode(current?.id)) return;
+    sidePanelDrag = { pointerId: event.pointerId, x: event.clientX, width: sidePanelWidth, moved: false };
+    sidePanelToggle.setPointerCapture(event.pointerId);
+  });
+  sidePanelToggle.addEventListener('pointermove', (event) => {
+    if (!sidePanelDrag || sidePanelDrag.pointerId !== event.pointerId) return;
+    const nextWidth = clamp(sidePanelDrag.width - (event.clientX - sidePanelDrag.x), SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
+    if (Math.abs(nextWidth - sidePanelDrag.width) > 4) sidePanelDrag.moved = true;
+    sidePanelOpen = true;
+    updateSidePanelWidth(nextWidth);
+    syncModeChrome();
+  });
+  sidePanelToggle.addEventListener('pointerup', (event) => {
+    if (!sidePanelDrag || sidePanelDrag.pointerId !== event.pointerId) return;
+    suppressSidePanelClick = sidePanelDrag.moved;
+    sidePanelDrag = null;
+    sidePanelToggle.releasePointerCapture(event.pointerId);
+  });
+  sidePanelToggle.addEventListener('click', () => {
+    if (suppressSidePanelClick) {
+      suppressSidePanelClick = false;
+      return;
+    }
+    if (current?.id === 'free') {
+      statsVisible = false;
+    } else {
+      sidePanelOpen = !sidePanelOpen;
+      saveSidePanelState(sidePanelOpen, sidePanelWidth);
+    }
+    syncModeChrome();
+    refreshSidePanel();
   });
 
   document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {

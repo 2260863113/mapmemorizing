@@ -1,4 +1,4 @@
-import type { Mode, Unit } from '../types';
+import type { Mode, RoundResult, Unit } from '../types';
 import { Stopwatch } from '../ui/stopwatch';
 import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
 
@@ -335,19 +335,35 @@ export class ClickMode implements ModeController {
   }
 
   private finish() {
+    const elapsedMs = this.stopwatch.elapsedMs();
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
     this.ctx.showTimer(null);
     this.ctx.showStopwatch(null);
     this.ctx.updateProgress();
+    const result: RoundResult = {
+      mode: 'click',
+      scopeProvince: this.scopeProvince,
+      scopeLabel: this.scopeLabel(),
+      totalUnits: this.order.length,
+      correct: this.ok,
+      wrong: this.fail,
+      elapsedMs,
+      finishedAt: Date.now(),
+    };
     this.ctx.showSummary(
-      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
+      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsed(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
       () => {
         this.clearSaved();
         this.enter();
       },
+      result,
     );
+  }
+
+  getScopeProvince() {
+    return this.scopeProvince;
   }
 
   private scopeLabel() {
@@ -361,4 +377,11 @@ export class ClickMode implements ModeController {
   private unvisited() {
     return this.scopedUnits().filter((u) => !this.green.has(u.adcode) && !this.red.has(u.adcode));
   }
+}
+
+function formatElapsed(elapsedMs: number) {
+  const secs = Math.round(elapsedMs / 1000);
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
 }

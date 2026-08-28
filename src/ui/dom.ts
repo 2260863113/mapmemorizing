@@ -48,8 +48,11 @@ export function showStopwatch(elapsedMs: number | null) {
   el.textContent = `${(elapsedMs / 1000).toFixed(2)}s`;
 }
 
-export function showSummary(html: string, onRestart: () => void) {
+export function showSummary(html: string, onRestart: () => void, onSubmit?: () => void) {
   $('summary-body').innerHTML = html;
+  const submit = $('summary-submit') as HTMLButtonElement;
+  submit.classList.toggle('hidden', !onSubmit);
+  submit.onclick = onSubmit ?? null;
   const restart = $('summary-restart') as HTMLButtonElement;
   restart.onclick = () => {
     hideSummary();

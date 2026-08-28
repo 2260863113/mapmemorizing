@@ -1,4 +1,4 @@
-import type { AppData, Mode, Settings, Unit } from '../types';
+import type { AppData, Mode, RoundResult, Settings, Unit } from '../types';
 import type { MapRenderer } from '../map/renderer';
 import type { Matcher } from '../matcher';
 import type { MemoryStore } from '../store';
@@ -18,7 +18,7 @@ export interface ModeCtx {
   setHint: (html: string) => void;
   showTimer: (remain: number | null, urgent?: boolean) => void;
   showStopwatch: (elapsedMs: number | null) => void;
-  showSummary: (html: string, onRestart: () => void) => void;
+  showSummary: (html: string, onRestart: () => void, result?: RoundResult) => void;
   hideSummary: () => void;
   updateProgress: () => void;
   randomUnit: (pool: Unit[]) => Unit;
@@ -51,6 +51,7 @@ export interface ModeController {
   resume?(): void;
   isPaused?(): boolean;
   getProgress?(): ModeProgress | null;
+  getScopeProvince?(): string | null;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
   /** 模式会话是否已经开始（地图空白返回确认用） */
