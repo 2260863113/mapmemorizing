@@ -391,6 +391,46 @@ body.theme-dark #test-timer.urgent {
 }
 .mode-action:hover { background: rgba(255,255,255,0.46); border-color: var(--muted); }
 body.theme-dark .mode-action:hover { background: rgba(30,41,59,0.58); }
+.mode-segmented {
+  display: inline-flex;
+  align-items: stretch;
+  height: 37px;
+  padding: 0;
+  border: 1px solid var(--floating-border);
+  border-radius: 9px;
+  background: var(--floating-bg);
+  box-shadow: var(--floating-shadow);
+  backdrop-filter: var(--floating-blur);
+  overflow: hidden;
+}
+.mode-segmented button {
+  min-width: 57px;
+  height: 100%;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--control-text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+.mode-segmented button:hover {
+  background: rgba(255,255,255,0.38);
+}
+.mode-segmented button.active {
+  background: linear-gradient(180deg, rgba(75, 85, 99, 0.58), rgba(31, 41, 55, 0.42));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 0 0 1px rgba(255,255,255,0.12);
+  backdrop-filter: blur(12px) saturate(150%);
+}
+body.theme-dark .mode-segmented button:hover {
+  background: rgba(30,41,59,0.58);
+}
+body.theme-dark .mode-segmented button.active {
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.48), rgba(51, 65, 85, 0.36));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
+}
 .mode-action.danger-hover:hover,
 #btn-end:hover,
 #btn-reset:hover,

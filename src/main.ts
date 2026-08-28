@@ -81,9 +81,10 @@ async function boot() {
     randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
   };
 
+  const selfMode = new SelfTestMode(ctx);
   const modes: Record<Mode, ModeController> = {
     free: new FreeMode(ctx),
-    self: new SelfTestMode(ctx),
+    self: selfMode,
     challenge: new ChallengeMode(ctx),
     click: new ClickMode(ctx),
     memory: new MemoryMode(ctx),
@@ -168,12 +169,23 @@ async function boot() {
     $('btn-skip').classList.toggle('hidden', !isTest);
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
+    $('self-order-toggle').classList.toggle('hidden', mode !== 'self');
+    syncSelfOrderToggle();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? '重置熟练度' : '重置';
     syncViewChrome();
   }
 
   function syncViewChrome() {
     $('zoom-pill').textContent = `${zoomDisplay.toFixed(2)}x`;
+  }
+
+  function syncSelfOrderToggle() {
+    const mode = selfMode.getOrderMode();
+    document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {
+      const active = btn.dataset.order === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-checked', String(active));
+    });
   }
 
   function updateProgress() {
@@ -278,6 +290,14 @@ async function boot() {
   ($('btn-stats') as HTMLButtonElement).addEventListener('click', () => {
     statsVisible = !statsVisible;
     syncModeChrome();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.order === 'random' ? 'random' : 'sequential';
+      selfMode.setOrderMode(mode);
+      syncSelfOrderToggle();
+    });
   });
 
   // 设置

@@ -2,6 +2,8 @@ import type { Mode, Unit } from '../types';
 import type { ModeCtx, ModeController, ModeProgress, ProgressSegment } from './types';
 import { Stopwatch } from '../ui/stopwatch';
 
+type SelfOrderMode = 'sequential' | 'random';
+
 type SavedSelfProgress = {
   green?: string[];
   red?: string[];
@@ -34,6 +36,7 @@ export class SelfTestMode implements ModeController {
   private results: ProgressSegment[] = [];
   private stopwatch = new Stopwatch();
   private paused = false;
+  private orderMode: SelfOrderMode = this.loadOrderMode();
 
   constructor(private ctx: ModeCtx) {}
 
@@ -94,6 +97,15 @@ export class SelfTestMode implements ModeController {
 
   isPaused() {
     return this.paused;
+  }
+
+  setOrderMode(mode: SelfOrderMode) {
+    this.orderMode = mode;
+    this.persistOrderMode();
+  }
+
+  getOrderMode(): SelfOrderMode {
+    return this.orderMode;
   }
 
   refresh() {
@@ -182,6 +194,27 @@ export class SelfTestMode implements ModeController {
 
   private scopeStorageKey() {
     return 'china-admin-mode-scope:self';
+  }
+
+  private orderModeStorageKey() {
+    return 'china-admin-mode-order:self';
+  }
+
+  private loadOrderMode(): SelfOrderMode {
+    try {
+      const raw = localStorage.getItem(this.orderModeStorageKey());
+      return raw === 'random' ? 'random' : 'sequential';
+    } catch {
+      return 'sequential';
+    }
+  }
+
+  private persistOrderMode() {
+    try {
+      localStorage.setItem(this.orderModeStorageKey(), this.orderMode);
+    } catch {
+      /* 忽略存储失败 */
+    }
   }
 
   private ensureScopeProvince() {
@@ -388,7 +421,7 @@ export class SelfTestMode implements ModeController {
       this.finish();
       return;
     }
-    this.ask(this.pickNext());
+    this.ask(this.orderMode === 'random' ? this.ctx.randomUnit(remain) : this.pickNext());
   }
 
   /** 省内优先 BFS：当前省未出完前不跨省；省内优先邻居，否则选同省最近未测点 */

@@ -33,6 +33,10 @@
         <button id="btn-skip" class="mode-action">跳过</button>
         <button id="btn-end" class="mode-action danger-hover">暂停</button>
         <button id="btn-reset" class="mode-action">重置</button>
+        <div id="self-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="输入模式出题顺序">
+          <button id="self-order-sequential" type="button" class="active" data-order="sequential" role="radio" aria-checked="true">顺序</button>
+          <button id="self-order-random" type="button" data-order="random" role="radio" aria-checked="false">随机</button>
+        </div>
       </div>
       <div id="search-row">
         <input id="search-input" type="text" placeholder="输入地名，如：黔南" autocomplete="off" spellcheck="false" />
