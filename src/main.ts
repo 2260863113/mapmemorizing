@@ -356,12 +356,21 @@ async function boot() {
     return mode === 'self' || mode === 'challenge' || mode === 'click';
   }
 
-  let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean } | null = null;
+  let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean; wasOpen: boolean } | null = null;
 
   function updateSidePanelWidth(width: number) {
     sidePanelWidth = clamp(width, SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_MAX_WIDTH);
     $('side-panel').style.setProperty('--side-panel-width', `${sidePanelWidth}px`);
     saveSidePanelState(sidePanelOpen, sidePanelWidth);
+  }
+
+  function endSidePanelDrag(pointerId: number) {
+    if (!sidePanelDrag || sidePanelDrag.pointerId !== pointerId) return;
+    const drag = sidePanelDrag;
+    const panelOpen = current?.id === 'free' ? statsVisible : sidePanelOpen;
+    suppressSidePanelClick = drag.moved || (!drag.wasOpen && panelOpen);
+    sidePanelDrag = null;
+    if (sidePanelToggle.hasPointerCapture(pointerId)) sidePanelToggle.releasePointerCapture(pointerId);
   }
 
   ($('pause-overlay') as HTMLElement).addEventListener('click', () => {
@@ -424,7 +433,8 @@ async function boot() {
   const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
   sidePanelToggle.addEventListener('pointerdown', (event) => {
     if (current?.id !== 'free' && !isLeaderboardMode(current?.id)) return;
-    sidePanelDrag = { pointerId: event.pointerId, x: event.clientX, width: sidePanelWidth, moved: false };
+    const wasOpen = current?.id === 'free' ? statsVisible : sidePanelOpen;
+    sidePanelDrag = { pointerId: event.pointerId, x: event.clientX, width: sidePanelWidth, moved: false, wasOpen };
     sidePanelToggle.setPointerCapture(event.pointerId);
   });
   sidePanelToggle.addEventListener('pointermove', (event) => {
@@ -436,12 +446,9 @@ async function boot() {
     updateSidePanelWidth(nextWidth);
     syncModeChrome();
   });
-  sidePanelToggle.addEventListener('pointerup', (event) => {
-    if (!sidePanelDrag || sidePanelDrag.pointerId !== event.pointerId) return;
-    suppressSidePanelClick = sidePanelDrag.moved;
-    sidePanelDrag = null;
-    sidePanelToggle.releasePointerCapture(event.pointerId);
-  });
+  sidePanelToggle.addEventListener('pointerup', (event) => endSidePanelDrag(event.pointerId));
+  sidePanelToggle.addEventListener('pointercancel', (event) => endSidePanelDrag(event.pointerId));
+  sidePanelToggle.addEventListener('lostpointercapture', (event) => endSidePanelDrag(event.pointerId));
   sidePanelToggle.addEventListener('click', () => {
     if (suppressSidePanelClick) {
       suppressSidePanelClick = false;
@@ -483,6 +490,7 @@ async function boot() {
   });
   ($('btn-reset') as HTMLButtonElement).addEventListener('click', (event) => {
     confirmAction(event.currentTarget as HTMLButtonElement, () => {
+      if (current?.isPaused?.()) hidePauseOverlay();
       if (current?.id === 'free') {
         store.resetPractice();
         stats.refresh(renderer.currentProvince());
@@ -493,6 +501,7 @@ async function boot() {
       if (current?.onReset) {
         current.onReset();
         updateProgress();
+        syncPauseOverlay();
       }
     });
   });
