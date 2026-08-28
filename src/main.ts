@@ -19,7 +19,7 @@ import { ClickMode } from './modes/click';
 import type { AuthUser, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController } from './modes/types';
 
-const SIDE_PANEL_KEY = 'china-admin-leaderboard-panel-v1';
+const SIDE_PANEL_KEY = 'china-admin-leaderboard-panel-v2';
 const SIDE_PANEL_MIN_WIDTH = 240;
 const SIDE_PANEL_MAX_WIDTH = 420;
 const SIDE_PANEL_DEFAULT_WIDTH = 300;
@@ -31,7 +31,7 @@ function applyTheme(darkMode: boolean) {
 function loadSidePanelOpen() {
   try {
     const raw = localStorage.getItem(SIDE_PANEL_KEY);
-    if (!raw) return true;
+    if (!raw) return false;
     return JSON.parse(raw)?.open !== false;
   } catch {
     return true;
@@ -216,11 +216,11 @@ async function boot() {
     const showSidePanel = isAnalysis ? statsVisible : isTest;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
     $('side-panel').classList.toggle('collapsed', isTest && !sidePanelOpen);
-    ($('side-panel-toggle') as HTMLButtonElement).textContent = isAnalysis ? '收' : '榜';
     ($('side-panel-toggle') as HTMLButtonElement).setAttribute('aria-expanded', String(!isTest || sidePanelOpen));
     $('stats').classList.toggle('hidden', !isAnalysis);
     $('leaderboard').classList.toggle('hidden', !isTest);
-    $('side-panel-title').textContent = isAnalysis ? '熟练度分析' : '排行榜';
+    $('side-panel-title').classList.toggle('hidden', !isAnalysis);
+    $('side-panel-title').textContent = '熟练度分析';
     $('side-panel-tip').textContent = isAnalysis ? '进度自动保存在本机浏览器（localStorage）' : '排行榜按当前测试范围筛选，仅保存本机成绩';
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
@@ -297,7 +297,7 @@ async function boot() {
   function submitRoundResult(result: RoundResult) {
     hideSummary();
     if (!canSubmit(result)) {
-      toast('本轮有错题或跳过，未提交成绩');
+      toast('需要全部答对才可提交成绩');
       return;
     }
     const user = authStore.currentUser();
@@ -315,7 +315,7 @@ async function boot() {
     pendingLeaderboardResult = null;
     if (!result) return;
     if (!canSubmit(result)) {
-      toast('本轮有错题或跳过，未提交成绩');
+      toast('需要全部答对才可提交成绩');
       return;
     }
     const user = authStore.currentUser();
@@ -330,7 +330,7 @@ async function boot() {
       toast('已有更快成绩，本次未更新');
       return;
     }
-    toast(status === 'improved' ? '成绩已刷新' : '成绩已提交');
+    toast('成绩已提交');
   }
 
   function canSubmit(result: RoundResult) {
