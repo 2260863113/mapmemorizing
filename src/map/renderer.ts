@@ -132,7 +132,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
-const LABEL_FIX_ZOOM = 7; // 标签固定大小阈值：缩放倍率超过该值后标签不再放大
+const LABEL_FIX_ZOOM = 4; // 标签固定大小阈值：4x 以上不再放大，4x 以下随地图缩放（避免小倍率看不清价格）
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
@@ -577,7 +577,7 @@ export class MapRenderer {
                   type: 'text',
                   style: {
                     x: point[0],
-                    y: point[1],
+                    y: point[1] + (isPrice ? fontSize * 0.1 : 0), // 价格文本下移微调，保证垂直居中
                     text: name,
                     fill: color,
                     font: `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`,
