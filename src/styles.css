@@ -525,6 +525,151 @@ body.theme-dark .mode-segmented button.active {
   margin-bottom: 6px;
 }
 
+/* ---------- 无尽闯关道具 ---------- */
+#endless-items {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 24;
+}
+.endless-item {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--floating-border);
+  border-radius: 12px;
+  background: var(--floating-bg);
+  backdrop-filter: var(--floating-blur);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 800;
+  box-shadow: var(--floating-shadow);
+  cursor: pointer;
+}
+.endless-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3), var(--floating-shadow);
+}
+.endless-item-durability {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#endless-token {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--floating-border);
+  border-radius: 10px;
+  background: var(--floating-bg);
+  backdrop-filter: var(--floating-blur);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: var(--floating-shadow);
+}
+#endless-token .token-char {
+  font-size: 20px;
+  color: var(--accent);
+}
+
+/* ---------- 无尽闯关道具商店 ---------- */
+.endless-shop-card {
+  width: min(540px, calc(100vw - 32px));
+}
+.shop-wallet {
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.shop-wallet b { color: var(--accent); }
+.shop-list {
+  display: grid;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--control-bg);
+}
+.shop-item-char {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+}
+.shop-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.shop-item-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.shop-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.shop-item-price {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+.shop-item-buy {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.shop-item-buy:hover:not(:disabled) { background: var(--accent-strong); }
+.shop-item-buy:disabled { opacity: 0.45; cursor: default; }
+
 /* ---------- 主区 ---------- */
 main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }
 .inline-action {
@@ -744,7 +889,43 @@ body.theme-dark .leaderboard-row {
   background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border);
   border-radius: 8px; padding: 5px 8px;
 }
-.card input[type="checkbox"] { accent-color: var(--accent); }
+.card input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 42px;
+  height: 24px;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid var(--input-border);
+  background: var(--control-hover);
+  position: relative;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 0.18s, border-color 0.18s;
+}
+.card input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s;
+}
+.card input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.card input[type="checkbox"]:checked::before {
+  transform: translateX(18px);
+}
+.card input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .auth-card {
   width: min(480px, calc(100vw - 32px));
 }

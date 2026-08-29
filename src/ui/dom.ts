@@ -95,3 +95,26 @@ export function flashTimerPenalty() {
   el.classList.add('penalty');
   window.setTimeout(() => el.classList.remove('penalty'), 2000);
 }
+
+/** 无尽闯关道具卡片（屏幕下方，空字符串时隐藏）。 */
+export function endlessItems(html: string) {
+  const el = $('endless-items');
+  el.innerHTML = html;
+  el.classList.toggle('hidden', html === '');
+}
+
+/** 无尽闯关关键字卡片（飞花令牌，空字符串时隐藏）。 */
+export function endlessToken(html: string) {
+  const el = $('endless-token');
+  el.innerHTML = html;
+  el.classList.toggle('hidden', html === '');
+}
+
+/** 无尽闯关道具商店。 */
+export function showShop() {
+  $('endless-shop').classList.remove('hidden');
+}
+
+export function hideShop() {
+  $('endless-shop').classList.add('hidden');
+}

@@ -52,6 +52,15 @@ export class Countdown {
     this.onTick?.(this.remainingMs);
   }
 
+  /** 奖励增加：往剩余时间中追加指定毫秒数（时间沙漏）。 */
+  add(ms: number) {
+    if (this.timer === null || ms <= 0) return;
+    const remain = Math.max(0, this.deadline - Date.now());
+    this.remainingMs = remain + ms;
+    this.deadline = Date.now() + this.remainingMs;
+    this.onTick?.(this.remainingMs);
+  }
+
   stop() {
     if (this.timer !== null) {
       window.clearInterval(this.timer);

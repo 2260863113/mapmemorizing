@@ -56,6 +56,8 @@
           <div id="zoom-pill">1.00x</div>
         </div>
       </div>
+      <div id="endless-items" class="hidden"></div>
+      <div id="endless-token" class="hidden"></div>
       <div id="map"></div>
       <aside id="side-panel">
         <button id="side-panel-toggle" class="side-panel-toggle" type="button" aria-controls="side-panel" aria-expanded="false" aria-label="展开或收起排行榜"></button>
@@ -139,8 +141,18 @@
     <div class="card endless-settings-card">
       <h3>无尽闯关设置</h3>
       <label class="row"><input type="checkbox" id="set-hide-price" /> 隐藏价格标签</label>
+      <label class="row"><input type="checkbox" id="set-hide-price-bg" /> 隐藏价格标签衬底</label>
       <div class="card-actions">
         <button id="endless-settings-close" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="endless-shop" class="overlay hidden">
+    <div class="card endless-shop-card">
+      <div id="endless-shop-body"></div>
+      <div class="card-actions">
+        <button id="endless-shop-continue" class="primary">继续</button>
       </div>
     </div>
   </div>

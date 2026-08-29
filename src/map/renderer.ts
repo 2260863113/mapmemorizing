@@ -2,7 +2,7 @@ import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
-type LabelPoint = { name: string; value: [number, number, string, string, number] }; // [lng, lat, text, color, isPrice]
+type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
 type GeoPoint = [number, number];
 type PolygonRings = GeoPoint[][];
 type GeoFeature = { properties: { adcode?: string }; geometry: { type: string; coordinates: unknown } };
@@ -422,14 +422,14 @@ export class MapRenderer {
         const lab = state.coin.label(u.adcode);
         if (!lab) return [];
         const anchor = this.labelAnchorOf(u);
-        return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0] }];
+        return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0, lab.noBg ? 1 : 0] }];
       }
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
       if (color === 'blue') return []; // 答题模式不泄露当前题目答案
       const anchor = this.labelAnchorOf(u);
-      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0] }];
-      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0] }];
-      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral, 0] }];
+      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0, 0] }];
+      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0, 0] }];
+      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral, 0, 0] }];
       return [];
     });
   }
@@ -550,12 +550,41 @@ export class MapRenderer {
           tooltip: { show: false },
           renderItem: (_params, api) => {
             const value = [api.value(0), api.value(1)] as [number, number];
-            const name = String(api.value(2));
+            const rawText = api.value(2);
+            const name = typeof rawText === 'string' ? rawText : '';
             const color = String(api.value(3));
             const isPrice = Number(api.value(4)) === 1;
+            const noBg = Number(api.value(5)) === 1;
             const point = api.coord(value) as number[];
+            // NaN 防御：坐标非有限或文本异常时跳过该标签，避免显示 "NaN"
+            if (!Number.isFinite(point[0]) || !Number.isFinite(point[1]) || !name || name === 'NaN' || name === 'undefined') {
+              return { type: 'group', children: [] };
+            }
             const scale = labelScale(this.zoom);
             const fontSize = (isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
+            const font = `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
+            // 隐藏衬底的价格：白色填充 + 黑色描边，无背景矩形
+            if (isPrice && noBg) {
+              return {
+                type: 'group',
+                children: [
+                  {
+                    type: 'text',
+                    style: {
+                      x: point[0],
+                      y: point[1] + fontSize * 0.1,
+                      text: name,
+                      fill: '#ffffff',
+                      textBorderColor: '#000000',
+                      textBorderWidth: Math.max(2, fontSize * 0.14),
+                      font,
+                      align: 'center',
+                      verticalAlign: 'middle',
+                    },
+                  },
+                ],
+              };
+            }
             const padX = (isPrice ? 4 : 8) * scale;
             const padY = (isPrice ? 3 : 6) * scale;
             const minWidth = (isPrice ? 26 : 34) * scale;
@@ -580,7 +609,7 @@ export class MapRenderer {
                     y: point[1] + (isPrice ? fontSize * 0.1 : 0), // 价格文本下移微调，保证垂直居中
                     text: name,
                     fill: color,
-                    font: `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`,
+                    font,
                     align: 'center',
                     verticalAlign: 'middle',
                   },
