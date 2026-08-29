@@ -189,15 +189,7 @@ export class EndlessMode implements ModeController {
 
   private showStartHint() {
     const actions = '<button id="endless-start" class="start-action">开始</button>';
-    this.ctx.setHint(
-      `<div class="start-panel">` +
-        `<div class="start-title">无尽闯关</div>` +
-        `<div class="start-subtitle">每关限时 ${LEVEL_SECONDS} 秒，输入地级市名称收集金币（按 Enter 确认）</div>` +
-        `<div class="start-subtitle">放大地图查看金币数，绿色越深金币越多；时间结束时达标即通关</div>` +
-        `<div class="start-subtitle">累计金币跨关保留，收集过的城市下一关会恢复并增长</div>` +
-        actions +
-        `</div>`,
-    );
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">无尽闯关</div><div class="start-subtitle">范围：全国</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('endless-start') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start();
@@ -207,6 +199,7 @@ export class EndlessMode implements ModeController {
   private start() {
     if (this.started || this.paused || this.switching) return;
     this.syncScope();
+    this.ctx.setHint(''); // 点击开始后隐藏开始卡片
     this.perm = makePermutation(randomSeed()); // 每轮重新生成噪声，起始分布不重复
     this.level = 1;
     this.collectedThisLevel.clear();
@@ -215,7 +208,7 @@ export class EndlessMode implements ModeController {
     this.totalCollects = 0;
     this.targetHit = false;
     this.coins = this.generateCoins();
-    this.target = this.targetFor(1);
+    this.target = this.cumulativeTarget(1);
     this.runStartAt = Date.now();
     this.started = true;
     this.paused = false;
@@ -236,7 +229,7 @@ export class EndlessMode implements ModeController {
     if (!this.started || this.paused || this.switching) return;
     this.countdown.stop();
     this.ctx.showTimer(null);
-    if (this.levelCoins >= this.target) {
+    if (this.totalCoins >= this.target) {
       this.showLevelEnd();
       return;
     }
@@ -253,7 +246,7 @@ export class EndlessMode implements ModeController {
     this.ctx.search.focus();
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
-    if (!this.targetHit && this.levelCoins >= this.target) {
+    if (!this.targetHit && this.totalCoins >= this.target) {
       this.targetHit = true;
       this.ctx.toast(`已达成目标：${fmt(this.target)}￥，剩余时间可继续收集金币`);
     } else {
@@ -268,9 +261,9 @@ export class EndlessMode implements ModeController {
     endlessStatus('');
     showLevelEnd(
       `<div class="level-end-title">第 ${this.level} 关完成</div>` +
-        `<div class="sum-stats">本关目标：<b>${fmt(this.target)}￥</b></div>` +
-        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>` +
-        `<div class="sum-stats">当前累计：<b>${fmt(this.totalCoins)}￥</b></div>`,
+        `<div class="sum-stats">累计目标：<b>${fmt(this.target)}￥</b></div>` +
+        `<div class="sum-stats">累计收集：<b>${fmt(this.totalCoins)}￥</b></div>` +
+        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>`,
       () => this.nextLevel(),
     );
   }
@@ -279,7 +272,7 @@ export class EndlessMode implements ModeController {
     this.switching = false;
     this.floatUpCoins();
     this.level += 1;
-    this.target = this.targetFor(this.level);
+    this.target = this.cumulativeTarget(this.level);
     this.levelCoins = 0;
     this.targetHit = false;
     this.collectedThisLevel.clear();
@@ -311,8 +304,9 @@ export class EndlessMode implements ModeController {
   private statusHtml() {
     return (
       `<span>第 <b>${this.level}</b> 关</span>` +
-      `<span>本关 <b>${fmt(this.levelCoins)} / ${fmt(this.target)}</b> ￥</span>` +
-      `<span>累计 <b>${fmt(this.totalCoins)}</b> ￥</span>`
+      `<span>本关目标：<b>${fmt(this.target)}￥</b></span>` +
+      `<span>累计收集：<b>${fmt(this.totalCoins)}￥</b></span>` +
+      `<span>本关收集：<b>${fmt(this.levelCoins)}￥</b></span>`
     );
   }
 
@@ -354,16 +348,16 @@ export class EndlessMode implements ModeController {
     }
   }
 
-  private targetFor(level: number) {
-    const raw = BASE_TARGET * Math.pow(TARGET_GROWTH, level - 1);
-    return Math.round(raw / 50) * 50;
+  /** 本关累计目标：通关所需的累计金币（第一关 1000，第二关 1000+1100=2100，逐关等比求和）。 */
+  private cumulativeTarget(level: number) {
+    return (BASE_TARGET * (Math.pow(TARGET_GROWTH, level) - 1)) / (TARGET_GROWTH - 1);
   }
 }
 
 // ---------- 常量 ----------
 const LEVEL_SECONDS = 45;
-const BASE_TARGET = 1000; // 第一关目标金币
-const TARGET_GROWTH = 1.08; // 目标金币每关增幅
+const BASE_TARGET = 1000; // 第一关累计目标金币
+const TARGET_GROWTH = 1.1; // 累计目标每关增幅（第二关 1000+1100=2100）
 const COIN_MIN = 50; // 初始金币下限（约 50）
 const COIN_MAX = 400; // 初始金币上限（约 400）
 const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度
