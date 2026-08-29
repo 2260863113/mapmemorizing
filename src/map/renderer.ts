@@ -23,6 +23,8 @@ type MapTheme = {
   tooltipBorder: string;
   flashArea: string;
   flashBorder: string;
+  /** 无尽闯关：金币数量 → 绿色深浅（0/负值返回 null，回落原色） */
+  coinGreen: (coins: number, hover?: boolean) => string | null;
 };
 
 const MAP_THEMES: Record<ThemeName, MapTheme> = {
@@ -68,6 +70,13 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
     tooltipBorder: '#d1d5db',
     flashArea: '#e8cf78',
     flashBorder: '#b68b2f',
+    coinGreen(coins, hover = false) {
+      if (coins <= 0) return null;
+      const t = Math.min(1, coins / 500);
+      const s = 42 + t * 14;
+      const l = Math.min(88, (hover ? 5 : 0) + (82 - t * 48));
+      return `hsl(140, ${s.toFixed(1)}%, ${Math.max(26, l).toFixed(1)}%)`;
+    },
   },
   dark: {
     background: '#374151',
@@ -111,6 +120,13 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
     tooltipBorder: '#475569',
     flashArea: '#ca8a04',
     flashBorder: '#fde68a',
+    coinGreen(coins, hover = false) {
+      if (coins <= 0) return null;
+      const t = Math.min(1, coins / 500);
+      const s = 48 + t * 16;
+      const l = Math.min(64, (hover ? 9 : 0) + (26 + t * 22));
+      return `hsl(140, ${s.toFixed(1)}%, ${Math.max(18, l).toFixed(1)}%)`;
+    },
   },
 };
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
@@ -361,16 +377,19 @@ export class MapRenderer {
     return this.units.map((u) => {
       const inView = !this.viewProvince || u.provinceAdcode === this.viewProvince;
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
+      const coinCoins = state.coin && !u.decorative ? state.coin.coins(u.adcode) : 0;
       return {
         name: u.name,
         silent: !inView,
         itemStyle: {
-          areaColor: inView ? theme.fill[color] : 'rgba(0,0,0,0)',
+          areaColor: state.coin ? (theme.coinGreen(coinCoins) ?? theme.fill[color]) : inView ? theme.fill[color] : 'rgba(0,0,0,0)',
           borderColor: inView ? theme.boundary[this.cityBoundaryTone] : 'rgba(0,0,0,0)',
           borderWidth: inView ? 0.6 : 0,
         },
         emphasis: {
-          itemStyle: { areaColor: theme.emphasis[color] },
+          itemStyle: {
+            areaColor: state.coin ? (theme.coinGreen(coinCoins, true) ?? theme.emphasis[color]) : theme.emphasis[color],
+          },
           label: { show: false },
         },
         label: { show: false },
@@ -380,10 +399,17 @@ export class MapRenderer {
 
   private buildLabelData(state: RenderState): LabelPoint[] {
     if (this.labelMode !== 'city') return [];
+    const theme = this.theme();
     return this.units.flatMap((u) => {
       if (this.viewProvince && u.provinceAdcode !== this.viewProvince) return [];
+      if (state.coin) {
+        if (u.decorative) return [];
+        const text = state.coin.label(u.adcode);
+        if (!text) return [];
+        const anchor = this.labelAnchorOf(u);
+        return [{ name: u.name, value: [...anchor, text, theme.labelNeutral] }];
+      }
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-      const theme = this.theme();
       if (color === 'blue') return []; // 答题模式不泄露当前题目答案
       const anchor = this.labelAnchorOf(u);
       if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen] }];
@@ -443,6 +469,11 @@ export class MapRenderer {
               const params = p as { name?: string };
               const u = this.nameToUnit.get(params.name ?? '');
               if (!u) return String(params.name ?? '');
+              if (state.coin) {
+                const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
+                const coinsTxt = coins > 0 ? `${coins}￥` : '0￥（已收集）';
+                return `<b>${u.name}</b><br/>所属：${u.province}<br/>金币：${coinsTxt}`;
+              }
               const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
               const status = u.decorative ? '' : `<br/>状态：${STATUS_TXT[color]}`;
               return `<b>${u.name}</b><br/>所属：${u.province}${status}`;

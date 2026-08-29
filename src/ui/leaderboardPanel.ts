@@ -28,7 +28,6 @@ export class LeaderboardPanel {
 
 function modeLabel(mode: LeaderboardMode) {
   if (mode === 'self') return '输入模式';
-  if (mode === 'challenge') return '挑战模式';
   return '点击模式';
 }
 

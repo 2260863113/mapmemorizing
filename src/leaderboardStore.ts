@@ -4,7 +4,7 @@ const LEADERBOARD_KEY = 'china-admin-leaderboard-v1';
 const LEADERBOARD_VERSION = 1;
 const MAX_GROUP_ROWS = 50;
 
-export type LeaderboardMode = Extract<Mode, 'self' | 'challenge' | 'click'>;
+export type LeaderboardMode = Extract<Mode, 'self' | 'click'>;
 
 export interface LeaderboardEntry {
   id: string;
@@ -106,7 +106,7 @@ export class LeaderboardStore {
 function normalizeEntry(value: unknown): LeaderboardEntry | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Partial<LeaderboardEntry>;
-  if (row.mode !== 'self' && row.mode !== 'challenge' && row.mode !== 'click') return null;
+  if (row.mode !== 'self' && row.mode !== 'click') return null;
   if (typeof row.username !== 'string' || !row.username.trim()) return null;
   if (row.scopeProvince !== null && typeof row.scopeProvince !== 'string') return null;
   if (typeof row.scopeLabel !== 'string' || !row.scopeLabel.trim()) return null;

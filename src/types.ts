@@ -1,4 +1,4 @@
-export type Mode = 'free' | 'self' | 'challenge' | 'click' | 'memory';
+export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory';
 export type UnitColor =
   | 'green'
   | 'blue'
@@ -54,7 +54,6 @@ export interface MemoryRecord extends PracticeRecord {
 export interface Settings {
   selfTimerEnabled: boolean;
   selfTimerSeconds: number;
-  challengeSeconds: number;
   requireEnter: boolean;
   autoFollow: boolean;
   followZoom: number;
@@ -64,7 +63,7 @@ export interface Settings {
 }
 
 export interface RoundResult {
-  mode: Extract<Mode, 'self' | 'challenge' | 'click'>;
+  mode: Extract<Mode, 'self' | 'click'>;
   scopeProvince: string | null;
   scopeLabel: string;
   totalUnits: number;
@@ -102,9 +101,16 @@ export interface AuthUser {
   updatedAt: number;
 }
 
+/** 无尽闯关金币层：金币着色 + 中心标签（金币数或收集后的地名） */
+export interface CoinLayer {
+  coins: (adcode: string) => number; // 当前金币数（0 = 已收集 / 无金币）
+  label: (adcode: string) => string | null; // 中心标签文本（null = 不显示）
+}
+
 export interface RenderState {
   colorOf: (adcode: string) => UnitColor;
   showAllLabels?: boolean; // 记忆模式：全部显示地名标签
   labelZoomThreshold?: number; // 地名标签显示倍率阈值
   disableTooltip?: boolean; // 记忆模式：关闭提示
+  coin?: CoinLayer; // 无尽闯关：金币绿色深浅着色 + 中心金币/地名标签
 }

@@ -13,7 +13,7 @@ import { openSettings } from './ui/settingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary } from './ui/dom';
 import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
-import { ChallengeMode } from './modes/challenge';
+import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
 import type { AuthUser, Mode, RoundResult, Settings, Unit } from './types';
@@ -134,7 +134,7 @@ async function boot() {
   const modes: Record<Mode, ModeController> = {
     free: new FreeMode(ctx),
     self: selfMode,
-    challenge: new ChallengeMode(ctx),
+    endless: new EndlessMode(ctx),
     click: new ClickMode(ctx),
     memory: new MemoryMode(ctx),
   };
@@ -180,7 +180,7 @@ async function boot() {
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
     });
-    const inputMode = mode === 'self' || mode === 'challenge';
+    const inputMode = mode === 'self' || mode === 'endless';
     $('search-row').classList.toggle('hidden', !inputMode);
     current.enter();
     syncModeChrome();
@@ -207,25 +207,26 @@ async function boot() {
   function syncModeChrome() {
     const mode = current?.id;
     const isAnalysis = mode === 'free';
-    const isTest = mode === 'self' || mode === 'challenge' || mode === 'click';
+    const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
+    const showLeaderboard = mode === 'self' || mode === 'click'; // 无尽闯关不参与排行榜
     if (!isTest) {
       showTimer(null);
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
-    const showSidePanel = isAnalysis || isTest;
+    const showSidePanel = isAnalysis || showLeaderboard;
     const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
     $('side-panel').classList.toggle('collapsed', showSidePanel && !panelOpen);
     ($('side-panel-toggle') as HTMLButtonElement).setAttribute('aria-expanded', String(panelOpen));
     $('stats').classList.toggle('hidden', !isAnalysis);
-    $('leaderboard').classList.toggle('hidden', !isTest);
+    $('leaderboard').classList.toggle('hidden', !showLeaderboard);
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
     $('side-panel-title').textContent = '熟练度分析';
     $('side-panel-tip').textContent = isAnalysis ? '进度自动保存在本机浏览器（localStorage）' : '排行榜按当前测试范围筛选，仅保存本机成绩';
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
-    $('btn-skip').classList.toggle('hidden', !isTest);
+    $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless');
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self');
@@ -250,7 +251,7 @@ async function boot() {
   function updateProgress() {
     const el = $('mode-progress');
     const progress = current?.getProgress?.() ?? null;
-    if (!progress || (current?.id !== 'self' && current?.id !== 'challenge' && current?.id !== 'click')) {
+    if (!progress || (current?.id !== 'self' && current?.id !== 'click')) {
       el.classList.add('hidden');
       el.innerHTML = '';
       return;
@@ -353,7 +354,7 @@ async function boot() {
   }
 
   function isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
-    return mode === 'self' || mode === 'challenge' || mode === 'click';
+    return mode === 'self' || mode === 'click';
   }
 
   let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean; wasOpen: boolean } | null = null;
@@ -395,10 +396,10 @@ async function boot() {
         body: '输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、暂停和重置。',
       };
     }
-    if (mode === 'challenge') {
+    if (mode === 'endless') {
       return {
-        title: '挑战模式说明',
-        body: '系统会连续随机出题。输入正确立即进入下一题；答错或超时会显示正确答案并继续。',
+        title: '无尽闯关说明',
+        body: '每关限时 45 秒，输入地级市名称收集金币（按 Enter 确认）。地图上的数字为该地金币数，绿色越深金币越多；达到本关目标金币立即进入下一关，超时未达标则游戏结束。累计金币跨关保留，未收集城市的金币每关会上浮。',
       };
     }
     if (mode === 'free') {

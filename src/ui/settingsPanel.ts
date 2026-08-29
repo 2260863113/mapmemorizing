@@ -13,7 +13,6 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   const cityBoundaryTone = $('set-city-boundary-tone') as HTMLSelectElement;
   const provinceBoundaryTone = $('set-province-boundary-tone') as HTMLSelectElement;
   const secs = $('set-self-secs') as HTMLInputElement;
-  const chal = $('set-challenge-secs') as HTMLInputElement;
   enable.checked = current.selfTimerEnabled;
   requireEnter.checked = current.requireEnter;
   autoFollow.checked = current.autoFollow;
@@ -22,7 +21,6 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   cityBoundaryTone.value = current.cityBoundaryTone;
   provinceBoundaryTone.value = current.provinceBoundaryTone;
   secs.value = String(current.selfTimerSeconds);
-  chal.value = String(current.challengeSeconds);
   panel.classList.remove('hidden');
 
   const close = () => panel.classList.add('hidden');
@@ -31,7 +29,6 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
     const s: Settings = {
       selfTimerEnabled: enable.checked,
       selfTimerSeconds: Math.max(5, Number(secs.value) || 60),
-      challengeSeconds: Math.max(3, Number(chal.value) || 10),
       requireEnter: requireEnter.checked,
       autoFollow: autoFollow.checked,
       followZoom: Math.min(28, Math.max(2, Number(followZoom.value) || current.followZoom)),

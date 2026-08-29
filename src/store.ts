@@ -128,7 +128,6 @@ function finiteCount(value: unknown) {
 export const DEFAULT_SETTINGS: Settings = {
   selfTimerEnabled: false,
   selfTimerSeconds: 60,
-  challengeSeconds: 10,
   requireEnter: true,
   autoFollow: true,
   followZoom: 12,

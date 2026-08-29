@@ -476,6 +476,18 @@ body.theme-dark .mode-segmented button.active {
 .start-action:hover { background: var(--topbar-bg); }
 .start-action.secondary { background: var(--panel-bg); color: var(--input-text); border-color: var(--input-border); }
 .start-action.secondary:hover { background: var(--control-hover); border-color: var(--muted); }
+.endless-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--control-text);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.endless-status b { color: var(--accent); }
 
 /* ---------- 主区 ---------- */
 main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }
