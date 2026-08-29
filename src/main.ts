@@ -215,6 +215,8 @@ async function boot() {
     }
     $('app').dataset.mode = mode ?? '';
     $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted?.());
+    $('btn-endless-settings').classList.toggle('hidden', mode !== 'endless');
+    if (mode !== 'endless') $('endless-settings-panel').classList.add('hidden');
     const showSidePanel = isAnalysis || showLeaderboard;
     const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
@@ -483,6 +485,19 @@ async function boot() {
       renderer.setDarkMode(settings.darkMode);
       renderer.setBoundaryTones(settings.cityBoundaryTone, settings.provinceBoundaryTone);
     });
+  });
+
+  // 无尽闯关设置卡片
+  ($('btn-endless-settings') as HTMLButtonElement).addEventListener('click', () => {
+    ($('set-hide-price') as HTMLInputElement).checked = (modes.endless as EndlessMode).isHidePrices();
+    $('endless-settings-panel').classList.remove('hidden');
+  });
+  ($('endless-settings-close') as HTMLButtonElement).addEventListener('click', () => $('endless-settings-panel').classList.add('hidden'));
+  $('endless-settings-panel').addEventListener('click', (event) => {
+    if (event.target === $('endless-settings-panel')) $('endless-settings-panel').classList.add('hidden');
+  });
+  ($('set-hide-price') as HTMLInputElement).addEventListener('change', (event) => {
+    (modes.endless as EndlessMode).setHidePrices((event.target as HTMLInputElement).checked);
   });
 
   ($('btn-skip') as HTMLButtonElement).addEventListener('click', () => current?.onSkip?.());

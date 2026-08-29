@@ -43,6 +43,15 @@ export class Countdown {
     return this.timer === null ? this.remainingMs : Math.max(0, this.deadline - Date.now());
   }
 
+  /** 惩罚扣减：从剩余时间中减去指定毫秒数（到达 0 后由下一次 tick 触发到期）。 */
+  penalize(ms: number) {
+    if (this.timer === null || ms <= 0) return;
+    const remain = Math.max(0, this.deadline - Date.now());
+    this.remainingMs = Math.max(0, remain - ms);
+    this.deadline = Date.now() + this.remainingMs;
+    this.onTick?.(this.remainingMs);
+  }
+
   stop() {
     if (this.timer !== null) {
       window.clearInterval(this.timer);

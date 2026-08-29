@@ -36,7 +36,7 @@ export class SelfTestMode implements ModeController {
   enter() {
     if (this.paused) {
       this.syncScopeView();
-      this.ctx.search.setPlaceholder('地名');
+      this.ctx.search.setPlaceholder('输入地名');
       this.ctx.setHint('');
       this.refresh();
       this.ctx.showStopwatch(this.stopwatch.elapsedMs());

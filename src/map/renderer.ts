@@ -2,7 +2,7 @@ import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
-type LabelPoint = { name: string; value: [number, number, string, string] };
+type LabelPoint = { name: string; value: [number, number, string, string, number] }; // [lng, lat, text, color, isPrice]
 type GeoPoint = [number, number];
 type PolygonRings = GeoPoint[][];
 type GeoFeature = { properties: { adcode?: string }; geometry: { type: string; coordinates: unknown } };
@@ -139,6 +139,7 @@ const FOLLOW_ANIMATION_MS = 650;
 const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const CITY_LABEL_SIZE = 14;
+const PRICE_LABEL_SIZE = 18; // 价格标签字号（随缩放缩放）
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
@@ -168,9 +169,18 @@ function labelScale(zoom: number) {
   return Math.max(0.25, Math.min(1, zoom / LABEL_FIX_ZOOM));
 }
 
-function labelShape(name: string, point: number[], scale: number) {
-  const width = Math.max(34 * scale, name.length * CITY_LABEL_SIZE * scale + 16 * scale);
-  const height = (CITY_LABEL_SIZE + 12) * scale;
+/** 文本渲染宽度估算：CJK 按全角、ASCII 按半角。 */
+function textRenderWidth(text: string, fontSize: number) {
+  let width = 0;
+  for (const ch of text) {
+    width += ch.charCodeAt(0) > 0xff ? fontSize : fontSize * 0.6;
+  }
+  return width;
+}
+
+function labelShape(name: string, point: number[], fontSize: number, padX: number, padY: number, minWidth: number) {
+  const width = Math.max(minWidth, textRenderWidth(name, fontSize) + padX * 2);
+  const height = fontSize + padY * 2;
   return {
     x: point[0] - width / 2,
     y: point[1] - height / 2,
@@ -409,17 +419,17 @@ export class MapRenderer {
       if (this.viewProvince && u.provinceAdcode !== this.viewProvince) return [];
       if (state.coin) {
         if (u.decorative) return [];
-        const text = state.coin.label(u.adcode);
-        if (!text) return [];
+        const lab = state.coin.label(u.adcode);
+        if (!lab) return [];
         const anchor = this.labelAnchorOf(u);
-        return [{ name: u.name, value: [...anchor, text, theme.labelNeutral] }];
+        return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0] }];
       }
       const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
       if (color === 'blue') return []; // 答题模式不泄露当前题目答案
       const anchor = this.labelAnchorOf(u);
-      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen] }];
-      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed] }];
-      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral] }];
+      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0] }];
+      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0] }];
+      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral, 0] }];
       return [];
     });
   }
@@ -542,9 +552,14 @@ export class MapRenderer {
             const value = [api.value(0), api.value(1)] as [number, number];
             const name = String(api.value(2));
             const color = String(api.value(3));
+            const isPrice = Number(api.value(4)) === 1;
             const point = api.coord(value) as number[];
             const scale = labelScale(this.zoom);
-            const shape = labelShape(name, point, scale);
+            const fontSize = (isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
+            const padX = (isPrice ? 4 : 8) * scale;
+            const padY = (isPrice ? 3 : 6) * scale;
+            const minWidth = (isPrice ? 26 : 34) * scale;
+            const shape = labelShape(name, point, fontSize, padX, padY, minWidth);
             return {
               type: 'group',
               children: [
@@ -565,7 +580,7 @@ export class MapRenderer {
                     y: point[1],
                     text: name,
                     fill: color,
-                    font: `600 ${CITY_LABEL_SIZE * scale}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`,
+                    font: `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`,
                     align: 'center',
                     verticalAlign: 'middle',
                   },

@@ -104,7 +104,7 @@ export interface AuthUser {
 /** 无尽闯关金币层：金币着色 + 中心标签（金币数或收集后的地名） */
 export interface CoinLayer {
   coins: (adcode: string) => number; // 当前金币数（0 = 已收集 / 无金币）
-  label: (adcode: string) => string | null; // 中心标签文本（null = 不显示）
+  label: (adcode: string) => { text: string; price: boolean } | null; // 中心标签（price=true 为价格标签，null = 不显示）
 }
 
 export interface RenderState {

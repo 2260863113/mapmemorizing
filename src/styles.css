@@ -319,12 +319,19 @@ body.theme-dark #test-timer.urgent {
   left: 16px;
   bottom: 16px;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   flex-wrap: nowrap;
 }
+#mode-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 #mode-info .mode-action,
-#mode-info #zoom-pill {
+#mode-info #zoom-pill,
+#mode-info-row {
   pointer-events: auto;
 }
 #mode-info #zoom-pill {
@@ -502,6 +509,12 @@ body.theme-dark .mode-segmented button.active {
   font-weight: 700;
 }
 #top-status #test-timer.urgent { color: var(--danger); }
+#top-status #test-timer.penalty {
+  color: #ffffff;
+  border-color: var(--danger);
+  background: var(--danger);
+  animation: pulse 1s infinite;
+}
 #endless-status b { color: var(--accent); }
 #level-end-body { text-align: center; }
 #level-end-body b { color: var(--accent); }
@@ -735,6 +748,11 @@ body.theme-dark .leaderboard-row {
 .auth-card {
   width: min(480px, calc(100vw - 32px));
 }
+.endless-settings-card {
+  background: var(--floating-bg);
+  border: 1px solid var(--floating-border);
+  backdrop-filter: var(--floating-blur);
+}
 .form-row {
   display: grid;
   gap: 6px;
@@ -851,8 +869,9 @@ body.theme-dark .leaderboard-row {
 /* ---------- Toast ---------- */
 #toast {
   position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%) translateY(20px);
-  background: var(--toast-bg); color: var(--toast-text); padding: 10px 20px;
-  border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none;
+  background: #ffffff; color: #1f2937; padding: 14px 28px;
+  border-radius: 12px; font-size: 16px; font-weight: 600; opacity: 0; pointer-events: none;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
   transition: all 0.25s; z-index: 200; max-width: 80vw;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

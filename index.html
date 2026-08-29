@@ -39,7 +39,7 @@
         </div>
       </div>
       <div id="search-row">
-        <input id="search-input" type="text" placeholder="输入地名，如：黔南" autocomplete="off" spellcheck="false" />
+        <input id="search-input" type="text" placeholder="输入地名" autocomplete="off" spellcheck="false" />
       </div>
       <div id="top-status">
         <div id="top-hint" class="hidden"></div>
@@ -50,8 +50,11 @@
       <div id="pause-overlay" class="hidden" aria-live="polite"><span>点击任意处继续</span></div>
       <div id="hover-stats" class="hidden" aria-live="polite"></div>
       <div id="mode-info">
-        <button id="btn-help" class="mode-action">说明</button>
-        <div id="zoom-pill">1.00x</div>
+        <button id="btn-endless-settings" class="mode-action hidden">设置</button>
+        <div id="mode-info-row">
+          <button id="btn-help" class="mode-action">说明</button>
+          <div id="zoom-pill">1.00x</div>
+        </div>
       </div>
       <div id="map"></div>
       <aside id="side-panel">
@@ -128,6 +131,16 @@
       <div class="card-actions">
         <button id="set-save" class="primary">保存</button>
         <button id="set-cancel" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="endless-settings-panel" class="overlay hidden">
+    <div class="card endless-settings-card">
+      <h3>无尽闯关设置</h3>
+      <label class="row"><input type="checkbox" id="set-hide-price" /> 隐藏价格标签</label>
+      <div class="card-actions">
+        <button id="endless-settings-close" class="ghost">关闭</button>
       </div>
     </div>
   </div>

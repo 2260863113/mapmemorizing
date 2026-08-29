@@ -86,3 +86,12 @@ export function showLevelEnd(html: string, onContinue: () => void) {
 export function hideLevelEnd() {
   $('level-end').classList.add('hidden');
 }
+
+/** 无尽闯关惩罚：倒计时卡片闪烁变红 2 秒。 */
+export function flashTimerPenalty() {
+  const el = $('test-timer');
+  el.classList.remove('penalty');
+  void el.offsetWidth; // 强制重排以重启动画
+  el.classList.add('penalty');
+  window.setTimeout(() => el.classList.remove('penalty'), 2000);
+}

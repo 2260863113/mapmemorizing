@@ -1,7 +1,7 @@
 import type { Mode, Unit } from '../types';
 import type { ModeCtx, ModeController } from './types';
 import { Countdown } from '../ui/countdown';
-import { endlessStatus, hideLevelEnd, showLevelEnd } from '../ui/dom';
+import { endlessStatus, flashTimerPenalty, hideLevelEnd, showLevelEnd } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
 
 /**
@@ -31,13 +31,15 @@ export class EndlessMode implements ModeController {
   private countdown = new Countdown();
   private perm: Uint8Array = makePermutation(randomSeed());
   private syncingView = false;
+  private hidePrices = loadHidePrices(); // 隐藏价格标签
 
   constructor(private ctx: ModeCtx) {}
 
   enter() {
     if (this.paused) {
       this.syncScope();
-      this.ctx.search.setPlaceholder('输入地级市名称，如：黔南');
+      this.ctx.setHint(''); // 清除其他模式遗留的开始卡片
+      this.ctx.search.setPlaceholder('输入地名');
       this.ctx.search.setRequireEnter(true);
       endlessStatus(this.statusHtml());
       this.refresh();
@@ -48,7 +50,7 @@ export class EndlessMode implements ModeController {
     }
     this.exit();
     this.resetRun();
-    this.ctx.search.setPlaceholder('输入地级市名称，如：黔南');
+    this.ctx.search.setPlaceholder('输入地名');
     this.ctx.search.setRequireEnter(true);
     this.syncScope();
     this.showStartHint();
@@ -112,11 +114,23 @@ export class EndlessMode implements ModeController {
     return null; // 全国固定范围，不下钻
   }
 
+  /** 隐藏价格标签开关（无尽设置卡片）。 */
+  setHidePrices(hidden: boolean) {
+    this.hidePrices = hidden;
+    saveHidePrices(hidden);
+    if (this.started) this.refresh();
+  }
+
+  isHidePrices() {
+    return this.hidePrices;
+  }
+
   onSubmit(v: string) {
     if (!this.started || this.paused || this.switching || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     if (!best) {
-      this.ctx.toast('未匹配到有效地名');
+      this.ctx.toast('匹配失败，惩罚时5秒！');
+      this.penalize(5);
       return;
     }
     const value = this.coins.get(best.adcode) ?? 0;
@@ -255,6 +269,12 @@ export class EndlessMode implements ModeController {
     endlessStatus(this.statusHtml());
   }
 
+  /** 匹配失败惩罚：倒计时扣减指定秒数并让倒计时卡片闪烁变红。 */
+  private penalize(seconds: number) {
+    this.countdown.penalize(seconds * 1000);
+    flashTimerPenalty();
+  }
+
   /** 达标通关：屏幕中心展示通关卡片，点击「继续」进入下一关。 */
   private showLevelEnd() {
     this.switching = true;
@@ -310,12 +330,15 @@ export class EndlessMode implements ModeController {
     );
   }
 
-  private labelOf(adcode: string): string | null {
+  private labelOf(adcode: string): { text: string; price: boolean } | null {
     const c = this.coins.get(adcode) ?? 0;
-    if (c > 0) return `${fmt(c)}￥`;
+    if (c > 0) {
+      if (this.hidePrices) return null; // 隐藏价格标签
+      return { text: fmt(c), price: true };
+    }
     if (this.collectedThisLevel.has(adcode)) {
       const u = this.ctx.byAdcode.get(adcode);
-      return u?.name ?? null;
+      return u ? { text: u.name, price: false } : null;
     }
     return null;
   }
@@ -363,6 +386,7 @@ const COIN_MAX = 400; // 初始金币上限（约 400）
 const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度
 const COIN_NOISE_AMPLIFY = 1.25; // 噪声起伏放大（拉开差距）
 const COIN_LABEL_ZOOM = 2; // 金币标签显示倍率阈值
+const HIDE_PRICE_KEY = 'china-admin-endless-hide-price-v1';
 
 // ---------- 工具 ----------
 function fmt(n: number) {
@@ -379,6 +403,22 @@ function randInt(min: number, max: number) {
 
 function randomSeed() {
   return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+}
+
+function loadHidePrices(): boolean {
+  try {
+    return localStorage.getItem(HIDE_PRICE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveHidePrices(hidden: boolean) {
+  try {
+    localStorage.setItem(HIDE_PRICE_KEY, hidden ? '1' : '0');
+  } catch {
+    /* 忽略存储失败 */
+  }
 }
 
 // ---------- 柏林噪声（种子化，确定性） ----------
