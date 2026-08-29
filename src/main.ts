@@ -214,6 +214,7 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
+    $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted?.());
     const showSidePanel = isAnalysis || showLeaderboard;
     const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);

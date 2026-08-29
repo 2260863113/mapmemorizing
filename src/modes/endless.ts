@@ -1,44 +1,45 @@
 import type { Mode, Unit } from '../types';
 import type { ModeCtx, ModeController } from './types';
 import { Countdown } from '../ui/countdown';
+import { endlessStatus, hideLevelEnd, showLevelEnd } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
 
 /**
  * 无尽闯关：
- * 每关限时 45 秒，输入地级市名称收集金币；达到本关目标金币立即通关进入下一关，
- * 超时未达标则游戏结束。累计金币跨关保留，未收集城市的金币每关按规则上浮。
- * 初始金币基于柏林噪声生成（100-500），相邻地级市平滑过渡。
- * 地图仅两种色调：原色（无金币）与绿色（金币越多越深）；中心标注金币数，收集后显示地名。
+ * 每关限时 45 秒，输入地级市名称收集金币。每关以「时间结束」为结束条件，
+ * 结束时本关金币达到目标则展示通关卡片，点击「继续」进入下一关，否则游戏结束。
+ * 累计金币跨关保留；每个地级市收集后下一关恢复（按区间随机上浮）可再次收集。
+ * 初始金币基于柏林噪声生成（约 50-400，多数低于 250，~150 常见），相邻地级市平滑过渡。
+ * 地图仅两种色调：原色（无金币）与绿色（金币越多越深，0￥→原色，500￥→最深绿）；
+ * 中心标注金币数，收集后显示地名（仅当前关）。
  */
 export class EndlessMode implements ModeController {
   id: Mode = 'endless';
   title = '无尽闯关';
-  private coins = new Map<string, number>(); // 当前金币数（0 = 已收集过）
-  private collected = new Set<string>(); // 本局累计已收集
-  private collectedThisLevel = new Set<string>(); // 当前关已收集（下一关清空）
+  private coins = new Map<string, number>(); // 当前金币数（0 = 本关已收集，下一关恢复）
+  private collectedThisLevel = new Set<string>(); // 本关已收集（用于显示地名）
   private level = 1;
   private target = 0;
   private levelCoins = 0;
   private totalCoins = 0;
+  private totalCollects = 0; // 累计收集次数（含跨关重复收集）
+  private targetHit = false; // 本关是否已达成目标（仅提示用）
   private started = false;
   private paused = false;
-  private switching = false; // 关卡切换缓冲期
+  private switching = false; // 通关卡片展示期（拦截输入/暂停）
   private runStartAt = 0;
   private countdown = new Countdown();
-  private switchTimer: number | null = null;
-  private perm: Uint8Array;
+  private perm: Uint8Array = makePermutation(randomSeed());
   private syncingView = false;
 
-  constructor(private ctx: ModeCtx) {
-    this.perm = makePermutation(COIN_NOISE_SEED);
-  }
+  constructor(private ctx: ModeCtx) {}
 
   enter() {
     if (this.paused) {
       this.syncScope();
       this.ctx.search.setPlaceholder('输入地级市名称，如：黔南');
       this.ctx.search.setRequireEnter(true);
-      this.ctx.setHint(this.statusHtml());
+      endlessStatus(this.statusHtml());
       this.refresh();
       this.ctx.showTimer(this.countdown.remaining());
       this.ctx.updateProgress();
@@ -58,12 +59,10 @@ export class EndlessMode implements ModeController {
 
   exit() {
     this.countdown.stop();
-    if (this.switchTimer !== null) {
-      window.clearTimeout(this.switchTimer);
-      this.switchTimer = null;
-    }
     this.ctx.showTimer(null);
     this.ctx.search.setRequireEnter(this.ctx.settings.requireEnter);
+    hideLevelEnd();
+    endlessStatus('');
     this.started = false;
     this.paused = false;
   }
@@ -72,10 +71,6 @@ export class EndlessMode implements ModeController {
     if (!this.started || this.paused || this.switching) return;
     this.paused = true;
     this.countdown.pause();
-    if (this.switchTimer !== null) {
-      window.clearTimeout(this.switchTimer);
-      this.switchTimer = null;
-    }
     this.ctx.showTimer(this.countdown.remaining());
   }
 
@@ -83,7 +78,7 @@ export class EndlessMode implements ModeController {
     if (!this.started || !this.paused) return;
     this.paused = false;
     this.countdown.resume();
-    this.ctx.setHint(this.statusHtml());
+    endlessStatus(this.statusHtml());
   }
 
   isPaused() {
@@ -102,7 +97,7 @@ export class EndlessMode implements ModeController {
   }
 
   hasProgress() {
-    return this.started || this.collected.size > 0;
+    return this.started || this.totalCollects > 0;
   }
 
   getProgress() {
@@ -124,13 +119,9 @@ export class EndlessMode implements ModeController {
       this.ctx.toast('未匹配到有效地名');
       return;
     }
-    if (this.collected.has(best.adcode)) {
-      this.ctx.toast('该城市金币已收集过');
-      return;
-    }
     const value = this.coins.get(best.adcode) ?? 0;
     if (value <= 0) {
-      this.ctx.toast('该城市金币已收集过');
+      this.ctx.toast('该城市金币本关已收集');
       return;
     }
     this.collect(best, value);
@@ -159,10 +150,7 @@ export class EndlessMode implements ModeController {
   onReset() {
     this.countdown.stop();
     this.ctx.showTimer(null);
-    if (this.switchTimer !== null) {
-      window.clearTimeout(this.switchTimer);
-      this.switchTimer = null;
-    }
+    hideLevelEnd();
     this.resetRun();
     this.enter();
   }
@@ -187,17 +175,16 @@ export class EndlessMode implements ModeController {
     this.target = 0;
     this.levelCoins = 0;
     this.totalCoins = 0;
+    this.totalCollects = 0;
+    this.targetHit = false;
     this.runStartAt = 0;
-    this.collected.clear();
     this.collectedThisLevel.clear();
     this.coins.clear();
     this.started = false;
     this.paused = false;
     this.switching = false;
-    if (this.switchTimer !== null) {
-      window.clearTimeout(this.switchTimer);
-      this.switchTimer = null;
-    }
+    hideLevelEnd();
+    endlessStatus('');
   }
 
   private showStartHint() {
@@ -206,8 +193,8 @@ export class EndlessMode implements ModeController {
       `<div class="start-panel">` +
         `<div class="start-title">无尽闯关</div>` +
         `<div class="start-subtitle">每关限时 ${LEVEL_SECONDS} 秒，输入地级市名称收集金币（按 Enter 确认）</div>` +
-        `<div class="start-subtitle">放大地图查看金币数，绿色越深金币越多；达到目标金币即进入下一关</div>` +
-        `<div class="start-subtitle">累计金币跨关保留，未收集城市的金币每关会增长</div>` +
+        `<div class="start-subtitle">放大地图查看金币数，绿色越深金币越多；时间结束时达标即通关</div>` +
+        `<div class="start-subtitle">累计金币跨关保留，收集过的城市下一关会恢复并增长</div>` +
         actions +
         `</div>`,
     );
@@ -220,17 +207,20 @@ export class EndlessMode implements ModeController {
   private start() {
     if (this.started || this.paused || this.switching) return;
     this.syncScope();
+    this.perm = makePermutation(randomSeed()); // 每轮重新生成噪声，起始分布不重复
     this.level = 1;
-    this.collected.clear();
     this.collectedThisLevel.clear();
     this.totalCoins = 0;
     this.levelCoins = 0;
+    this.totalCollects = 0;
+    this.targetHit = false;
     this.coins = this.generateCoins();
     this.target = this.targetFor(1);
     this.runStartAt = Date.now();
     this.started = true;
     this.paused = false;
-    this.ctx.setHint(this.statusHtml());
+    this.switching = false;
+    endlessStatus(this.statusHtml());
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.refresh();
@@ -241,12 +231,13 @@ export class EndlessMode implements ModeController {
     this.ctx.showTimer(remainingMs, remainingMs < 10_000);
   }
 
+  /** 每关结束条件 = 时间结束；结束时按是否达标决定通关或结束。 */
   private onLevelTimeout() {
     if (!this.started || this.paused || this.switching) return;
     this.countdown.stop();
     this.ctx.showTimer(null);
     if (this.levelCoins >= this.target) {
-      this.passLevel();
+      this.showLevelEnd();
       return;
     }
     this.gameOver();
@@ -254,72 +245,74 @@ export class EndlessMode implements ModeController {
 
   private collect(unit: Unit, value: number) {
     this.coins.set(unit.adcode, 0);
-    this.collected.add(unit.adcode);
     this.collectedThisLevel.add(unit.adcode);
     this.levelCoins += value;
     this.totalCoins += value;
+    this.totalCollects += 1;
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
-    if (this.levelCoins >= this.target) {
-      this.ctx.toast(`收集成功 +${fmt(value)}￥，达成目标！`);
-      this.passLevel();
-      return;
+    if (!this.targetHit && this.levelCoins >= this.target) {
+      this.targetHit = true;
+      this.ctx.toast(`已达成目标：${fmt(this.target)}￥，剩余时间可继续收集金币`);
+    } else {
+      this.ctx.toast(`收集成功：${unit.name} +${fmt(value)}￥`);
     }
-    this.ctx.toast(`收集成功：${unit.name} +${fmt(value)}￥`);
-    this.ctx.setHint(this.statusHtml());
+    endlessStatus(this.statusHtml());
   }
 
-  private passLevel() {
-    this.countdown.stop();
-    this.ctx.showTimer(null);
+  /** 达标通关：屏幕中心展示通关卡片，点击「继续」进入下一关。 */
+  private showLevelEnd() {
     this.switching = true;
+    endlessStatus('');
+    showLevelEnd(
+      `<div class="level-end-title">第 ${this.level} 关完成</div>` +
+        `<div class="sum-stats">本关目标：<b>${fmt(this.target)}￥</b></div>` +
+        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>` +
+        `<div class="sum-stats">当前累计：<b>${fmt(this.totalCoins)}￥</b></div>`,
+      () => this.nextLevel(),
+    );
+  }
+
+  private nextLevel() {
+    this.switching = false;
     this.floatUpCoins();
     this.level += 1;
     this.target = this.targetFor(this.level);
     this.levelCoins = 0;
+    this.targetHit = false;
     this.collectedThisLevel.clear();
-    this.refresh();
-    this.ctx.setHint(this.statusHtml());
+    endlessStatus(this.statusHtml());
     this.ctx.search.clear();
-    this.ctx.toast(`通关！进入第 ${this.level} 关`);
-    this.switchTimer = window.setTimeout(() => {
-      this.switchTimer = null;
-      this.switching = false;
-      if (!this.started || this.paused) return;
-      this.countdown.start(LEVEL_SECONDS, (r) => this.showCountdown(r), () => this.onLevelTimeout());
-    }, SWITCH_DELAY_MS);
+    this.ctx.search.focus();
+    this.refresh();
+    this.countdown.start(LEVEL_SECONDS, (r) => this.showCountdown(r), () => this.onLevelTimeout());
   }
 
   private gameOver() {
     this.countdown.stop();
-    if (this.switchTimer !== null) {
-      window.clearTimeout(this.switchTimer);
-      this.switchTimer = null;
-    }
     this.ctx.showTimer(null);
+    hideLevelEnd();
     this.started = false;
     this.paused = false;
     this.switching = false;
     this.ctx.updateProgress();
     const elapsedMs = this.runStartAt ? Date.now() - this.runStartAt : 0;
     this.ctx.showSummary(
-      `闯关结束<div class="sum-stats">到达第 <b>${this.level}</b> 关 ｜ 累计金币 <b>${fmt(this.totalCoins)}￥</b> ｜ 收集城市 <b>${this.collected.size}</b> 个 ｜ 用时 ${formatElapsedSeconds(elapsedMs)}</div>`,
+      `闯关结束<div class="sum-stats">到达第 <b>${this.level}</b> 关 ｜ 累计金币 <b>${fmt(this.totalCoins)}￥</b> ｜ 收集 <b>${this.totalCollects}</b> 次 ｜ 用时 ${formatElapsedSeconds(elapsedMs)}</div>`,
       () => this.enter(),
     );
     this.showStartHint();
+    endlessStatus('');
     this.ctx.search.clear();
   }
 
   private statusHtml() {
     return (
-      `<div class="endless-status">` +
       `<span>第 <b>${this.level}</b> 关</span>` +
       `<span>本关 <b>${fmt(this.levelCoins)} / ${fmt(this.target)}</b> ￥</span>` +
-      `<span>累计 <b>${fmt(this.totalCoins)}</b> ￥</span>` +
-      `<span>已收 <b>${this.collected.size}</b> 城</span>` +
-      `</div>`
+      `<span>累计 <b>${fmt(this.totalCoins)}</b> ￥</span>`
     );
   }
 
@@ -333,26 +326,30 @@ export class EndlessMode implements ModeController {
     return null;
   }
 
-  /** 基于柏林噪声生成全国地级市初始金币（100-500，相邻平滑过渡）。 */
+  /** 基于柏林噪声生成全国地级市初始金币（约 50-400，多数低于 250，~150 常见）。 */
   private generateCoins(): Map<string, number> {
     const map = new Map<string, number>();
     for (const u of this.ctx.data.units) {
-      const n = fbm((u.center[0] + 180) / COIN_NOISE_SCALE, (u.center[1] + 90) / COIN_NOISE_SCALE, 3, this.perm);
-      const value = clamp(Math.round(COIN_MIN + ((n + 1) / 2) * (COIN_MAX - COIN_MIN)), COIN_MIN, COIN_MAX);
-      map.set(u.adcode, Math.round(value / 10) * 10);
+      const n = clamp(
+        fbm((u.center[0] + 180) / COIN_NOISE_SCALE, (u.center[1] + 90) / COIN_NOISE_SCALE, 3, this.perm) * COIN_NOISE_AMPLIFY,
+        -1,
+        1,
+      );
+      const t = (n + 1) / 2;
+      const coins = clamp(Math.round((COIN_MIN + t * t * (COIN_MAX - COIN_MIN)) / 10) * 10, COIN_MIN, COIN_MAX);
+      map.set(u.adcode, coins);
     }
     return map;
   }
 
-  /** 跨关上浮：未收集城市按当前金币区间增加金币。 */
+  /** 跨关上浮：全部城市（含本关已收集）按当前金币区间取范围内随机值增长。 */
   private floatUpCoins() {
     for (const [adcode, coins] of this.coins) {
-      if (coins <= 0) continue; // 已收集，不再上浮
       let inc: number;
-      if (coins < 100) inc = randMultipleOf10(30, 50);
-      else if (coins < 300) inc = randMultipleOf10(20, 40);
-      else if (coins < 500) inc = randMultipleOf10(10, 30);
-      else inc = randMultipleOf10(5, 15);
+      if (coins < 100) inc = randInt(30, 50);
+      else if (coins < 300) inc = randInt(20, 40);
+      else if (coins < 500) inc = randInt(10, 30);
+      else inc = randInt(5, 15);
       this.coins.set(adcode, coins + inc);
     }
   }
@@ -367,12 +364,11 @@ export class EndlessMode implements ModeController {
 const LEVEL_SECONDS = 45;
 const BASE_TARGET = 1000; // 第一关目标金币
 const TARGET_GROWTH = 1.08; // 目标金币每关增幅
-const COIN_MIN = 100;
-const COIN_MAX = 500;
-const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度（越小变化越频繁）
-const COIN_NOISE_SEED = 20260829;
+const COIN_MIN = 50; // 初始金币下限（约 50）
+const COIN_MAX = 400; // 初始金币上限（约 400）
+const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度
+const COIN_NOISE_AMPLIFY = 1.25; // 噪声起伏放大（拉开差距）
 const COIN_LABEL_ZOOM = 2; // 金币标签显示倍率阈值
-const SWITCH_DELAY_MS = 1200; // 通关切换缓冲
 
 // ---------- 工具 ----------
 function fmt(n: number) {
@@ -387,10 +383,8 @@ function randInt(min: number, max: number) {
   return min + Math.floor(Math.random() * (max - min + 1));
 }
 
-function randMultipleOf10(min: number, max: number) {
-  const lo = Math.ceil(min / 10);
-  const hi = Math.floor(max / 10);
-  return randInt(lo, hi) * 10;
+function randomSeed() {
+  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
 }
 
 // ---------- 柏林噪声（种子化，确定性） ----------

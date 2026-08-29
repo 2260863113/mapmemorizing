@@ -65,3 +65,24 @@ export function showSummary(html: string, onRestart: () => void, onSubmit?: () =
 export function hideSummary() {
   $('summary').classList.add('hidden');
 }
+
+/** 无尽闯关顶部进度卡片（空字符串时隐藏）。 */
+export function endlessStatus(html: string) {
+  const el = $('endless-status');
+  el.innerHTML = html;
+  el.classList.toggle('hidden', html === '');
+}
+
+/** 无尽闯关通关卡片：屏幕中心展示，点击「继续」后进入下一关。 */
+export function showLevelEnd(html: string, onContinue: () => void) {
+  $('level-end-body').innerHTML = html;
+  ($('level-end-continue') as HTMLButtonElement).onclick = () => {
+    hideLevelEnd();
+    onContinue();
+  };
+  $('level-end').classList.remove('hidden');
+}
+
+export function hideLevelEnd() {
+  $('level-end').classList.add('hidden');
+}

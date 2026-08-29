@@ -256,7 +256,7 @@ button.primary:hover { background: var(--accent-strong); }
   right: 0;
   z-index: 26;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   gap: 10px;
   width: 100%;
@@ -476,18 +476,41 @@ body.theme-dark .mode-segmented button.active {
 .start-action:hover { background: var(--topbar-bg); }
 .start-action.secondary { background: var(--panel-bg); color: var(--input-text); border-color: var(--input-border); }
 .start-action.secondary:hover { background: var(--control-hover); border-color: var(--muted); }
-.endless-status {
-  display: flex;
+#endless-status,
+#top-status #test-timer {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  color: var(--control-text);
-  font-size: 14px;
-  font-weight: 700;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  box-shadow: var(--floating-shadow);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.endless-status b { color: var(--accent); }
+#endless-status {
+  gap: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+#top-status #test-timer {
+  min-width: 92px;
+  font-size: 17px;
+  font-weight: 700;
+}
+#top-status #test-timer.urgent { color: var(--danger); }
+#endless-status b { color: var(--accent); }
+#level-end-body { text-align: center; }
+#level-end-body b { color: var(--accent); }
+#level-end .card-actions { justify-content: center; }
+.level-end-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
 
 /* ---------- 主区 ---------- */
 main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }

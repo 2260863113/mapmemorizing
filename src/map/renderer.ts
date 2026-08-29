@@ -132,6 +132,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
+const LABEL_FIX_ZOOM = 7; // 标签固定大小阈值：缩放倍率超过该值后标签不再放大
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
@@ -162,11 +163,14 @@ export interface MapHandlers {
   onUnitHoverEnd?: () => void;
 }
 
-const LABEL_FONT = `600 ${CITY_LABEL_SIZE}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
+/** 标签缩放：缩放倍率 <7x 时跟随地图等比例缩放，>=7x 时保持固定大小。 */
+function labelScale(zoom: number) {
+  return Math.max(0.25, Math.min(1, zoom / LABEL_FIX_ZOOM));
+}
 
-function labelShape(name: string, point: number[]) {
-  const width = Math.max(34, name.length * CITY_LABEL_SIZE + 16);
-  const height = CITY_LABEL_SIZE + 12;
+function labelShape(name: string, point: number[], scale: number) {
+  const width = Math.max(34 * scale, name.length * CITY_LABEL_SIZE * scale + 16 * scale);
+  const height = (CITY_LABEL_SIZE + 12) * scale;
   return {
     x: point[0] - width / 2,
     y: point[1] - height / 2,
@@ -204,6 +208,7 @@ export class MapRenderer {
   private center: [number, number] = [104.5, 35];
   private zoom = 1;
   private labelMode: 'none' | 'city' = 'none';
+  private labelScaleApplied = 1; // 最近一次应用的标签缩放（缩放变化时触发重绘）
   private labelUpdateTimer: number | null = null;
   private followRaf: number | null = null;
   private lastState: RenderState | null = null;
@@ -426,16 +431,17 @@ export class MapRenderer {
 
   private applyLabelMode() {
     const mode = this.desiredLabelMode();
-    if (mode === this.labelMode) return;
+    if (mode === 'none' && this.labelMode === 'none') return;
+    const scale = labelScale(this.zoom);
+    const changed = mode !== this.labelMode || scale !== this.labelScaleApplied;
     this.labelMode = mode;
-    if (this.lastState) {
+    this.labelScaleApplied = scale;
+    if (changed && this.lastState) {
       this.chart.setOption({ series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
     }
   }
 
   private scheduleLabelModeUpdate() {
-    const mode = this.desiredLabelMode();
-    if (mode === this.labelMode) return;
     if (this.labelUpdateTimer !== null) window.clearTimeout(this.labelUpdateTimer);
     this.labelUpdateTimer = window.setTimeout(() => {
       this.labelUpdateTimer = null;
@@ -447,6 +453,7 @@ export class MapRenderer {
   render(state: RenderState) {
     this.lastState = state;
     this.labelMode = this.desiredLabelMode(state);
+    this.labelScaleApplied = labelScale(this.zoom);
 
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
     const cityData = this.units.map((u) => ({ name: u.name }));
@@ -536,7 +543,8 @@ export class MapRenderer {
             const name = String(api.value(2));
             const color = String(api.value(3));
             const point = api.coord(value) as number[];
-            const shape = labelShape(name, point);
+            const scale = labelScale(this.zoom);
+            const shape = labelShape(name, point, scale);
             return {
               type: 'group',
               children: [
@@ -546,8 +554,8 @@ export class MapRenderer {
                   style: {
                     fill: theme.labelBg,
                     shadowColor: theme.labelShadow,
-                    shadowBlur: 8,
-                    shadowOffsetY: 2,
+                    shadowBlur: 8 * scale,
+                    shadowOffsetY: 2 * scale,
                   },
                 },
                 {
@@ -557,7 +565,7 @@ export class MapRenderer {
                     y: point[1],
                     text: name,
                     fill: color,
-                    font: LABEL_FONT,
+                    font: `600 ${CITY_LABEL_SIZE * scale}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`,
                     align: 'center',
                     verticalAlign: 'middle',
                   },
