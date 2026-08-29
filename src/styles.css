@@ -669,6 +669,60 @@ body.theme-dark .mode-segmented button.active {
 }
 .shop-item-buy:hover:not(:disabled) { background: var(--accent-strong); }
 .shop-item-buy:disabled { opacity: 0.45; cursor: default; }
+.shop-item-bought {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---------- 美食鉴赏家 ---------- */
+#endless-food {
+  position: absolute;
+  top: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  z-index: 24;
+}
+.food-card {
+  padding: 6px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  background: var(--input-bg); /* 非玻璃态 */
+  color: var(--input-text);
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
+}
+.food-answer {
+  margin-top: 12px;
+  max-height: 32vh;
+  overflow-y: auto;
+  text-align: left;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 10px;
+}
+.food-answer-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  text-align: center;
+  color: var(--text);
+}
+.food-answer-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  color: var(--control-text);
+}
+.food-answer-row:nth-child(even) { background: var(--control-bg); }
 
 /* ---------- 主区 ---------- */
 main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }

@@ -1,7 +1,7 @@
 import type { Mode, Unit } from '../types';
 import type { ModeCtx, ModeController } from './types';
 import { Countdown } from '../ui/countdown';
-import { $, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
+import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
 
 /**
@@ -10,7 +10,7 @@ import { formatElapsedSeconds } from '../ui/format';
  * 结束时累计金币达到累计目标则展示通关卡片，点「继续」进入道具商店；购买道具后再次点「继续」进入下一关。
  * 累计金币跨关保留（购买道具会消耗金币）；每个地级市收集后下一关恢复可再次收集。
  * 初始金币基于柏林噪声生成（约 50-400），相邻地级市平滑过渡。
- * 地图仅两种色调：原色（无金币）与绿色（金币越多越深）；中心标注金币数，收集后显示地名。
+ * 道具产生的额外金币不超过该地名本身价格。
  */
 export class EndlessMode implements ModeController {
   id: Mode = 'endless';
@@ -39,13 +39,13 @@ export class EndlessMode implements ModeController {
   private tokenMatches = 0;
   private revealAllNames = false; // 透视药水：显示全国地名
   private revealTimer: number | null = null;
+  private shopKeys: ItemKey[] = []; // 本关商店可供购买的道具（每件 50% 概率出现）
+  private boughtThisShop = new Set<ItemKey>(); // 本关商店已购买（每件每关仅能买一次）
+  private foodActive = false; // 本关是否使用了美食鉴赏家
+  private activeFoods: FoodEntry[] = []; // 当前显示的 5 种食物
+  private usedFoods = new Set<string>(); // 本关已使用的食物
 
   constructor(private ctx: ModeCtx) {
-    // 道具卡片点击：时间沙漏激活
-    document.addEventListener('click', (event) => {
-      const el = (event.target as HTMLElement).closest<HTMLElement>('[data-item]');
-      if (el?.dataset.item === 'hourglass') this.activateHourglass();
-    });
     // 透视药水：任意方向键使用
     document.addEventListener('keydown', (event) => {
       if (!this.started || this.paused || this.switching) return;
@@ -86,6 +86,7 @@ export class EndlessMode implements ModeController {
     endlessStatus('');
     endlessItems('');
     endlessToken('');
+    endlessFood('');
     this.started = false;
     this.paused = false;
   }
@@ -161,13 +162,15 @@ export class EndlessMode implements ModeController {
     if (!this.started || this.paused || this.switching || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     if (!best) {
+      if (this.hasItem('shield')) {
+        // 盾牌：输错不扣金币、不扣时间
+        this.ctx.toast('盾牌抵挡：输错不扣金币、不扣时间');
+        return;
+      }
       this.ctx.toast('匹配失败，惩罚时5秒！');
       this.penalize(5);
-      if (!this.hasItem('shield')) {
-        // 盾牌可防止输错扣金币
-        this.totalCoins = Math.max(0, this.totalCoins - WRONG_INPUT_COIN_LOSS);
-        endlessStatus(this.statusHtml());
-      }
+      this.totalCoins = Math.max(0, this.totalCoins - WRONG_INPUT_COIN_LOSS);
+      endlessStatus(this.statusHtml());
       return;
     }
     const value = this.coins.get(best.adcode) ?? 0;
@@ -237,6 +240,11 @@ export class EndlessMode implements ModeController {
     this.tokenChar = '';
     this.tokenMatches = 0;
     this.revealAllNames = false;
+    this.shopKeys = [];
+    this.boughtThisShop.clear();
+    this.foodActive = false;
+    this.activeFoods = [];
+    this.usedFoods.clear();
     if (this.revealTimer !== null) {
       window.clearTimeout(this.revealTimer);
       this.revealTimer = null;
@@ -249,6 +257,7 @@ export class EndlessMode implements ModeController {
     endlessStatus('');
     endlessItems('');
     endlessToken('');
+    endlessFood('');
   }
 
   private showStartHint() {
@@ -283,6 +292,7 @@ export class EndlessMode implements ModeController {
     this.refresh();
     this.renderItems();
     this.renderToken();
+    this.renderFoods();
     this.countdown.start(LEVEL_SECONDS, (r) => this.showCountdown(r), () => this.onLevelTimeout());
   }
 
@@ -306,20 +316,28 @@ export class EndlessMode implements ModeController {
     this.coins.set(unit.adcode, 0);
     this.collectedThisLevel.add(unit.adcode);
     let bonus = 0;
-    // 幸运草：额外 50-100 金币
-    if (this.hasItem('clover')) bonus += randInt(50, 100);
-    // 飞花令牌：含关键字的地名额外获得金币，逐次递增
+    // 幸运草：额外 50-100 金币（不超过地名本身价格）
+    if (this.hasItem('clover')) bonus += Math.min(randInt(50, 100), value);
+    // 飞花令牌：含关键字的地名额外获得金币，逐次递增（不超过地名本身价格）
     if (this.hasItem('token') && this.tokenChar && this.nameHasToken(unit)) {
-      bonus += randInt(50, 100) + this.tokenMatches * 50;
+      bonus += Math.min(randInt(50, 100) + this.tokenMatches * 50, value);
       this.tokenMatches += 1;
+    }
+    // 美食鉴赏家：命中食物省份额外 50-100 金币（不超过地名本身价格），随后该食物作废并替换
+    let foodBonus = 0;
+    const food = this.foodForUnit(unit);
+    if (food) {
+      foodBonus = Math.min(randInt(50, 100), value);
+      bonus += foodBonus;
+      this.consumeFood(food);
     }
     this.levelCoins += value + bonus;
     this.totalCoins += value + bonus;
     this.totalCollects += 1;
-    // 时间沙漏：激活后每次输入成功倒计时 +3~5 秒（共 5 次）
+    // 时间沙漏：每次输入成功倒计时 +3~5 秒（共 5 次，自动激活）
     let timeBonus = 0;
     const hourglass = this.owned.find((o) => o.key === 'hourglass');
-    if (hourglass && hourglass.activated && hourglass.durability > 0) {
+    if (hourglass && hourglass.durability > 0) {
       timeBonus = randInt(3, 5);
       this.countdown.add(timeBonus * 1000);
       hourglass.durability -= 1;
@@ -349,26 +367,35 @@ export class EndlessMode implements ModeController {
     flashTimerPenalty();
   }
 
-  /** 达标通关：屏幕中心展示通关卡片，点击「继续」进入道具商店。 */
+  /** 达标通关：屏幕中心展示通关卡片（美食鉴赏家本关使用时附答案表），点「继续」进入道具商店。 */
   private showLevelEnd() {
     this.switching = true;
     endlessStatus('');
     // 单关道具已用完，药水跨关携带
     this.owned = this.owned.filter((o) => o.key === 'potion');
+    const usedFood = this.foodActive; // 记住本关是否使用了美食鉴赏家（先于清理保存）
     this.clearLevelItemFx();
     this.renderItems();
+    const foodTable = usedFood
+      ? `<div class="food-answer"><div class="food-answer-title">美食鉴赏家 · 对应表</div>${FOODS.map(
+          (f) => `<div class="food-answer-row"><span>${f.food}</span><span>${f.province}</span></div>`,
+        ).join('')}</div>`
+      : '';
     showLevelEnd(
       `<div class="level-end-title">第 ${this.level} 关完成</div>` +
         `<div class="sum-stats">累计目标：<b>${fmt(this.target)}￥</b></div>` +
         `<div class="sum-stats">累计收集：<b>${fmt(this.totalCoins)}￥</b></div>` +
-        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>`,
+        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>` +
+        foodTable,
       () => this.openShop(),
     );
   }
 
-  /** 道具商店：购买道具后点「继续」进入下一关。 */
+  /** 道具商店：每件道具 50% 概率出现，每关仅可购买一次。 */
   private openShop() {
     this.switching = true;
+    this.shopKeys = ITEM_KEYS.filter(() => Math.random() < 0.5);
+    this.boughtThisShop.clear();
     this.renderShop();
     showShop();
     ($('endless-shop-continue') as HTMLButtonElement).onclick = () => {
@@ -379,8 +406,15 @@ export class EndlessMode implements ModeController {
 
   private renderShop() {
     const wallet = fmt(this.totalCoins);
-    const rows = ITEM_KEYS.map((key) => {
+    const rows = this.shopKeys.map((key) => {
       const def = ITEM_DEFS[key];
+      if (this.boughtThisShop.has(key)) {
+        return `<div class="shop-item">` +
+          `<div class="shop-item-char">${def.char}</div>` +
+          `<div class="shop-item-info"><div class="shop-item-name">${def.name}</div><div class="shop-item-desc">${def.desc}</div></div>` +
+          `<div class="shop-item-bought">已购买</div>` +
+          `</div>`;
+      }
       const price = this.priceOf(key);
       const afford = this.totalCoins >= price;
       return `<div class="shop-item">` +
@@ -398,9 +432,11 @@ export class EndlessMode implements ModeController {
   }
 
   private buyItem(key: ItemKey) {
+    if (this.boughtThisShop.has(key)) return;
     const price = this.priceOf(key);
     if (this.totalCoins < price) return;
     this.totalCoins -= price;
+    this.boughtThisShop.add(key);
     this.itemPrices.set(key, price + randInt(80, 120)); // 下次购买涨价
     this.addOwned(key);
     this.renderShop();
@@ -419,10 +455,10 @@ export class EndlessMode implements ModeController {
     if (key === 'potion') {
       const existing = this.owned.find((o) => o.key === 'potion');
       if (existing) existing.durability += POTION_USES;
-      else this.owned.push({ key: 'potion', durability: POTION_USES, activated: true });
+      else this.owned.push({ key: 'potion', durability: POTION_USES });
       return;
     }
-    this.owned.push({ key, durability: key === 'hourglass' ? HOURGLASS_USES : 1, activated: false });
+    this.owned.push({ key, durability: key === 'hourglass' ? HOURGLASS_USES : 1 });
   }
 
   private nextLevel() {
@@ -433,15 +469,19 @@ export class EndlessMode implements ModeController {
     this.levelCoins = 0;
     this.targetHit = false;
     this.collectedThisLevel.clear();
-    // 飞花令牌：本关随机关键字
-    this.tokenChar = this.hasItem('token') ? this.pickTokenChar() : '';
+    // 单关道具自动激活：飞花令牌本关随机关键字；美食鉴赏家本关随机 5 种食物
+    this.tokenChar = this.hasItem('token') ? pickTokenChar() : '';
     this.tokenMatches = 0;
+    this.foodActive = this.hasItem('food');
+    this.activeFoods = this.foodActive ? pickInitialFoods() : [];
+    this.usedFoods.clear();
     endlessStatus(this.statusHtml());
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.refresh();
     this.renderItems();
     this.renderToken();
+    this.renderFoods();
     this.countdown.start(LEVEL_SECONDS, (r) => this.showCountdown(r), () => this.onLevelTimeout());
   }
 
@@ -449,11 +489,15 @@ export class EndlessMode implements ModeController {
     this.tokenChar = '';
     this.tokenMatches = 0;
     this.revealAllNames = false;
+    this.foodActive = false;
+    this.activeFoods = [];
+    this.usedFoods.clear();
     if (this.revealTimer !== null) {
       window.clearTimeout(this.revealTimer);
       this.revealTimer = null;
     }
     endlessToken('');
+    endlessFood('');
   }
 
   private gameOver() {
@@ -510,20 +554,16 @@ export class EndlessMode implements ModeController {
     return this.owned.some((o) => o.key === key && o.durability > 0);
   }
 
+  /** 飞花令牌命中：含关键字的名称命中；「自治州」中的「州」不作数。 */
   private nameHasToken(unit: Unit) {
-    return this.tokenChar.length > 0 && (unit.name.includes(this.tokenChar) || unit.shortName.includes(this.tokenChar));
+    if (!this.tokenChar) return false;
+    if (this.tokenChar === '州') {
+      return unit.name.replace(/自治州/g, '').includes('州') || unit.shortName.includes('州');
+    }
+    return unit.name.includes(this.tokenChar) || unit.shortName.includes(this.tokenChar);
   }
 
-  /** 时间沙漏：点击激活。 */
-  private activateHourglass() {
-    const item = this.owned.find((o) => o.key === 'hourglass');
-    if (!item || item.durability <= 0 || item.activated || !this.started || this.switching) return;
-    item.activated = true;
-    this.renderItems();
-    this.ctx.toast('时间沙漏已激活：每次输入成功倒计时 +3~5 秒');
-  }
-
-  /** 透视药水：方向键使用，显示全国地名标签 3 秒。 */
+  /** 透视药水：方向键使用，显示全国地名标签 3 秒后自动恢复。 */
   private usePotion() {
     const potion = this.owned.find((o) => o.key === 'potion');
     if (!potion || potion.durability <= 0 || this.revealAllNames) return;
@@ -536,7 +576,7 @@ export class EndlessMode implements ModeController {
     this.revealTimer = window.setTimeout(() => {
       this.revealTimer = null;
       this.revealAllNames = false;
-      this.refresh();
+      if (this.started) this.refresh(); // 3 秒后恢复为之前的价格/地名状态
     }, POTION_REVEAL_MS);
     this.ctx.toast('透视药水：显示全国地名标签 3 秒');
   }
@@ -552,8 +592,7 @@ export class EndlessMode implements ModeController {
       .map((o) => {
         const def = ITEM_DEFS[o.key];
         const dur = o.durability > 1 ? `<span class="endless-item-durability">${o.durability}</span>` : '';
-        const active = o.key === 'hourglass' && o.activated ? ' active' : '';
-        return `<button type="button" class="endless-item${active}" data-item="${o.key}" title="${def.name}">${def.char}${dur}</button>`;
+        return `<div class="endless-item" data-item="${o.key}" title="${def.name}">${def.char}${dur}</div>`;
       })
       .join('');
     endlessItems(cards);
@@ -564,15 +603,30 @@ export class EndlessMode implements ModeController {
     endlessToken(this.hasItem('token') && this.tokenChar ? `<span>关键字</span><b class="token-char">${this.tokenChar}</b>` : '');
   }
 
-  /** 随机选取出现在至少 2 个地级市简称中的汉字作为关键字。 */
-  private pickTokenChar(): string {
-    const count = new Map<string, number>();
-    for (const u of this.ctx.data.units) {
-      for (const ch of u.shortName) count.set(ch, (count.get(ch) ?? 0) + 1);
+  /** 美食鉴赏家：屏幕上方食物卡片（非玻璃态）。 */
+  private renderFoods() {
+    if (!this.foodActive || !this.activeFoods.length) {
+      endlessFood('');
+      return;
     }
-    const candidates = [...count.entries()].filter(([, n]) => n >= 2).map(([ch]) => ch);
-    if (!candidates.length) return '州';
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    endlessFood(this.activeFoods.map((f) => `<div class="food-card" title="${f.province}">${f.food}</div>`).join(''));
+  }
+
+  /** 命中当前显示的食物：返回该省份对应的食物。 */
+  private foodForUnit(unit: Unit): FoodEntry | null {
+    if (!this.foodActive) return null;
+    return this.activeFoods.find((f) => f.province === unit.province) ?? null;
+  }
+
+  /** 食物作废并替换为另一未使用食物。 */
+  private consumeFood(food: FoodEntry) {
+    this.activeFoods = this.activeFoods.filter((f) => f !== food);
+    this.usedFoods.add(food.food);
+    const remaining = FOODS.filter((f) => !this.usedFoods.has(f.food) && !this.activeFoods.some((a) => a.food === f.food));
+    if (remaining.length) {
+      this.activeFoods.push(remaining[Math.floor(Math.random() * remaining.length)]);
+    }
+    this.renderFoods();
   }
 
   /** 基于柏林噪声生成全国地级市初始金币（约 50-400，多数低于 250，~150 常见）。 */
@@ -625,8 +679,9 @@ const WRONG_INPUT_COIN_LOSS = 10; // 输错地名扣减的金币（盾牌可免�
 const HOURGLASS_USES = 5; // 时间沙漏激活后次数
 const POTION_USES = 3; // 透视药水使用次数（每购买一次）
 const POTION_REVEAL_MS = 3000; // 透视药水显示地名时长
+const TOKEN_CHARS = ['州', '阳', '山', '南', '安', '江', '宁', '城', '西', '德', '海']; // 飞花令牌候选关键字
 
-type ItemKey = 'hourglass' | 'clover' | 'shield' | 'token' | 'potion';
+type ItemKey = 'hourglass' | 'clover' | 'shield' | 'token' | 'potion' | 'food';
 
 interface ItemDef {
   key: ItemKey;
@@ -640,18 +695,76 @@ interface ItemDef {
 interface OwnedItem {
   key: ItemKey;
   durability: number; // 剩余使用次数（沙漏5/药水3；单关道具1）
-  activated: boolean; // 时间沙漏是否已激活
 }
 
-const ITEM_KEYS: ItemKey[] = ['hourglass', 'clover', 'shield', 'token', 'potion'];
+interface FoodEntry {
+  province: string; // 省份全名（与单位 province 一致）
+  food: string;
+}
+
+const ITEM_KEYS: ItemKey[] = ['hourglass', 'clover', 'shield', 'token', 'potion', 'food'];
 
 const ITEM_DEFS: Record<ItemKey, ItemDef> = {
-  hourglass: { key: 'hourglass', name: '时间沙漏', char: '时', min: 100, max: 200, desc: '激活后每次输入成功，倒计时随机 +3~5 秒（共 5 次）' },
+  hourglass: { key: 'hourglass', name: '时间沙漏', char: '时', min: 100, max: 200, desc: '每次输入成功，倒计时随机 +3~5 秒（共 5 次）' },
   clover: { key: 'clover', name: '幸运草', char: '幸', min: 100, max: 400, desc: '每次输入成功，随机额外获得 50~100 金币' },
-  shield: { key: 'shield', name: '盾牌', char: '盾', min: 100, max: 400, desc: '本关输错地名不再减少金币' },
+  shield: { key: 'shield', name: '盾牌', char: '盾', min: 100, max: 400, desc: '本关输错地名不再扣金币、不扣时间' },
   token: { key: 'token', name: '飞花令牌', char: '飞', min: 100, max: 400, desc: '包含关键字的地名额外获得金币，逐次递增' },
   potion: { key: 'potion', name: '透视药水', char: '透', min: 100, max: 400, desc: '按方向键使用，显示全国地名标签 3 秒（共 3 次，可跨关携带）' },
+  food: { key: 'food', name: '美食鉴赏家', char: '美', min: 100, max: 400, desc: '屏幕上方显示 5 种食物，输入其省份地级市额外获得 50~100 金币' },
 };
+
+const FOODS: FoodEntry[] = [
+  { province: '北京市', food: '北京烤鸭' },
+  { province: '天津市', food: '狗不理包子' },
+  { province: '河北省', food: '驴肉火烧' },
+  { province: '山西省', food: '刀削面' },
+  { province: '内蒙古自治区', food: '手把羊肉' },
+  { province: '辽宁省', food: '猪肉炖粉条' },
+  { province: '吉林省', food: '延吉冷面' },
+  { province: '黑龙江省', food: '锅包肉' },
+  { province: '上海市', food: '生煎包' },
+  { province: '江苏省', food: '松鼠鳜鱼' },
+  { province: '浙江省', food: '西湖醋鱼' },
+  { province: '安徽省', food: '臭鳜鱼' },
+  { province: '福建省', food: '佛跳墙' },
+  { province: '江西省', food: '粉蒸肉' },
+  { province: '山东省', food: '九转大肠' },
+  { province: '河南省', food: '胡辣汤' },
+  { province: '湖北省', food: '热干面' },
+  { province: '湖南省', food: '剁椒鱼头' },
+  { province: '广东省', food: '白切鸡' },
+  { province: '广西壮族自治区', food: '螺蛳粉' },
+  { province: '海南省', food: '文昌鸡' },
+  { province: '重庆市', food: '牛油火锅' },
+  { province: '四川省', food: '麻婆豆腐' },
+  { province: '贵州省', food: '酸汤鱼' },
+  { province: '云南省', food: '过桥米线' },
+  { province: '西藏自治区', food: '酥油茶' },
+  { province: '陕西省', food: '羊肉泡馍' },
+  { province: '甘肃省', food: '兰州牛肉面' },
+  { province: '青海省', food: '酿皮' },
+  { province: '宁夏回族自治区', food: '手抓滩羊肉' },
+  { province: '新疆维吾尔自治区', food: '大盘鸡' },
+  { province: '香港特别行政区', food: '避风塘炒蟹' },
+  { province: '澳门特别行政区', food: '葡式蛋挞' },
+  { province: '台湾省', food: '三杯鸡' },
+];
+
+/** 随机抽取 5 种不重复食物。 */
+function pickInitialFoods(): FoodEntry[] {
+  const pool = [...FOODS];
+  const out: FoodEntry[] = [];
+  for (let i = 0; i < 5 && pool.length; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    out.push(pool.splice(idx, 1)[0]);
+  }
+  return out;
+}
+
+/** 飞花令牌关键字：从固定列表随机抽取。 */
+function pickTokenChar(): string {
+  return TOKEN_CHARS[Math.floor(Math.random() * TOKEN_CHARS.length)];
+}
 
 // ---------- 工具 ----------
 function fmt(n: number) {

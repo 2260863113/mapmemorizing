@@ -110,6 +110,13 @@ export function endlessToken(html: string) {
   el.classList.toggle('hidden', html === '');
 }
 
+/** 无尽闯关食物卡片（美食鉴赏家，空字符串时隐藏）。 */
+export function endlessFood(html: string) {
+  const el = $('endless-food');
+  el.innerHTML = html;
+  el.classList.toggle('hidden', html === '');
+}
+
 /** 无尽闯关道具商店。 */
 export function showShop() {
   $('endless-shop').classList.remove('hidden');

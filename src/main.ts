@@ -218,6 +218,7 @@ async function boot() {
     $('btn-endless-settings').classList.toggle('hidden', mode !== 'endless');
     $('endless-items').classList.toggle('hidden', mode !== 'endless');
     $('endless-token').classList.toggle('hidden', mode !== 'endless');
+    $('endless-food').classList.toggle('hidden', mode !== 'endless');
     if (mode !== 'endless') {
       $('endless-settings-panel').classList.add('hidden');
       $('endless-shop').classList.add('hidden');
