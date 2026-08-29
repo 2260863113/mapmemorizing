@@ -576,7 +576,8 @@ export class EndlessMode implements ModeController {
     this.revealTimer = window.setTimeout(() => {
       this.revealTimer = null;
       this.revealAllNames = false;
-      if (this.started) this.refresh(); // 3 秒后恢复为之前的价格/地名状态
+      // 3 秒后恢复为之前的价格/地名状态（暂停中=已切到其他模式则不重绘，返回时会刷新）
+      if (this.started && !this.paused) this.refresh();
     }, POTION_REVEAL_MS);
     this.ctx.toast('透视药水：显示全国地名标签 3 秒');
   }
@@ -672,7 +673,7 @@ const COIN_MIN = 50; // 初始金币下限（约 50）
 const COIN_MAX = 400; // 初始金币上限（约 400）
 const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度
 const COIN_NOISE_AMPLIFY = 1.25; // 噪声起伏放大（拉开差距）
-const COIN_LABEL_ZOOM = 2; // 金币标签显示倍率阈值
+const COIN_LABEL_ZOOM = 0; // 金币/地名标签始终显示（不按缩放倍率隐藏）
 const HIDE_PRICE_KEY = 'china-admin-endless-hide-price-v1';
 const HIDE_PRICE_BG_KEY = 'china-admin-endless-hide-price-bg-v1';
 const WRONG_INPUT_COIN_LOSS = 10; // 输错地名扣减的金币（盾牌可免疫）

@@ -164,9 +164,9 @@ export interface MapHandlers {
   onUnitHoverEnd?: () => void;
 }
 
-/** 标签缩放：缩放倍率 <7x 时跟随地图等比例缩放，>=7x 时保持固定大小。 */
+/** 标签缩放：缩放倍率 <4x 时跟随地图等比例缩放（下限 0.5 保证小倍率可读），>=4x 时保持固定大小。 */
 function labelScale(zoom: number) {
-  return Math.max(0.25, Math.min(1, zoom / LABEL_FIX_ZOOM));
+  return Math.max(0.5, Math.min(1, zoom / LABEL_FIX_ZOOM));
 }
 
 /** 文本渲染宽度估算：CJK 按全角、ASCII 按半角。 */
