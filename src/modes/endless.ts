@@ -3,6 +3,7 @@ import type { ModeCtx, ModeController } from './types';
 import { Countdown } from '../ui/countdown';
 import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
+import { t } from '../i18n';
 
 /**
  * 无尽闯关：
@@ -14,7 +15,7 @@ import { formatElapsedSeconds } from '../ui/format';
  */
 export class EndlessMode implements ModeController {
   id: Mode = 'endless';
-  title = '无尽闯关';
+  title = t('mode.endless.title');
   private coins = new Map<string, number>(); // 当前金币数（0 = 本关已收集，下一关恢复）
   private collectedThisLevel = new Set<string>(); // 本关已收集（用于显示地名）
   private level = 1;
@@ -57,7 +58,7 @@ export class EndlessMode implements ModeController {
     if (this.paused) {
       this.syncScope();
       this.ctx.setHint(''); // 清除其他模式遗留的开始卡片
-      this.ctx.search.setPlaceholder('输入地名');
+      this.ctx.search.setPlaceholder(t('self.placeholderFull'));
       this.ctx.search.setRequireEnter(true);
       endlessStatus(this.statusHtml());
       this.refresh();
@@ -68,7 +69,7 @@ export class EndlessMode implements ModeController {
     }
     this.exit();
     this.resetRun();
-    this.ctx.search.setPlaceholder('输入地名');
+    this.ctx.search.setPlaceholder(t('self.placeholderFull'));
     this.ctx.search.setRequireEnter(true);
     this.syncScope();
     this.showStartHint();
@@ -166,10 +167,10 @@ export class EndlessMode implements ModeController {
     if (!best) {
       if (this.hasItem('shield')) {
         // 盾牌：输错不扣金币、不扣时间
-        this.ctx.toast('盾牌抵挡：输错不扣金币、不扣时间');
+        this.ctx.toast(t('endless.shieldBlocked'));
         return;
       }
-      this.ctx.toast('匹配失败，惩罚时5秒！');
+      this.ctx.toast(t('endless.matchFail'));
       this.penalize(5);
       this.totalCoins = Math.max(0, this.totalCoins - WRONG_INPUT_COIN_LOSS);
       endlessStatus(this.statusHtml());
@@ -177,7 +178,7 @@ export class EndlessMode implements ModeController {
     }
     const value = this.coins.get(best.adcode) ?? 0;
     if (!Number.isFinite(value) || value <= 0) {
-      this.ctx.toast('该城市金币本关已收集');
+      this.ctx.toast(t('endless.alreadyCollected'));
       return;
     }
     this.collect(best, value);
@@ -192,7 +193,7 @@ export class EndlessMode implements ModeController {
   }
 
   onUnitDblClick() {
-    this.ctx.toast('无尽闯关不支持下钻省份');
+    this.ctx.toast(t('endless.noDrill'));
   }
 
   onSkip() {
@@ -263,8 +264,8 @@ export class EndlessMode implements ModeController {
   }
 
   private showStartHint() {
-    const actions = '<button id="endless-start" class="start-action">开始</button>';
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">无尽闯关</div><div class="start-subtitle">范围：全国</div>${actions}</div>`);
+    const actions = `<button id="endless-start" class="start-action">${t('common.start')}</button>`;
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">${t('endless.startTitle')}</div><div class="start-subtitle">${t('endless.startScope')}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('endless-start') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start();
@@ -351,14 +352,14 @@ export class EndlessMode implements ModeController {
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
     const extras: string[] = [];
-    if (bonus > 0) extras.push(`+${fmt(bonus)}￥加成`);
-    if (timeBonus > 0) extras.push(`时间+${timeBonus}秒`);
-    const extraTxt = extras.length ? `（${extras.join('，')}）` : '';
+    if (bonus > 0) extras.push(t('endless.bonusCoins', { value: fmt(bonus) }));
+    if (timeBonus > 0) extras.push(t('endless.timeBonus', { seconds: timeBonus }));
+    const extraTxt = extras.length ? t('endless.extraWrap', { list: extras.join(t('endless.listSeparator')) }) : '';
     if (!this.targetHit && this.totalCoins >= this.target) {
       this.targetHit = true;
-      this.ctx.toast(`已达成目标：${fmt(this.target)}￥，剩余时间可继续收集金币`);
+      this.ctx.toast(t('endless.targetReached', { value: fmt(this.target) }));
     } else {
-      this.ctx.toast(`收集成功：${unit.name} +${fmt(value)}￥${extraTxt}`);
+      this.ctx.toast(t('endless.collectSuccess', { name: unit.name, value: fmt(value), extra: extraTxt }));
     }
     endlessStatus(this.statusHtml());
   }
@@ -379,15 +380,15 @@ export class EndlessMode implements ModeController {
     this.clearLevelItemFx();
     this.renderItems();
     const foodTable = usedFood
-      ? `<div class="food-answer"><div class="food-answer-title">美食鉴赏家 · 对应表</div>${FOODS.map(
+      ? `<div class="food-answer"><div class="food-answer-title">${t('endless.foodAnswerTitle')}</div>${FOODS.map(
           (f) => `<div class="food-answer-row"><span>${f.food}</span><span>${f.province}</span></div>`,
         ).join('')}</div>`
       : '';
     showLevelEnd(
-      `<div class="level-end-title">第 ${this.level} 关完成</div>` +
-        `<div class="sum-stats">累计目标：<b>${fmt(this.target)}￥</b></div>` +
-        `<div class="sum-stats">累计收集：<b>${fmt(this.totalCoins)}￥</b></div>` +
-        `<div class="sum-stats">本关收集：<b>${fmt(this.levelCoins)}￥</b></div>` +
+      `<div class="level-end-title">${t('endless.levelEndTitle', { level: this.level })}</div>` +
+        `<div class="sum-stats">${t('endless.levelEndTarget', { coins: fmt(this.target) })}</div>` +
+        `<div class="sum-stats">${t('endless.levelEndTotal', { coins: fmt(this.totalCoins) })}</div>` +
+        `<div class="sum-stats">${t('endless.levelEndLevel', { coins: fmt(this.levelCoins) })}</div>` +
         foodTable,
       () => this.openShop(),
     );
@@ -414,7 +415,7 @@ export class EndlessMode implements ModeController {
         return `<div class="shop-item">` +
           `<div class="shop-item-char">${def.char}</div>` +
           `<div class="shop-item-info"><div class="shop-item-name">${def.name}</div><div class="shop-item-desc">${def.desc}</div></div>` +
-          `<div class="shop-item-bought">已购买</div>` +
+          `<div class="shop-item-bought">${t('common.bought')}</div>` +
           `</div>`;
       }
       const price = this.priceOf(key);
@@ -423,11 +424,11 @@ export class EndlessMode implements ModeController {
         `<div class="shop-item-char">${def.char}</div>` +
         `<div class="shop-item-info"><div class="shop-item-name">${def.name}</div><div class="shop-item-desc">${def.desc}</div></div>` +
         `<div class="shop-item-price">${fmt(price)}￥</div>` +
-        `<button type="button" class="shop-item-buy" data-buy="${key}" ${afford ? '' : 'disabled'}>购买</button>` +
+        `<button type="button" class="shop-item-buy" data-buy="${key}" ${afford ? '' : 'disabled'}>${t('common.buy')}</button>` +
         `</div>`;
     }).join('');
     const body = $('endless-shop-body');
-    body.innerHTML = `<div class="shop-wallet">当前金币：<b>${wallet}￥</b></div><div class="shop-list">${rows}</div>`;
+    body.innerHTML = `<div class="shop-wallet">${t('endless.shopWallet', { coins: wallet })}</div><div class="shop-list">${rows}</div>`;
     body.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((btn) => {
       btn.onclick = () => this.buyItem(btn.dataset.buy as ItemKey);
     });
@@ -516,7 +517,7 @@ export class EndlessMode implements ModeController {
     const result: RoundResult = {
       mode: 'endless',
       scopeProvince: null,
-      scopeLabel: '全国',
+      scopeLabel: t('common.nation'),
       totalUnits: 0,
       correct: 0,
       wrong: 0,
@@ -526,7 +527,7 @@ export class EndlessMode implements ModeController {
       level: this.level,
     };
     this.ctx.showSummary(
-      `闯关结束<div class="sum-stats">到达第 <b>${this.level}</b> 关 ｜ 累计金币 <b>${fmt(this.totalCoins)}￥</b> ｜ 收集 <b>${this.totalCollects}</b> 次 ｜ 用时 ${formatElapsedSeconds(elapsedMs)}</div>`,
+      `${t('endless.gameOverTitle')}<div class="sum-stats">${t('endless.gameOverSummary', { level: this.level, coins: fmt(this.totalCoins), count: this.totalCollects, time: formatElapsedSeconds(elapsedMs) })}</div>`,
       () => this.enter(),
       result,
     );
@@ -537,10 +538,10 @@ export class EndlessMode implements ModeController {
 
   private statusHtml() {
     return (
-      `<span>第 <b>${this.level}</b> 关</span>` +
-      `<span>本关目标：<b>${fmt(this.target)}￥</b></span>` +
-      `<span>累计收集：<b>${fmt(this.totalCoins)}￥</b></span>` +
-      `<span>本关收集：<b>${fmt(this.levelCoins)}￥</b></span>`
+      `<span>${t('endless.statusLevel', { level: this.level })}</span>` +
+      `<span>${t('endless.statusTarget', { coins: fmt(this.target) })}</span>` +
+      `<span>${t('endless.statusTotal', { coins: fmt(this.totalCoins) })}</span>` +
+      `<span>${t('endless.statusLevelCoins', { coins: fmt(this.levelCoins) })}</span>`
     );
   }
 
@@ -594,7 +595,7 @@ export class EndlessMode implements ModeController {
       // 3 秒后恢复为之前的价格/地名状态（暂停中=已切到其他模式则不重绘，返回时会刷新）
       if (this.started && !this.paused) this.refresh();
     }, POTION_REVEAL_MS);
-    this.ctx.toast('透视药水：显示全国地名标签 3 秒');
+    this.ctx.toast(t('endless.potionToast'));
   }
 
   /** 底部道具卡片。 */
@@ -616,7 +617,7 @@ export class EndlessMode implements ModeController {
 
   /** 飞花令牌关键字卡片。 */
   private renderToken() {
-    endlessToken(this.hasItem('token') && this.tokenChar ? `<span>关键字</span><b class="token-char">${this.tokenChar}</b>` : '');
+    endlessToken(this.hasItem('token') && this.tokenChar ? `<span>${t('endless.tokenLabel')}</span><b class="token-char">${this.tokenChar}</b>` : '');
   }
 
   /** 美食鉴赏家：屏幕上方食物卡片（非玻璃态）。 */
@@ -721,49 +722,49 @@ interface FoodEntry {
 const ITEM_KEYS: ItemKey[] = ['hourglass', 'clover', 'shield', 'token', 'potion', 'food'];
 
 const ITEM_DEFS: Record<ItemKey, ItemDef> = {
-  hourglass: { key: 'hourglass', name: '时间沙漏', char: '时', min: 100, max: 200, desc: '每次输入成功，倒计时随机 +3~5 秒（共 5 次）' },
-  clover: { key: 'clover', name: '幸运草', char: '幸', min: 100, max: 400, desc: '每次输入成功，随机额外获得 50~100 金币' },
-  shield: { key: 'shield', name: '盾牌', char: '盾', min: 100, max: 400, desc: '本关输错地名不再扣金币、不扣时间' },
-  token: { key: 'token', name: '飞花令牌', char: '飞', min: 100, max: 400, desc: '包含关键字的地名额外获得金币，逐次递增' },
-  potion: { key: 'potion', name: '透视药水', char: '透', min: 100, max: 400, desc: '按方向键使用，显示全国地名标签 3 秒（共 3 次，可跨关携带）' },
-  food: { key: 'food', name: '美食鉴赏家', char: '美', min: 100, max: 400, desc: '屏幕上方显示 5 种食物，输入其省份地级市额外获得 50~100 金币' },
+  hourglass: { key: 'hourglass', name: t('endless.item.hourglass.name'), char: t('endless.item.hourglass.char'), min: 100, max: 200, desc: t('endless.item.hourglass.desc') },
+  clover: { key: 'clover', name: t('endless.item.clover.name'), char: t('endless.item.clover.char'), min: 100, max: 400, desc: t('endless.item.clover.desc') },
+  shield: { key: 'shield', name: t('endless.item.shield.name'), char: t('endless.item.shield.char'), min: 100, max: 400, desc: t('endless.item.shield.desc') },
+  token: { key: 'token', name: t('endless.item.token.name'), char: t('endless.item.token.char'), min: 100, max: 400, desc: t('endless.item.token.desc') },
+  potion: { key: 'potion', name: t('endless.item.potion.name'), char: t('endless.item.potion.char'), min: 100, max: 400, desc: t('endless.item.potion.desc') },
+  food: { key: 'food', name: t('endless.item.food.name'), char: t('endless.item.food.char'), min: 100, max: 400, desc: t('endless.item.food.desc') },
 };
 
 const FOODS: FoodEntry[] = [
-  { province: '北京市', food: '北京烤鸭' },
-  { province: '天津市', food: '狗不理包子' },
-  { province: '河北省', food: '驴肉火烧' },
-  { province: '山西省', food: '刀削面' },
-  { province: '内蒙古自治区', food: '手把羊肉' },
-  { province: '辽宁省', food: '猪肉炖粉条' },
-  { province: '吉林省', food: '延吉冷面' },
-  { province: '黑龙江省', food: '锅包肉' },
-  { province: '上海市', food: '生煎包' },
-  { province: '江苏省', food: '松鼠鳜鱼' },
-  { province: '浙江省', food: '西湖醋鱼' },
-  { province: '安徽省', food: '臭鳜鱼' },
-  { province: '福建省', food: '佛跳墙' },
-  { province: '江西省', food: '粉蒸肉' },
-  { province: '山东省', food: '九转大肠' },
-  { province: '河南省', food: '胡辣汤' },
-  { province: '湖北省', food: '热干面' },
-  { province: '湖南省', food: '剁椒鱼头' },
-  { province: '广东省', food: '白切鸡' },
-  { province: '广西壮族自治区', food: '螺蛳粉' },
-  { province: '海南省', food: '文昌鸡' },
-  { province: '重庆市', food: '牛油火锅' },
-  { province: '四川省', food: '麻婆豆腐' },
-  { province: '贵州省', food: '酸汤鱼' },
-  { province: '云南省', food: '过桥米线' },
-  { province: '西藏自治区', food: '酥油茶' },
-  { province: '陕西省', food: '羊肉泡馍' },
-  { province: '甘肃省', food: '兰州牛肉面' },
-  { province: '青海省', food: '酿皮' },
-  { province: '宁夏回族自治区', food: '手抓滩羊肉' },
-  { province: '新疆维吾尔自治区', food: '大盘鸡' },
-  { province: '香港特别行政区', food: '避风塘炒蟹' },
-  { province: '澳门特别行政区', food: '葡式蛋挞' },
-  { province: '台湾省', food: '三杯鸡' },
+  { province: '北京市', food: t('endless.food.北京市') },
+  { province: '天津市', food: t('endless.food.天津市') },
+  { province: '河北省', food: t('endless.food.河北省') },
+  { province: '山西省', food: t('endless.food.山西省') },
+  { province: '内蒙古自治区', food: t('endless.food.内蒙古自治区') },
+  { province: '辽宁省', food: t('endless.food.辽宁省') },
+  { province: '吉林省', food: t('endless.food.吉林省') },
+  { province: '黑龙江省', food: t('endless.food.黑龙江省') },
+  { province: '上海市', food: t('endless.food.上海市') },
+  { province: '江苏省', food: t('endless.food.江苏省') },
+  { province: '浙江省', food: t('endless.food.浙江省') },
+  { province: '安徽省', food: t('endless.food.安徽省') },
+  { province: '福建省', food: t('endless.food.福建省') },
+  { province: '江西省', food: t('endless.food.江西省') },
+  { province: '山东省', food: t('endless.food.山东省') },
+  { province: '河南省', food: t('endless.food.河南省') },
+  { province: '湖北省', food: t('endless.food.湖北省') },
+  { province: '湖南省', food: t('endless.food.湖南省') },
+  { province: '广东省', food: t('endless.food.广东省') },
+  { province: '广西壮族自治区', food: t('endless.food.广西壮族自治区') },
+  { province: '海南省', food: t('endless.food.海南省') },
+  { province: '重庆市', food: t('endless.food.重庆市') },
+  { province: '四川省', food: t('endless.food.四川省') },
+  { province: '贵州省', food: t('endless.food.贵州省') },
+  { province: '云南省', food: t('endless.food.云南省') },
+  { province: '西藏自治区', food: t('endless.food.西藏自治区') },
+  { province: '陕西省', food: t('endless.food.陕西省') },
+  { province: '甘肃省', food: t('endless.food.甘肃省') },
+  { province: '青海省', food: t('endless.food.青海省') },
+  { province: '宁夏回族自治区', food: t('endless.food.宁夏回族自治区') },
+  { province: '新疆维吾尔自治区', food: t('endless.food.新疆维吾尔自治区') },
+  { province: '香港特别行政区', food: t('endless.food.香港特别行政区') },
+  { province: '澳门特别行政区', food: t('endless.food.澳门特别行政区') },
+  { province: '台湾省', food: t('endless.food.台湾省') },
 ];
 
 /** 随机抽取 5 种不重复食物。 */

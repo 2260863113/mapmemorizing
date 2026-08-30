@@ -1,5 +1,6 @@
 import type { AppData, Unit } from '../types';
 import type { MemoryStore } from '../store';
+import { t } from '../i18n';
 
 type ProvinceStats = { positive: number; negative: number; zero: number };
 
@@ -25,10 +26,10 @@ export class StatsPanel {
     }
     const allUnits = this.provinceList.flatMap((p) => p.units);
     const total = this.statsOf(allUnits);
-    let html = this.summary('全国概览', total);
+    let html = this.summary(t('stats.nationOverview'), total);
     html += '<div class="prov-list">' + this.provinceList.map((p) => {
       const stats = this.statsOf(p.units);
-      return `<div class="prov-name">${p.name} <span>+${stats.positive} / -${stats.negative} / ${stats.zero}零分</span></div>${this.bar(stats)}`;
+      return `<div class="prov-name">${t('stats.provinceRow', { name: p.name, positive: stats.positive, negative: stats.negative, zero: stats.zero })}</div>${this.bar(stats)}`;
     }).join('') + '</div>';
     this.el.innerHTML = html;
   }
@@ -44,7 +45,7 @@ export class StatsPanel {
   }
 
   private summary(label: string, stats: ProvinceStats) {
-    return `<div class="stat-head">${label} <span class="pct">正分 ${stats.positive} ｜ 负分 ${stats.negative} ｜ 零分 ${stats.zero}</span></div>${this.bar(stats)}`;
+    return `<div class="stat-head">${label} <span class="pct">${t('stats.scoreSummary', { positive: stats.positive, negative: stats.negative, zero: stats.zero })}</span></div>${this.bar(stats)}`;
   }
 
   private bar(stats: ProvinceStats) {

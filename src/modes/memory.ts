@@ -1,10 +1,11 @@
 import type { Mode } from '../types';
 import type { ModeCtx, ModeController } from './types';
+import { t } from '../i18n';
 
 /** 自由模式：全图显示所有地图单位名称（白底标签），纯浏览、不交互 */
 export class MemoryMode implements ModeController {
   id: Mode = 'memory';
-  title = '自由模式';
+  title = t('mode.memory.title');
 
   constructor(private ctx: ModeCtx) {}
 

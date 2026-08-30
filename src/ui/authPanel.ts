@@ -1,6 +1,7 @@
 import { AuthStore, type ProfileUpdate } from '../authStore';
 import { normalize, normalizeProvince } from '../matcher';
 import type { AppData, AuthUser, UserAvatar, UserHometown } from '../types';
+import { t } from '../i18n';
 import { $, toast } from './dom';
 
 type AuthView = 'login' | 'register' | 'profile';
@@ -60,7 +61,7 @@ export class AuthPanel {
     trigger.append(this.avatarEl(user, 'user-avatar'));
     const name = document.createElement('span');
     name.className = 'user-name';
-    name.textContent = user?.username ?? '点击登录';
+    name.textContent = user?.username ?? t('auth.clickToLogin');
     trigger.append(name);
     this.renderMenu();
   }
@@ -69,9 +70,9 @@ export class AuthPanel {
     const user = this.store.currentUser();
     this.menu.innerHTML = '';
     this.menu.append(
-      this.menuButton('个人资料', () => this.openProfile(), !user),
-      this.menuButton('登录', () => this.openLogin()),
-      this.menuButton('登出', () => this.logout(), !user),
+      this.menuButton(t('auth.menu.profile'), () => this.openProfile(), !user),
+      this.menuButton(t('auth.menu.login'), () => this.openLogin()),
+      this.menuButton(t('auth.menu.logout'), () => this.logout(), !user),
     );
   }
 
@@ -146,14 +147,14 @@ export class AuthPanel {
 
   private renderLogin() {
     this.card.innerHTML = `
-      <h3>登录</h3>
-      <label class="form-row">用户名<input id="auth-login-name" type="text" autocomplete="username" /></label>
-      <label class="form-row">密码<input id="auth-login-password" type="password" autocomplete="current-password" /></label>
+      <h3>${t('auth.login.title')}</h3>
+      <label class="form-row">${t('auth.login.username')}<input id="auth-login-name" type="text" autocomplete="username" /></label>
+      <label class="form-row">${t('auth.login.password')}<input id="auth-login-password" type="password" autocomplete="current-password" /></label>
       <p id="auth-message" class="auth-message"></p>
-      <div class="auth-switch"><button id="auth-go-register" type="button">前往注册</button></div>
+      <div class="auth-switch"><button id="auth-go-register" type="button">${t('auth.login.goRegister')}</button></div>
       <div class="card-actions">
-        <button id="auth-login-submit" class="primary" type="button">登录</button>
-        <button id="auth-cancel" class="ghost" type="button">取消</button>
+        <button id="auth-login-submit" class="primary" type="button">${t('auth.login.submit')}</button>
+        <button id="auth-cancel" class="ghost" type="button">${t('auth.cancel')}</button>
       </div>
     `;
     $('auth-go-register').addEventListener('click', () => this.openRegister());
@@ -163,13 +164,13 @@ export class AuthPanel {
 
   private renderRegister() {
     this.card.innerHTML = `
-      <h3>注册</h3>
-      <label class="form-row">昵称<input id="auth-register-name" type="text" maxlength="24" autocomplete="username" /></label>
-      <label class="form-row">密码<input id="auth-register-password" type="password" autocomplete="new-password" /></label>
-      <p id="auth-message" class="auth-message">密码至少 6 位。</p>
+      <h3>${t('auth.register.title')}</h3>
+      <label class="form-row">${t('auth.register.nickname')}<input id="auth-register-name" type="text" maxlength="24" autocomplete="username" /></label>
+      <label class="form-row">${t('auth.register.password')}<input id="auth-register-password" type="password" autocomplete="new-password" /></label>
+      <p id="auth-message" class="auth-message">${t('auth.register.hint')}</p>
       <div class="card-actions">
-        <button id="auth-register-submit" class="primary" type="button">注册</button>
-        <button id="auth-register-back" class="ghost" type="button">返回登录</button>
+        <button id="auth-register-submit" class="primary" type="button">${t('auth.register.submit')}</button>
+        <button id="auth-register-back" class="ghost" type="button">${t('auth.register.back')}</button>
       </div>
     `;
     $('auth-register-submit').addEventListener('click', () => this.submitRegister());
@@ -185,25 +186,25 @@ export class AuthPanel {
     const province = this.provinceByAdcode(this.location.provinceAdcode);
     const city = this.cityByAdcode(this.location.cityAdcode);
     this.card.innerHTML = `
-      <h3>个人资料</h3>
+      <h3>${t('auth.profile.title')}</h3>
       <div class="profile-avatar-row">
         <div id="auth-avatar-preview" class="user-avatar profile-avatar"></div>
-        <label class="avatar-upload">上传头像<input id="auth-avatar-file" type="file" accept="image/*" /></label>
+        <label class="avatar-upload">${t('auth.profile.uploadAvatar')}<input id="auth-avatar-file" type="file" accept="image/*" /></label>
       </div>
-      <label class="form-row">用户名<input id="auth-profile-name" type="text" maxlength="24" value="${escapeAttr(user.username)}" autocomplete="username" /></label>
+      <label class="form-row">${t('auth.profile.username')}<input id="auth-profile-name" type="text" maxlength="24" value="${escapeAttr(user.username)}" autocomplete="username" /></label>
       <div class="location-grid">
-        <label class="form-row">来自省份<input id="auth-profile-province" type="text" value="${escapeAttr(province?.name ?? '')}" placeholder="输入或选择省份" autocomplete="off" /></label>
-        <label class="form-row">来自城市<input id="auth-profile-city" type="text" value="${escapeAttr(city?.name ?? '')}" placeholder="输入或选择地级市" autocomplete="off" /></label>
+        <label class="form-row">${t('auth.profile.province')}<input id="auth-profile-province" type="text" value="${escapeAttr(province?.name ?? '')}" placeholder="${t('auth.profile.provincePlaceholder')}" autocomplete="off" /></label>
+        <label class="form-row">${t('auth.profile.city')}<input id="auth-profile-city" type="text" value="${escapeAttr(city?.name ?? '')}" placeholder="${t('auth.profile.cityPlaceholder')}" autocomplete="off" /></label>
         <div id="auth-province-options" class="auth-options"></div>
         <div id="auth-city-options" class="auth-options"></div>
       </div>
-      <div class="settings-section-title">修改密码</div>
-      <label class="form-row">旧密码<input id="auth-old-password" type="password" autocomplete="current-password" /></label>
-      <label class="form-row">新密码<input id="auth-new-password" type="password" autocomplete="new-password" /></label>
+      <div class="settings-section-title">${t('auth.profile.changePassword')}</div>
+      <label class="form-row">${t('auth.profile.oldPassword')}<input id="auth-old-password" type="password" autocomplete="current-password" /></label>
+      <label class="form-row">${t('auth.profile.newPassword')}<input id="auth-new-password" type="password" autocomplete="new-password" /></label>
       <p id="auth-message" class="auth-message"></p>
       <div class="card-actions">
-        <button id="auth-profile-save" class="primary" type="button">保存</button>
-        <button id="auth-profile-cancel" class="ghost" type="button">取消</button>
+        <button id="auth-profile-save" class="primary" type="button">${t('auth.profile.save')}</button>
+        <button id="auth-profile-cancel" class="ghost" type="button">${t('auth.profile.cancel')}</button>
       </div>
     `;
     this.paintAvatar($('auth-avatar-preview'), { ...user, avatar: this.avatar });
@@ -281,7 +282,7 @@ export class AuthPanel {
     try {
       await this.store.login(username, password);
       this.closeOverlay(false);
-      toast('已登录');
+      toast(t('auth.toast.loggedIn'));
       this.completeSuccess();
     } catch (error) {
       this.showMessage(errorMessage(error));
@@ -294,7 +295,7 @@ export class AuthPanel {
     try {
       const user = await this.store.register(username, password);
       this.closeOverlay(false);
-      toast(`已注册并登录：${user.username}`);
+      toast(t('auth.toast.registered', { username: user.username }));
       this.completeSuccess();
     } catch (error) {
       this.showMessage(errorMessage(error));
@@ -322,7 +323,7 @@ export class AuthPanel {
     try {
       await this.store.updateProfile(update);
       this.closeOverlay();
-      toast('个人资料已保存');
+      toast(t('auth.toast.profileSaved'));
     } catch (error) {
       this.showMessage(errorMessage(error));
     }
@@ -330,7 +331,7 @@ export class AuthPanel {
 
   private logout() {
     this.store.logout();
-    toast('已登出');
+    toast(t('auth.toast.loggedOut'));
   }
 
   private async readAvatar(input: HTMLInputElement) {
@@ -338,28 +339,28 @@ export class AuthPanel {
     if (!file) return;
     if (file.size > MAX_AVATAR_SIZE) {
       input.value = '';
-      this.showMessage('头像不能超过 20KB');
+      this.showMessage(t('auth.toast.avatarTooLarge'));
       return;
     }
     if (!file.type.startsWith('image/')) {
       input.value = '';
-      this.showMessage('请选择图片文件');
+      this.showMessage(t('auth.toast.chooseImage'));
       return;
     }
     const dataUrl = await fileToDataUrl(file);
     this.avatar = { dataUrl, name: file.name, size: file.size, type: file.type };
     const preview = document.querySelector<HTMLElement>('.profile-avatar');
     if (preview) this.paintAvatar(preview, { username: this.store.currentUser()?.username ?? '', avatar: this.avatar });
-    this.showMessage('头像已选择，保存后生效');
+    this.showMessage(t('auth.toast.avatarSelected'));
   }
 
   private resolveHometown(provinceText: string, cityText: string): UserHometown | null | Error {
     if (!provinceText && !cityText) return null;
     const province = this.matchProvince(provinceText);
-    if (!province) return new Error('请选择有效省份');
+    if (!province) return new Error(t('auth.error.invalidProvince'));
     this.location.provinceAdcode = province.adcode;
     const city = this.matchCity(cityText);
-    if (!city || city.provinceAdcode !== province.adcode) return new Error('请选择该省内的有效城市');
+    if (!city || city.provinceAdcode !== province.adcode) return new Error(t('auth.error.invalidCity'));
     this.location.cityAdcode = city.adcode;
     return { provinceAdcode: province.adcode, cityAdcode: city.adcode };
   }
@@ -459,7 +460,7 @@ function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('头像读取失败'));
+    reader.onerror = () => reject(new Error(t('auth.error.avatarReadFail')));
     reader.readAsDataURL(file);
   });
 }

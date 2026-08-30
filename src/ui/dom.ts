@@ -1,6 +1,8 @@
+import { t } from '../i18n';
+
 export function $(id: string): HTMLElement {
   const el = document.getElementById(id);
-  if (!el) throw new Error(`缺少元素 #${id}`);
+  if (!el) throw new Error(t('dom.missingElement', { id }));
   return el;
 }
 

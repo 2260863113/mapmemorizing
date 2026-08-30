@@ -1,4 +1,5 @@
 import type { AppData, Province, Unit } from './types';
+import { t } from './i18n';
 
 /** 民族限定词（与 scripts/build-data.mjs 保持同步） */
 export const ETHNIC_WORDS = [
@@ -148,7 +149,7 @@ export class Matcher {
       if (score > 0) {
         out.push({
           kind: 'province', adcode: province.adcode, label: province.name,
-          sub: `省级 · ${count} 个地图单位，点击进入`, score: score - 1,
+          sub: t('matcher.provinceHint', { count }), score: score - 1,
         });
       }
     }

@@ -12,6 +12,7 @@ import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary, showSettlement, hideSettlement } from './ui/dom';
 import { formatElapsedCentiseconds } from './ui/format';
+import { t } from './i18n';
 import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
@@ -90,7 +91,7 @@ async function boot() {
     onUnitDblClick: (adcode) => current?.onUnitDblClick(adcode),
     onBlankClick: () => {
       if (current?.isStarted?.()) {
-        toast('测试期间无法返回全国');
+        toast(t('common.backToNationBlocked'));
         return;
       }
       backToNationFromMap();
@@ -163,7 +164,7 @@ async function boot() {
     }
     resetConfirmButtons();
     btn.dataset.label = btn.textContent ?? '';
-    btn.textContent = '确认';
+    btn.textContent = t('common.confirm');
     btn.classList.add('confirming');
     const timer = window.setTimeout(() => resetConfirmButton(btn), 3000);
     confirmTimers.set(btn.id, timer);
@@ -233,8 +234,8 @@ async function boot() {
     $('stats').classList.toggle('hidden', !isAnalysis);
     $('leaderboard').classList.toggle('hidden', !showLeaderboard);
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
-    $('side-panel-title').textContent = '熟练度分析';
-    $('side-panel-tip').textContent = isAnalysis ? '进度自动保存在本机浏览器（localStorage）' : '排行榜按当前测试范围筛选，仅保存本机成绩';
+    $('side-panel-title').textContent = t('main.sideTitle');
+    $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
     $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless');
@@ -244,7 +245,7 @@ async function boot() {
     $('click-order-toggle').classList.toggle('hidden', mode !== 'click');
     syncSegmentedToggle('self-order-toggle', selfMode.getOrderMode());
     syncSegmentedToggle('click-order-toggle', clickMode.getOrderMode());
-    ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? '重置熟练度' : '重置';
+    ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
     syncViewChrome();
   }
 
@@ -300,7 +301,7 @@ async function boot() {
     if (!unit) return;
     const practice = store.getPractice(adcode);
     const card = $('hover-stats');
-    card.textContent = `${unit.name}  正确次数：${practice.correctCount}次 ｜ 错误次数：${practice.wrongCount}次`;
+    card.textContent = t('main.hoverStats', { name: unit.name, correct: practice.correctCount, wrong: practice.wrongCount });
     card.classList.remove('hidden');
   }
 
@@ -321,7 +322,7 @@ async function boot() {
       pendingLeaderboardResult = result;
       pendingLeaderboardOnDone = onDone ?? null;
       authPanel.requestLogin(() => submitPendingLeaderboard());
-      toast('请先登录，登录后将自动提交');
+      toast(t('main.loginFirst'));
       return;
     }
     submitLeaderboard(result, user);
@@ -348,15 +349,15 @@ async function boot() {
     const status = leaderboardStore.submit(result, user);
     refreshSidePanel();
     if (status === 'kept') {
-      toast('已有更快成绩，本次未更新');
+      toast(t('main.keptScore'));
       return;
     }
-    toast('成绩已提交');
+    toast(t('main.submitted'));
   }
 
   /** 无法提交时的提示文案（按模式区分）。 */
   function rejectToast(result: RoundResult) {
-    return result.mode === 'endless' ? '尚未收集金币，无法提交成绩' : '需要全部答对才可提交成绩';
+    return result.mode === 'endless' ? t('main.rejectEndless') : t('main.rejectNotAllCorrect');
   }
 
   /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
@@ -377,7 +378,7 @@ async function boot() {
   }
 
   function scopeLabel(scopeProvince: string | null) {
-    return scopeProvince ? data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? '当前省份' : '全国';
+    return scopeProvince ? data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
   function isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
@@ -418,33 +419,18 @@ async function boot() {
   function currentModeHelp(): { title: string; body: string } {
     const mode = current?.id;
     if (mode === 'self') {
-      return {
-        title: '输入模式说明',
-        body: '输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、暂停和重置。',
-      };
+      return { title: t('help.self.title'), body: t('help.self.body') };
     }
     if (mode === 'endless') {
-      return {
-        title: '无尽闯关说明',
-        body: '每关限时 45 秒，输入地级市名称收集金币（按 Enter 确认）。地图上的数字为该地金币数，绿色越深金币越多；达到本关目标金币立即进入下一关，超时未达标则游戏结束。累计金币跨关保留，未收集城市的金币每关会上浮。',
-      };
+      return { title: t('help.endless.title'), body: t('help.endless.body') };
     }
     if (mode === 'free') {
-      return {
-        title: '熟练度分析说明',
-        body: '地图按累计答题分数分层着色。悬停地图单位可查看正确和错误次数；此模式不响应点击和输入。',
-      };
+      return { title: t('help.free.title'), body: t('help.free.body') };
     }
     if (mode === 'click') {
-      return {
-        title: '点击模式说明',
-        body: '按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。',
-      };
+      return { title: t('help.click.title'), body: t('help.click.body') };
     }
-    return {
-      title: '自由模式说明',
-      body: '这是自由浏览模式，可以查看全部地图单位名称并自由缩放、双击区域进入该省。',
-    };
+    return { title: t('help.memory.title'), body: t('help.memory.body') };
   }
 
   // 模式切换
@@ -547,7 +533,7 @@ async function boot() {
         store.resetPractice();
         stats.refresh(renderer.currentProvince());
         current.refresh();
-        toast('已重置熟练度');
+        toast(t('main.resetMasteryDone'));
         return;
       }
       const mode = current?.id;
@@ -573,9 +559,8 @@ async function boot() {
       doReset();
       return;
     }
-    const scopeText = '全国';
     showSettlement(
-      `<div style="text-align:center;line-height:1.8;">全国排行榜结算<div class="sum-stats">正确 <b>${result.correct}</b> ｜ 错误 <b>${result.wrong}</b> ｜ 覆盖 ${result.correct + result.wrong}/${result.totalUnits} ｜ 用时 ${formatElapsedCentiseconds(result.elapsedMs)}</div><div class="sum-stats">全国排行榜按答对题数排名，提交后将重置本局</div></div>`,
+      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${t('main.settlementNote')}</div></div>`,
       () => submitSettlement(result),
       () => closeSettlement(),
     );
@@ -615,5 +600,5 @@ async function boot() {
 
 boot().catch((e) => {
   console.error(e);
-  toast(`启动失败：${e instanceof Error ? e.message : String(e)}`);
+  toast(t('main.bootFail', { message: e instanceof Error ? e.message : String(e) }));
 });

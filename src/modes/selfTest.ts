@@ -4,6 +4,7 @@ import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
 import { formatElapsedSeconds } from '../ui/format';
 import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
+import { t } from '../i18n';
 
 type SelfOrderMode = OrderMode;
 
@@ -14,7 +15,7 @@ type SelfOrderMode = OrderMode;
  */
 export class SelfTestMode implements ModeController {
   id: Mode = 'self';
-  title = '自测模式';
+  title = t('mode.self.title');
   private green = new Set<string>();
   private red = new Set<string>();
   private question: string | null = null;
@@ -38,7 +39,7 @@ export class SelfTestMode implements ModeController {
   enter() {
     if (this.paused) {
       this.syncScopeView();
-      this.ctx.search.setPlaceholder('输入地名');
+      this.ctx.search.setPlaceholder(t('self.placeholderFull'));
       this.ctx.setHint('');
       this.refresh();
       this.ctx.showStopwatch(this.stopwatch.elapsedMs());
@@ -60,7 +61,7 @@ export class SelfTestMode implements ModeController {
     this.order = scopedUnits(this.ctx.data, this.scopeProvince).map((u) => u.adcode);
     this.restore();
     this.syncScopeView();
-    this.ctx.search.setPlaceholder('地名');
+    this.ctx.search.setPlaceholder(t('self.placeholder'));
     this.showStartHint();
     this.refresh();
     this.ctx.updateProgress();
@@ -140,7 +141,7 @@ export class SelfTestMode implements ModeController {
 
   onUnitClick() {
     if (this.started) {
-      this.ctx.toast('测试期间无法下钻省份');
+      this.ctx.toast(t('common.underTestNoDrill'));
       return true;
     }
     /* 测试模式以输入为准 */
@@ -148,7 +149,7 @@ export class SelfTestMode implements ModeController {
 
   onUnitDblClick(adcode: string) {
     if (this.started) {
-      this.ctx.toast('测试期间无法下钻省份');
+      this.ctx.toast(t('common.underTestNoDrill'));
       return;
     }
     const u = this.ctx.byAdcode.get(adcode);
@@ -278,9 +279,9 @@ export class SelfTestMode implements ModeController {
   }
 
   private showStartHint() {
-    const scope = this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
-    const actions = '<button id="self-start" class="start-action">开始</button>';
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">输入模式</div><div class="start-subtitle">范围：${scope}</div>${actions}</div>`);
+    const scope = this.scopeLabel();
+    const actions = `<button id="self-start" class="start-action">${t('common.start')}</button>`;
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">${t('self.startTitle')}</div><div class="start-subtitle">${t('common.scopePrefix', { scope })}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('self-start') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start(false);
@@ -343,7 +344,7 @@ export class SelfTestMode implements ModeController {
       this.fail++;
       this.results.push('red');
       const name = this.ctx.byAdcode.get(q)?.name ?? q;
-      this.ctx.toast(timedOut ? `超时，正确答案：${name}` : `正确答案：${name}`);
+      this.ctx.toast(timedOut ? t('self.timeoutAnswer', { name }) : t('self.correctAnswer', { name }));
     }
     this.persist();
     const remain = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
@@ -420,7 +421,7 @@ export class SelfTestMode implements ModeController {
       finishedAt: Date.now(),
     };
     this.ctx.showSummary(
-      `自测完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsedSeconds(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
+      `${t('self.complete')}<div class="sum-stats">${t('self.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail })}</div>`,
       () => {
         this.clearSaved();
         this.enter();
@@ -449,7 +450,7 @@ export class SelfTestMode implements ModeController {
   }
 
   private scopeLabel() {
-    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
+    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 }
 

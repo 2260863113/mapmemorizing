@@ -1,5 +1,6 @@
 import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
+import { t } from '../i18n';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
@@ -144,16 +145,16 @@ const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
 const STATUS_TXT: Record<UnitColor, string> = {
-  green: '已记忆',
-  blue: '当前题目',
-  red: '答错',
-  gray: '未涉及',
-  scoreGreenLight: '初步掌握',
-  scoreGreenMedium: '稳定掌握',
-  scoreGreenDark: '熟练掌握',
-  scoreRedLight: '需复习',
-  scoreRedMedium: '掌握较弱',
-  scoreRedDark: '重点复习',
+  green: t('map.status.green'),
+  blue: t('map.status.blue'),
+  red: t('map.status.red'),
+  gray: t('map.status.gray'),
+  scoreGreenLight: t('map.status.scoreGreenLight'),
+  scoreGreenMedium: t('map.status.scoreGreenMedium'),
+  scoreGreenDark: t('map.status.scoreGreenDark'),
+  scoreRedLight: t('map.status.scoreRedLight'),
+  scoreRedMedium: t('map.status.scoreRedMedium'),
+  scoreRedDark: t('map.status.scoreRedDark'),
 };
 
 export interface MapHandlers {
@@ -488,12 +489,12 @@ export class MapRenderer {
               if (!u) return String(params.name ?? '');
               if (state.coin) {
                 const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
-                const coinsTxt = coins > 0 ? `${coins}￥` : '0￥（已收集）';
-                return `<b>${u.name}</b><br/>所属：${u.province}<br/>金币：${coinsTxt}`;
+                const coinsTxt = coins > 0 ? `${coins}￥` : t('map.tooltip.coinCollected');
+                return t('map.tooltip.body', { name: u.name, province: u.province, coins: coinsTxt });
               }
               const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-              const status = u.decorative ? '' : `<br/>状态：${STATUS_TXT[color]}`;
-              return `<b>${u.name}</b><br/>所属：${u.province}${status}`;
+              const status = u.decorative ? '' : t('map.tooltip.statusLine', { status: STATUS_TXT[color] });
+              return t('map.tooltip.bodyBase', { name: u.name, province: u.province, status });
             },
           },
       geo: {

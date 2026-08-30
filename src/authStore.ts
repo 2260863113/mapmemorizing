@@ -1,4 +1,5 @@
 import type { AuthUser, PasswordHash, UserAvatar, UserHometown } from './types';
+import { t } from './i18n';
 
 const AUTH_KEY = 'china-admin-auth-v1';
 const AUTH_VERSION = 1;
@@ -46,10 +47,10 @@ export class AuthStore {
 
   async register(username: string, password: string): Promise<AuthUser> {
     const cleaned = cleanUsername(username);
-    if (!cleaned) throw new Error('请输入用户名');
-    if (!validPassword(password)) throw new Error('密码至少需要 6 位');
+    if (!cleaned) throw new Error(t('auth.error.usernameRequired'));
+    if (!validPassword(password)) throw new Error(t('auth.error.passwordTooShort'));
     const key = usernameKey(cleaned);
-    if (this.state.users[key]) throw new Error('用户名已存在');
+    if (this.state.users[key]) throw new Error(t('auth.error.usernameExists'));
 
     const now = Date.now();
     const user: AuthUser = {
@@ -69,9 +70,9 @@ export class AuthStore {
   async login(username: string, password: string): Promise<AuthUser> {
     const key = usernameKey(username);
     const user = this.state.users[key];
-    if (!user) throw new Error('用户不存在');
+    if (!user) throw new Error(t('auth.error.userNotFound'));
     const ok = await verifyPassword(password, user.password);
-    if (!ok) throw new Error('密码错误');
+    if (!ok) throw new Error(t('auth.error.wrongPassword'));
     this.state.currentUsername = key;
     this.persist();
     return user;
@@ -85,20 +86,20 @@ export class AuthStore {
   async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
     const currentKey = this.state.currentUsername;
     const current = currentKey ? this.state.users[currentKey] : null;
-    if (!current || !currentKey) throw new Error('请先登录');
+    if (!current || !currentKey) throw new Error(t('auth.error.loginRequired'));
 
     const username = cleanUsername(update.username);
-    if (!username) throw new Error('请输入用户名');
+    if (!username) throw new Error(t('auth.error.usernameRequired'));
     const nextKey = usernameKey(username);
-    if (nextKey !== currentKey && this.state.users[nextKey]) throw new Error('用户名已存在');
+    if (nextKey !== currentKey && this.state.users[nextKey]) throw new Error(t('auth.error.usernameExists'));
 
     let password = current.password;
     const wantsPassword = update.oldPassword || update.newPassword;
     if (wantsPassword) {
-      if (!update.oldPassword) throw new Error('请输入旧密码');
-      if (!validPassword(update.newPassword ?? '')) throw new Error('新密码至少需要 6 位');
+      if (!update.oldPassword) throw new Error(t('auth.error.oldPasswordRequired'));
+      if (!validPassword(update.newPassword ?? '')) throw new Error(t('auth.error.newPasswordTooShort'));
       const ok = await verifyPassword(update.oldPassword, current.password);
-      if (!ok) throw new Error('旧密码不正确');
+      if (!ok) throw new Error(t('auth.error.oldPasswordWrong'));
       password = await hashPassword(update.newPassword ?? '');
     }
 

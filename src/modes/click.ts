@@ -4,11 +4,12 @@ import type { ClickOrderMode, ModeCtx, ModeController, ProgressSegment } from '.
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
 import { formatElapsedSeconds } from '../ui/format';
 import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
+import { t } from '../i18n';
 
 /** 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。 */
 export class ClickMode implements ModeController {
   id: Mode = 'click';
-  title = '点击模式';
+  title = t('mode.click.title');
   private green = new Set<string>();
   private red = new Set<string>();
   private question: string | null = null;
@@ -112,7 +113,7 @@ export class ClickMode implements ModeController {
 
   onUnitDblClick(adcode: string) {
     if (this.started) {
-      this.ctx.toast('测试期间无法下钻省份');
+      this.ctx.toast(t('common.underTestNoDrill'));
       return;
     }
     const u = this.ctx.byAdcode.get(adcode);
@@ -241,9 +242,9 @@ export class ClickMode implements ModeController {
   }
 
   private showStartHint() {
-    const scope = this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
-    const actions = '<button id="click-start" class="start-action">开始</button>';
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">点击模式</div><div class="start-subtitle">范围：${scope}，请按提示点击地图</div>${actions}</div>`);
+    const scope = this.scopeLabel();
+    const actions = `<button id="click-start" class="start-action">${t('common.start')}</button>`;
+    this.ctx.setHint(`<div class="start-panel"><div class="start-title">${t('click.startTitle')}</div><div class="start-subtitle">${t('click.startSubtitle', { scope })}</div>${actions}</div>`);
     window.setTimeout(() => {
       const start = document.getElementById('click-start') as HTMLButtonElement | null;
       if (start) start.onclick = () => this.start(false);
@@ -298,7 +299,7 @@ export class ClickMode implements ModeController {
     if (correct) {
       this.green.add(q);
       this.ok += 1;
-      this.ctx.toast('回答正确');
+      this.ctx.toast(t('click.correctToast'));
       this.results.push('green');
       this.ctx.renderer.flash(q);
     } else {
@@ -306,7 +307,7 @@ export class ClickMode implements ModeController {
       this.fail += 1;
       this.results.push('red');
       const name = this.ctx.byAdcode.get(q)?.name ?? q;
-      this.ctx.toast(`正确答案：${name}`);
+      this.ctx.toast(t('click.correctAnswer', { name }));
     }
     this.persist();
     const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
@@ -337,7 +338,7 @@ export class ClickMode implements ModeController {
       finishedAt: Date.now(),
     };
     this.ctx.showSummary(
-      `点击模式完成<div class="sum-stats">正确 <b>${this.ok}</b> ｜ 错误 <b>${this.fail}</b> ｜ 用时 ${formatElapsedSeconds(elapsedMs)} ｜ 覆盖 ${this.ok + this.fail} 个地图单位</div>`,
+      `${t('click.complete')}<div class="sum-stats">${t('click.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail })}</div>`,
       () => {
         this.clearSaved();
         this.enter();
@@ -380,7 +381,7 @@ export class ClickMode implements ModeController {
   }
 
   private scopeLabel() {
-    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? '当前省份' : '全国';
+    return this.scopeProvince ? this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
 }

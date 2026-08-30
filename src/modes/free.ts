@@ -1,10 +1,11 @@
 import type { Mode, UnitColor } from '../types';
 import type { ModeCtx, ModeController } from './types';
+import { t } from '../i18n';
 
 /** 熟练度分析：按累计答题分数只读着色，不响应输入或点击。 */
 export class FreeMode implements ModeController {
   id: Mode = 'free';
-  title = '熟练度分析';
+  title = t('mode.free.title');
   private unsubscribe: (() => void) | null = null;
 
   constructor(private ctx: ModeCtx) {}
