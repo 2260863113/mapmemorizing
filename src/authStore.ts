@@ -1,15 +1,9 @@
-import type { AuthUser, PasswordHash, UserAvatar, UserHometown } from './types';
+import type { UserAvatar, UserHometown, UserProfile } from './types';
 import { t } from './i18n';
+import { api, ApiError, type PasswordHashPayload } from './api';
 
-const AUTH_KEY = 'china-admin-auth-v1';
-const AUTH_VERSION = 1;
+const SESSION_KEY = 'china-admin-session-v1';
 const HASH_ITERATIONS = 120_000;
-
-interface AuthState {
-  version: number;
-  currentUsername: string | null;
-  users: Record<string, AuthUser>;
-}
 
 export interface ProfileUpdate {
   username: string;
@@ -19,12 +13,17 @@ export interface ProfileUpdate {
   newPassword?: string;
 }
 
+interface SessionState {
+  token: string;
+  user: UserProfile;
+}
+
 export class AuthStore {
-  private state: AuthState = { version: AUTH_VERSION, currentUsername: null, users: {} };
+  private session: SessionState | null = null;
   private listeners = new Set<() => void>();
 
   constructor() {
-    this.state = this.load();
+    this.session = this.load();
   }
 
   subscribe(fn: () => void): () => void {
@@ -32,169 +31,143 @@ export class AuthStore {
     return () => this.listeners.delete(fn);
   }
 
-  currentUser(): AuthUser | null {
-    const key = this.state.currentUsername;
-    return key ? this.state.users[key] ?? null : null;
+  /** 同步读缓存（启动时不阻塞、不白屏）。 */
+  currentUser(): UserProfile | null {
+    return this.session?.user ?? null;
   }
 
-  allUsers(): AuthUser[] {
-    return Object.values(this.state.users).sort((a, b) => a.createdAt - b.createdAt);
+  sessionToken(): string | null {
+    return this.session?.token ?? null;
   }
 
-  hasUsers(): boolean {
-    return Object.keys(this.state.users).length > 0;
-  }
-
-  async register(username: string, password: string): Promise<AuthUser> {
+  async register(username: string, password: string): Promise<UserProfile> {
     const cleaned = cleanUsername(username);
     if (!cleaned) throw new Error(t('auth.error.usernameRequired'));
     if (!validPassword(password)) throw new Error(t('auth.error.passwordTooShort'));
-    const key = usernameKey(cleaned);
-    if (this.state.users[key]) throw new Error(t('auth.error.usernameExists'));
-
-    const now = Date.now();
-    const user: AuthUser = {
-      username: cleaned,
-      password: await hashPassword(password),
-      hometown: null,
-      avatar: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.state.users[key] = user;
-    this.state.currentUsername = key;
+    const pwd = await hashPassword(password);
+    const res = await api.register({ username: cleaned, passwordHash: pwd });
+    this.session = { token: res.token, user: res.user };
     this.persist();
-    return user;
+    return res.user;
   }
 
-  async login(username: string, password: string): Promise<AuthUser> {
-    const key = usernameKey(username);
-    const user = this.state.users[key];
-    if (!user) throw new Error(t('auth.error.userNotFound'));
-    const ok = await verifyPassword(password, user.password);
-    if (!ok) throw new Error(t('auth.error.wrongPassword'));
-    this.state.currentUsername = key;
+  async login(username: string, password: string): Promise<UserProfile> {
+    const cleaned = cleanUsername(username);
+    if (!cleaned) throw new Error(t('auth.error.usernameRequired'));
+    let saltInfo: { salt: string; iterations: number };
+    try {
+      saltInfo = await api.salt(cleaned);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) throw new Error(t('auth.error.userNotFound'));
+      throw new Error(t('auth.error.network'));
+    }
+    const pwd = await hashWithSalt(password, saltInfo.salt, saltInfo.iterations);
+    let res;
+    try {
+      res = await api.login({ username: cleaned, passwordHash: pwd });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) throw new Error(t('auth.error.wrongPassword'));
+      throw new Error(t('auth.error.network'));
+    }
+    this.session = { token: res.token, user: res.user };
     this.persist();
-    return user;
+    return res.user;
   }
 
   logout() {
-    this.state.currentUsername = null;
+    const token = this.session?.token;
+    if (token) void api.logout(token).catch(() => {});
+    this.session = null;
     this.persist();
   }
 
-  async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
-    const currentKey = this.state.currentUsername;
-    const current = currentKey ? this.state.users[currentKey] : null;
-    if (!current || !currentKey) throw new Error(t('auth.error.loginRequired'));
+  /** 会话失效（401）时清空本地登录态。 */
+  clearSession() {
+    this.session = null;
+    this.persist();
+  }
+
+  /** 启动时后台校验已存会话；401 清除，网络错误静默保留缓存。 */
+  async restoreSession() {
+    if (!this.session) return;
+    const token = this.session.token;
+    try {
+      const res = await api.me(token);
+      this.session = { token, user: res.user };
+      this.persist();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) this.clearSession();
+      // 网络错误：保留缓存，待下一次请求再校验
+    }
+  }
+
+  async updateProfile(update: ProfileUpdate): Promise<UserProfile> {
+    const session = this.session;
+    if (!session) throw new Error(t('auth.error.loginRequired'));
 
     const username = cleanUsername(update.username);
     if (!username) throw new Error(t('auth.error.usernameRequired'));
-    const nextKey = usernameKey(username);
-    if (nextKey !== currentKey && this.state.users[nextKey]) throw new Error(t('auth.error.usernameExists'));
 
-    let password = current.password;
     const wantsPassword = update.oldPassword || update.newPassword;
+    let oldPasswordHash: PasswordHashPayload | null = null;
+    let newPasswordHash: PasswordHashPayload | null = null;
     if (wantsPassword) {
       if (!update.oldPassword) throw new Error(t('auth.error.oldPasswordRequired'));
       if (!validPassword(update.newPassword ?? '')) throw new Error(t('auth.error.newPasswordTooShort'));
-      const ok = await verifyPassword(update.oldPassword, current.password);
-      if (!ok) throw new Error(t('auth.error.oldPasswordWrong'));
-      password = await hashPassword(update.newPassword ?? '');
+      let saltInfo: { salt: string; iterations: number };
+      try {
+        saltInfo = await api.salt(username);
+      } catch {
+        throw new Error(t('auth.error.network'));
+      }
+      oldPasswordHash = await hashWithSalt(update.oldPassword, saltInfo.salt, saltInfo.iterations);
+      newPasswordHash = await hashPassword(update.newPassword ?? '');
     }
 
-    const next: AuthUser = {
-      ...current,
-      username,
-      password,
-      hometown: update.hometown,
-      avatar: update.avatar,
-      updatedAt: Date.now(),
-    };
+    let res;
+    try {
+      res = await api.updateProfile(session.token, {
+        username,
+        hometown: update.hometown,
+        avatar: update.avatar,
+        oldPasswordHash,
+        newPasswordHash,
+      });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === 'old_password_wrong') throw new Error(t('auth.error.oldPasswordWrong'));
+        if (err.code === 'username_exists') throw new Error(t('auth.error.usernameExists'));
+      }
+      throw new Error(t('auth.error.network'));
+    }
 
-    if (nextKey !== currentKey) delete this.state.users[currentKey];
-    this.state.users[nextKey] = next;
-    this.state.currentUsername = nextKey;
+    this.session = { token: session.token, user: res.user };
     this.persist();
-    return next;
+    return res.user;
   }
 
-  private load(): AuthState {
+  private load(): SessionState | null {
     try {
-      const raw = localStorage.getItem(AUTH_KEY);
-      if (!raw) return { version: AUTH_VERSION, currentUsername: null, users: {} };
-      const parsed = JSON.parse(raw) as Partial<AuthState>;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { version: AUTH_VERSION, currentUsername: null, users: {} };
-      const users: Record<string, AuthUser> = {};
-      const inputUsers = parsed.users && typeof parsed.users === 'object' && !Array.isArray(parsed.users) ? parsed.users : {};
-      for (const value of Object.values(inputUsers)) {
-        const user = normalizeUser(value);
-        if (!user) continue;
-        users[usernameKey(user.username)] = user;
-      }
-      const current = typeof parsed.currentUsername === 'string' ? usernameKey(parsed.currentUsername) : null;
-      return {
-        version: AUTH_VERSION,
-        currentUsername: current && users[current] ? current : null,
-        users,
-      };
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<SessionState>;
+      if (typeof parsed.token !== 'string' || !parsed.token) return null;
+      if (!parsed.user || typeof parsed.user.username !== 'string') return null;
+      return { token: parsed.token, user: parsed.user as UserProfile };
     } catch {
-      return { version: AUTH_VERSION, currentUsername: null, users: {} };
+      return null;
     }
   }
 
   private persist() {
     try {
-      localStorage.setItem(AUTH_KEY, JSON.stringify(this.state));
+      if (this.session) localStorage.setItem(SESSION_KEY, JSON.stringify(this.session));
+      else localStorage.removeItem(SESSION_KEY);
     } catch {
       /* 忽略存储失败 */
     }
     for (const fn of this.listeners) fn();
   }
-}
-
-function normalizeUser(value: unknown): AuthUser | null {
-  if (!value || typeof value !== 'object') return null;
-  const row = value as Partial<AuthUser>;
-  const username = cleanUsername(row.username);
-  const password = normalizePassword(row.password);
-  if (!username || !password) return null;
-  return {
-    username,
-    password,
-    hometown: normalizeHometown(row.hometown),
-    avatar: normalizeAvatar(row.avatar),
-    createdAt: finiteTime(row.createdAt),
-    updatedAt: finiteTime(row.updatedAt),
-  };
-}
-
-function normalizePassword(value: unknown): PasswordHash | null {
-  if (!value || typeof value !== 'object') return null;
-  const row = value as Partial<PasswordHash>;
-  if (row.algorithm !== 'PBKDF2-SHA-256') return null;
-  if (typeof row.salt !== 'string' || typeof row.hash !== 'string') return null;
-  const iterations = typeof row.iterations === 'number' && Number.isFinite(row.iterations) ? Math.floor(row.iterations) : HASH_ITERATIONS;
-  if (iterations < 1) return null;
-  return { algorithm: row.algorithm, salt: row.salt, hash: row.hash, iterations };
-}
-
-function normalizeHometown(value: unknown): UserHometown | null {
-  if (!value || typeof value !== 'object') return null;
-  const row = value as Partial<UserHometown>;
-  if (typeof row.provinceAdcode !== 'string' || typeof row.cityAdcode !== 'string') return null;
-  if (!/^\d{6}$/.test(row.provinceAdcode) || !/^\d{6}$/.test(row.cityAdcode)) return null;
-  return { provinceAdcode: row.provinceAdcode, cityAdcode: row.cityAdcode };
-}
-
-function normalizeAvatar(value: unknown): UserAvatar | null {
-  if (!value || typeof value !== 'object') return null;
-  const row = value as Partial<UserAvatar>;
-  if (typeof row.dataUrl !== 'string' || !row.dataUrl.startsWith('data:image/')) return null;
-  if (typeof row.name !== 'string' || typeof row.type !== 'string') return null;
-  const size = typeof row.size === 'number' && Number.isFinite(row.size) ? Math.floor(row.size) : 0;
-  if (size < 0 || size > 20 * 1024) return null;
-  return { dataUrl: row.dataUrl, name: row.name, size, type: row.type };
 }
 
 function cleanUsername(username: unknown): string {
@@ -209,31 +182,28 @@ function validPassword(password: string) {
   return password.length >= 6;
 }
 
-function finiteTime(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : Date.now();
-}
-
-async function hashPassword(password: string): Promise<PasswordHash> {
+/** 注册/改密：新随机 salt 的完整哈希。 */
+async function hashPassword(password: string): Promise<PasswordHashPayload> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey('raw', textBytes(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: HASH_ITERATIONS }, key, 256);
-  return {
-    algorithm: 'PBKDF2-SHA-256',
-    salt: bytesToBase64(salt),
-    hash: bytesToBase64(new Uint8Array(bits)),
-    iterations: HASH_ITERATIONS,
-  };
+  const hash = await derive(password, salt, HASH_ITERATIONS);
+  return { algorithm: 'PBKDF2-SHA-256', salt: bytesToBase64(salt), hash: bytesToBase64(new Uint8Array(hash)), iterations: HASH_ITERATIONS };
 }
 
-async function verifyPassword(password: string, stored: PasswordHash): Promise<boolean> {
-  const salt = base64ToBytes(stored.salt);
-  const key = await crypto.subtle.importKey('raw', textBytes(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: stored.iterations }, key, 256);
-  return bytesToBase64(new Uint8Array(bits)) === stored.hash;
+/** 登录/验证：用服务端给的 salt 重算哈希。 */
+async function hashWithSalt(password: string, saltB64: string, iterations: number): Promise<PasswordHashPayload> {
+  const salt = base64ToBytes(saltB64);
+  const hash = await derive(password, salt, iterations);
+  return { algorithm: 'PBKDF2-SHA-256', salt: saltB64, hash: bytesToBase64(new Uint8Array(hash)), iterations };
 }
 
-function textBytes(value: string) {
-  return new TextEncoder().encode(value);
+async function derive(password: string, salt: Uint8Array<ArrayBuffer>, iterations: number): Promise<ArrayBuffer> {
+  const key = await crypto.subtle.importKey('raw', textBytes(password), 'PBKDF2', false, ['deriveBits']);
+  return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, 256);
+}
+
+function textBytes(value: string): Uint8Array<ArrayBuffer> {
+  const bytes = new TextEncoder().encode(value);
+  return bytes as Uint8Array<ArrayBuffer>;
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -248,3 +218,6 @@ function base64ToBytes(value: string) {
   for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
   return out;
 }
+
+// 保留导出供潜在兼容（内部不再使用 usernameKey，但类型面保持一致）
+export { usernameKey };

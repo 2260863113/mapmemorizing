@@ -2,17 +2,30 @@ import { LeaderboardStore, type LeaderboardEntry, type LeaderboardMode } from '.
 import { formatElapsedCentiseconds } from './format';
 import { t } from '../i18n';
 
-/** 侧栏：按当前测试模式和范围展示本机排行榜。 */
+/** 侧栏：按当前测试模式和范围展示云端共享排行榜。 */
 export class LeaderboardPanel {
   private el: HTMLElement;
+  private renderSeq = 0; // 过期渲染守卫：快速连续调用时丢弃旧结果
 
   constructor(containerId: string, private store: LeaderboardStore) {
     this.el = document.getElementById(containerId) as HTMLElement;
   }
 
-  refresh(mode: LeaderboardMode, scopeProvince: string | null, scopeLabel: string) {
-    const rows = this.store.list(mode, scopeProvince).slice(0, 10);
+  async refresh(mode: LeaderboardMode, scopeProvince: string | null, scopeLabel: string) {
+    const seq = ++this.renderSeq;
     const title = t('leaderboard.title', { mode: modeLabel(mode), scope: scopeLabel });
+    let rows: LeaderboardEntry[];
+    try {
+      rows = await this.store.ensure(mode, scopeProvince);
+    } catch {
+      if (seq === this.renderSeq) this.renderError(title);
+      return;
+    }
+    if (seq !== this.renderSeq) return; // 已过期，丢弃
+    this.render(title, rows.slice(0, 10), scopeProvince);
+  }
+
+  private render(title: string, rows: LeaderboardEntry[], scopeProvince: string | null) {
     if (!rows.length) {
       this.el.innerHTML = `<div class="leaderboard-title">${escapeHtml(title)}</div><div class="leaderboard-empty">${t('leaderboard.empty')}</div>`;
       return;
@@ -24,6 +37,10 @@ export class LeaderboardPanel {
         return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${escapeHtml(entry.username)}</span><span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
       })
       .join('')}</div>`;
+  }
+
+  private renderError(title: string) {
+    this.el.innerHTML = `<div class="leaderboard-title">${escapeHtml(title)}</div><div class="leaderboard-empty">${t('leaderboard.loadFailed')}</div>`;
   }
 }
 

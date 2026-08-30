@@ -105,6 +105,15 @@ export interface AuthUser {
   updatedAt: number;
 }
 
+/** 云端返回的公开用户信息（不含密码哈希）。 */
+export interface UserProfile {
+  username: string;
+  hometown: UserHometown | null;
+  avatar: UserAvatar | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** 无尽闯关金币层：金币着色 + 中心标签（金币数或收集后的地名） */
 export interface CoinLayer {
   coins: (adcode: string) => number; // 当前金币数（0 = 已收集 / 无金币）

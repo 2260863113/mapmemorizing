@@ -12,13 +12,14 @@ import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary, showSettlement, hideSettlement } from './ui/dom';
 import { formatElapsedCentiseconds } from './ui/format';
+import { ApiError } from './api';
 import { t } from './i18n';
 import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
-import type { AuthUser, Mode, RoundResult, Settings, Unit } from './types';
+import type { Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
 const SIDE_PANEL_KEY = 'china-admin-leaderboard-panel-v2';
@@ -74,6 +75,7 @@ async function boot() {
   search.setRequireEnter(settings.requireEnter);
   const stats = new StatsPanel('stats', data, store);
   const authStore = new AuthStore();
+  void authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
   const authPanel = new AuthPanel(authStore, data);
   const leaderboardStore = new LeaderboardStore();
   const leaderboard = new LeaderboardPanel('leaderboard', leaderboardStore);
@@ -325,7 +327,7 @@ async function boot() {
       toast(t('main.loginFirst'));
       return;
     }
-    submitLeaderboard(result, user);
+    submitLeaderboard(result);
     onDone?.();
   }
 
@@ -339,20 +341,30 @@ async function boot() {
       toast(rejectToast(result));
       return;
     }
-    const user = authStore.currentUser();
-    if (!user) return;
-    submitLeaderboard(result, user);
+    if (!authStore.currentUser()) return;
+    submitLeaderboard(result);
     onDone?.();
   }
 
-  function submitLeaderboard(result: RoundResult, user: AuthUser) {
-    const status = leaderboardStore.submit(result, user);
-    refreshSidePanel();
-    if (status === 'kept') {
-      toast(t('main.keptScore'));
-      return;
-    }
-    toast(t('main.submitted'));
+  /** 云端提交成绩：内部异步，对外仍同步返回（onDone 时序不变，回合立刻重置，提交在后台进行）。 */
+  function submitLeaderboard(result: RoundResult) {
+    const token = authStore.sessionToken();
+    if (!token) return;
+    void (async () => {
+      try {
+        const status = await leaderboardStore.submit(result, token);
+        void refreshSidePanel();
+        toast(status === 'kept' ? t('main.keptScore') : t('main.submitted'));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          authStore.clearSession();
+          toast(t('main.loginExpired'));
+          return;
+        }
+        console.error(err);
+        toast(t('main.submitFailed'));
+      }
+    })();
   }
 
   /** 无法提交时的提示文案（按模式区分）。 */
@@ -367,14 +379,14 @@ async function boot() {
     return result.totalUnits > 0 && result.correct + result.wrong === result.totalUnits && result.correct === result.totalUnits && result.wrong === 0;
   }
 
-  function refreshSidePanel() {
+  function refreshSidePanel(): Promise<void> {
     if (current?.id === 'free') {
       stats.refresh(renderer.currentProvince());
-      return;
+      return Promise.resolve();
     }
-    if (!isLeaderboardMode(current?.id)) return;
+    if (!isLeaderboardMode(current?.id)) return Promise.resolve();
     const scopeProvince = current.getScopeProvince?.() ?? null;
-    leaderboard.refresh(current.id, scopeProvince, scopeLabel(scopeProvince));
+    return leaderboard.refresh(current.id, scopeProvince, scopeLabel(scopeProvince));
   }
 
   function scopeLabel(scopeProvince: string | null) {
