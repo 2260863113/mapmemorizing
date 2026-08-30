@@ -103,6 +103,8 @@ export class EndlessMode implements ModeController {
     this.paused = false;
     this.countdown.resume();
     endlessStatus(this.statusHtml());
+    // 暂停期间透视药水可能已到期：revealAllNames 已复位但地图未重绘，恢复时刷新
+    this.refresh();
   }
 
   isPaused() {

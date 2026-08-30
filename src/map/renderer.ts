@@ -550,8 +550,10 @@ export class MapRenderer {
           tooltip: { show: false },
           renderItem: (_params, api) => {
             const value = [api.value(0), api.value(1)] as [number, number];
+            // ECharts custom series 会把 value 数组中的字符串数字转成 number，
+            // 这里统一转字符串，保证价格/地名都能显示。
             const rawText = api.value(2);
-            const name = typeof rawText === 'string' ? rawText : '';
+            const name = rawText == null ? '' : String(rawText);
             const color = String(api.value(3));
             const isPrice = Number(api.value(4)) === 1;
             const noBg = Number(api.value(5)) === 1;
@@ -563,7 +565,7 @@ export class MapRenderer {
             const scale = labelScale(this.zoom);
             const fontSize = (isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
             const font = `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
-            // 隐藏衬底的价格：白色填充 + 黑色描边，无背景矩形
+            // 隐藏衬底的价格：无背景矩形，白色文字 + 细黑描边（固定 1-2px），不随字号变粗
             if (isPrice && noBg) {
               return {
                 type: 'group',
@@ -576,7 +578,7 @@ export class MapRenderer {
                       text: name,
                       fill: '#ffffff',
                       textBorderColor: '#000000',
-                      textBorderWidth: Math.max(2, fontSize * 0.14),
+                      textBorderWidth: 1.5,
                       font,
                       align: 'center',
                       verticalAlign: 'middle',
