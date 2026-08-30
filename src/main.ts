@@ -10,14 +10,15 @@ import { AuthPanel } from './ui/authPanel';
 import { LeaderboardPanel } from './ui/leaderboardPanel';
 import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
-import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary } from './ui/dom';
+import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary, showSettlement, hideSettlement } from './ui/dom';
+import { formatElapsedCentiseconds } from './ui/format';
 import { FreeMode } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
 import type { AuthUser, Mode, RoundResult, Settings, Unit } from './types';
-import type { ModeCtx, ModeController } from './modes/types';
+import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
 const SIDE_PANEL_KEY = 'china-admin-leaderboard-panel-v2';
 const SIDE_PANEL_MIN_WIDTH = 240;
@@ -31,7 +32,7 @@ function applyTheme(darkMode: boolean) {
 function loadSidePanelOpen() {
   try {
     const raw = localStorage.getItem(SIDE_PANEL_KEY);
-    if (!raw) return false;
+    if (!raw) return true; // 首次进入默认打开排行榜侧边栏
     return JSON.parse(raw)?.open !== false;
   } catch {
     return true;
@@ -131,11 +132,12 @@ async function boot() {
   };
 
   const selfMode = new SelfTestMode(ctx);
+  const clickMode = new ClickMode(ctx);
   const modes: Record<Mode, ModeController> = {
     free: new FreeMode(ctx),
     self: selfMode,
     endless: new EndlessMode(ctx),
-    click: new ClickMode(ctx),
+    click: clickMode,
     memory: new MemoryMode(ctx),
   };
 
@@ -208,7 +210,7 @@ async function boot() {
     const mode = current?.id;
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
-    const showLeaderboard = mode === 'self' || mode === 'click'; // 无尽闯关不参与排行榜
+    const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
     if (!isTest) {
       showTimer(null);
       showStopwatch(null);
@@ -239,7 +241,9 @@ async function boot() {
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self');
-    syncSelfOrderToggle();
+    $('click-order-toggle').classList.toggle('hidden', mode !== 'click');
+    syncSegmentedToggle('self-order-toggle', selfMode.getOrderMode());
+    syncSegmentedToggle('click-order-toggle', clickMode.getOrderMode());
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? '重置熟练度' : '重置';
     syncViewChrome();
   }
@@ -248,10 +252,9 @@ async function boot() {
     $('zoom-pill').textContent = `${zoomDisplay.toFixed(2)}x`;
   }
 
-  function syncSelfOrderToggle() {
-    const mode = selfMode.getOrderMode();
-    document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {
-      const active = btn.dataset.order === mode;
+  function syncSegmentedToggle(containerId: string, current: string) {
+    document.querySelectorAll<HTMLButtonElement>(`#${containerId} button`).forEach((btn) => {
+      const active = btn.dataset.order === current;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-checked', String(active));
     });
@@ -305,33 +308,40 @@ async function boot() {
     $('hover-stats').classList.add('hidden');
   }
 
-  function submitRoundResult(result: RoundResult) {
+  let pendingLeaderboardOnDone: (() => void) | null = null;
+
+  function submitRoundResult(result: RoundResult, onDone?: () => void) {
     hideSummary();
     if (!canSubmit(result)) {
-      toast('需要全部答对才可提交成绩');
+      toast(rejectToast(result));
       return;
     }
     const user = authStore.currentUser();
     if (!user) {
       pendingLeaderboardResult = result;
+      pendingLeaderboardOnDone = onDone ?? null;
       authPanel.requestLogin(() => submitPendingLeaderboard());
       toast('请先登录，登录后将自动提交');
       return;
     }
     submitLeaderboard(result, user);
+    onDone?.();
   }
 
   function submitPendingLeaderboard() {
     const result = pendingLeaderboardResult;
     pendingLeaderboardResult = null;
+    const onDone = pendingLeaderboardOnDone;
+    pendingLeaderboardOnDone = null;
     if (!result) return;
     if (!canSubmit(result)) {
-      toast('需要全部答对才可提交成绩');
+      toast(rejectToast(result));
       return;
     }
     const user = authStore.currentUser();
     if (!user) return;
     submitLeaderboard(result, user);
+    onDone?.();
   }
 
   function submitLeaderboard(result: RoundResult, user: AuthUser) {
@@ -344,7 +354,15 @@ async function boot() {
     toast('成绩已提交');
   }
 
+  /** 无法提交时的提示文案（按模式区分）。 */
+  function rejectToast(result: RoundResult) {
+    return result.mode === 'endless' ? '尚未收集金币，无法提交成绩' : '需要全部答对才可提交成绩';
+  }
+
+  /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
   function canSubmit(result: RoundResult) {
+    if (result.mode === 'endless') return typeof result.coins === 'number' && result.coins > 0;
+    if (result.scopeProvince === null) return result.correct > 0 && result.wrong === 0;
     return result.totalUnits > 0 && result.correct + result.wrong === result.totalUnits && result.correct === result.totalUnits && result.wrong === 0;
   }
 
@@ -363,7 +381,7 @@ async function boot() {
   }
 
   function isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
-    return mode === 'self' || mode === 'click';
+    return mode === 'self' || mode === 'click' || mode === 'endless';
   }
 
   let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean; wasOpen: boolean } | null = null;
@@ -476,9 +494,16 @@ async function boot() {
 
   document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const mode = btn.dataset.order === 'random' ? 'random' : 'sequential';
+      const mode = btn.dataset.order as OrderMode;
       selfMode.setOrderMode(mode);
-      syncSelfOrderToggle();
+      syncSegmentedToggle('self-order-toggle', mode);
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>('#click-order-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.order as ClickOrderMode;
+      clickMode.setOrderMode(mode);
+      syncSegmentedToggle('click-order-toggle', mode);
     });
   });
 
@@ -525,6 +550,11 @@ async function boot() {
         toast('已重置熟练度');
         return;
       }
+      const mode = current?.id;
+      if ((mode === 'self' || mode === 'click') && current?.getScopeProvince?.() === null && current.isStarted?.()) {
+        showSettlementCard();
+        return;
+      }
       if (current?.onReset) {
         current.onReset();
         updateProgress();
@@ -532,6 +562,49 @@ async function boot() {
       }
     });
   });
+
+  function showSettlementCard() {
+    const mode = current?.id;
+    if (mode !== 'self' && mode !== 'click') return;
+    const active = current as ModeController;
+    active.pause?.();
+    const result = active.collectResult?.() ?? null;
+    if (!result) {
+      doReset();
+      return;
+    }
+    const scopeText = '全国';
+    showSettlement(
+      `<div style="text-align:center;line-height:1.8;">全国排行榜结算<div class="sum-stats">正确 <b>${result.correct}</b> ｜ 错误 <b>${result.wrong}</b> ｜ 覆盖 ${result.correct + result.wrong}/${result.totalUnits} ｜ 用时 ${formatElapsedCentiseconds(result.elapsedMs)}</div><div class="sum-stats">全国排行榜按答对题数排名，提交后将重置本局</div></div>`,
+      () => submitSettlement(result),
+      () => closeSettlement(),
+    );
+  }
+
+  function submitSettlement(result: RoundResult) {
+    if (!canSubmit(result)) {
+      toast(rejectToast(result));
+      return;
+    }
+    submitRoundResult(result, () => {
+      hideSettlement();
+      doReset();
+    });
+  }
+
+  function closeSettlement() {
+    hideSettlement();
+    doReset();
+  }
+
+  function doReset() {
+    if (current?.isPaused?.()) hidePauseOverlay();
+    if (current?.onReset) {
+      current.onReset();
+      updateProgress();
+      syncPauseOverlay();
+    }
+  }
 
   // 搜索框接线（无下拉联想）
   search.onSubmit((v) => current?.onSubmit(v));

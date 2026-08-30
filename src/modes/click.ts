@@ -1,8 +1,9 @@
 import type { Mode, RoundResult, Unit } from '../types';
 import { Stopwatch } from '../ui/stopwatch';
-import type { ModeCtx, ModeController, ProgressSegment } from './types';
+import type { ClickOrderMode, ModeCtx, ModeController, ProgressSegment } from './types';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
 import { formatElapsedSeconds } from '../ui/format';
+import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
 
 /** 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。 */
 export class ClickMode implements ModeController {
@@ -21,6 +22,8 @@ export class ClickMode implements ModeController {
   private paused = false;
   private scopeLoaded = false;
   private syncingScope = false;
+  private orderMode: ClickOrderMode = this.loadOrderMode();
+  private wrongOrder: WrongOrderState = initWrongOrderState([], () => 0);
 
   constructor(private ctx: ModeCtx) {}
 
@@ -147,6 +150,36 @@ export class ClickMode implements ModeController {
     return 'china-admin-mode-scope:click';
   }
 
+  setOrderMode(mode: ClickOrderMode) {
+    this.orderMode = mode;
+    this.persistOrderMode();
+  }
+
+  getOrderMode(): ClickOrderMode {
+    return this.orderMode;
+  }
+
+  private orderModeStorageKey() {
+    return 'china-admin-mode-order:click';
+  }
+
+  private loadOrderMode(): ClickOrderMode {
+    try {
+      const raw = localStorage.getItem(this.orderModeStorageKey());
+      return raw === 'wrong' ? 'wrong' : 'random';
+    } catch {
+      return 'random';
+    }
+  }
+
+  private persistOrderMode() {
+    try {
+      localStorage.setItem(this.orderModeStorageKey(), this.orderMode);
+    } catch {
+      /* 忽略存储失败 */
+    }
+  }
+
   private ensureScopeProvince() {
     if (this.scopeLoaded) return;
     const saved = loadScopeProvince(this.ctx.data, this.scopeStorageKey());
@@ -182,6 +215,7 @@ export class ClickMode implements ModeController {
     this.results = [];
     this.ok = 0;
     this.fail = 0;
+    this.wrongOrder = initWrongOrderState(scopedUnits(this.ctx.data, this.scopeProvince), this.scoreOf);
     const saved = loadProgress(this.storageKey(), this.order);
     this.green = saved.green;
     this.red = saved.red;
@@ -189,6 +223,7 @@ export class ClickMode implements ModeController {
     this.question = saved.question;
     this.ok = this.green.size;
     this.fail = this.red.size;
+    this.wrongOrder.toastShown = saved.record.wrongToastShown === true;
   }
 
   private persist() {
@@ -197,7 +232,7 @@ export class ClickMode implements ModeController {
       red: this.red,
       results: this.results,
       question: this.question,
-    }, { scopeProvince: this.scopeProvince });
+    }, { scopeProvince: this.scopeProvince, wrongToastShown: this.wrongOrder.toastShown });
     this.ctx.updateProgress();
   }
 
@@ -229,10 +264,11 @@ export class ClickMode implements ModeController {
       this.results = [];
       this.ok = 0;
       this.fail = 0;
+      this.wrongOrder = initWrongOrderState(scopedUnits(this.ctx.data, this.scopeProvince), this.scoreOf);
     }
     const resumed = this.question ? this.ctx.byAdcode.get(this.question) ?? null : null;
     const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
-    const first = resumed ?? (pool.length ? this.ctx.randomUnit(pool) : null);
+    const first = resumed ?? (pool.length ? this.chooseFirst(pool) : null);
     if (!first) {
       this.finish();
       return;
@@ -279,7 +315,7 @@ export class ClickMode implements ModeController {
       this.finish();
       return;
     }
-    this.ask(this.ctx.randomUnit(pool));
+    this.ask(this.nextUnit(pool));
   }
 
   private finish() {
@@ -312,6 +348,35 @@ export class ClickMode implements ModeController {
 
   getScopeProvince() {
     return this.scopeProvince;
+  }
+
+  /** 首题选择：错题模式按分数最低，其余随机。 */
+  private chooseFirst(pool: Unit[]): Unit {
+    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, this.wrongOrder, this.ctx.toast);
+    return this.ctx.randomUnit(pool);
+  }
+
+  /** 后续选题：按当前出题顺序分发。 */
+  private nextUnit(pool: Unit[]): Unit {
+    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, this.wrongOrder, this.ctx.toast);
+    return this.ctx.randomUnit(pool);
+  }
+
+  private scoreOf = (u: Unit) => this.ctx.store.getPractice(u.adcode).score;
+
+  /** 快照当前会话结果（全国排行榜结算卡片用）。 */
+  collectResult(): RoundResult | null {
+    if (!this.started && !this.question && this.green.size === 0 && this.red.size === 0) return null;
+    return {
+      mode: 'click',
+      scopeProvince: this.scopeProvince,
+      scopeLabel: this.scopeLabel(),
+      totalUnits: this.order.length,
+      correct: this.ok,
+      wrong: this.fail,
+      elapsedMs: this.stopwatch.elapsedMs(),
+      finishedAt: Date.now(),
+    };
   }
 
   private scopeLabel() {

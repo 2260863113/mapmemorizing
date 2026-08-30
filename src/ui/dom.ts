@@ -66,6 +66,18 @@ export function hideSummary() {
   $('summary').classList.add('hidden');
 }
 
+/** 全国排行榜结算卡片：显示结算内容，提供「提交成绩」「关闭」两个选项。 */
+export function showSettlement(html: string, onSubmit: () => void, onClose: () => void) {
+  $('settlement-body').innerHTML = html;
+  ($('settlement-submit') as HTMLButtonElement).onclick = onSubmit;
+  ($('settlement-close') as HTMLButtonElement).onclick = onClose;
+  $('settlement').classList.remove('hidden');
+}
+
+export function hideSettlement() {
+  $('settlement').classList.add('hidden');
+}
+
 /** 无尽闯关顶部进度卡片（空字符串时隐藏）。 */
 export function endlessStatus(html: string) {
   const el = $('endless-status');

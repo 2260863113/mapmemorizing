@@ -26,6 +26,11 @@ export interface ModeCtx {
 
 export type ProgressSegment = 'pending' | 'green' | 'red';
 
+/** 测试模式出题顺序：输入模式支持 顺序/随机/错题。 */
+export type OrderMode = 'sequential' | 'random' | 'wrong';
+/** 点击模式出题顺序：仅 随机/错题（无顺序）。 */
+export type ClickOrderMode = Exclude<OrderMode, 'sequential'>;
+
 export interface ModeProgress {
   total: number;
   segments: ProgressSegment[];
@@ -52,6 +57,8 @@ export interface ModeController {
   isPaused?(): boolean;
   getProgress?(): ModeProgress | null;
   getScopeProvince?(): string | null;
+  /** 快照当前会话结果（结算卡片用），未开始返回 null */
+  collectResult?(): RoundResult | null;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
   /** 模式会话是否已经开始（地图空白返回确认用） */

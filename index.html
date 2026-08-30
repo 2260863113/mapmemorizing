@@ -36,6 +36,11 @@
         <div id="self-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="输入模式出题顺序">
           <button id="self-order-sequential" type="button" class="active" data-order="sequential" role="radio" aria-checked="true">顺序</button>
           <button id="self-order-random" type="button" data-order="random" role="radio" aria-checked="false">随机</button>
+          <button id="self-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
+        </div>
+        <div id="click-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="点击模式出题顺序">
+          <button id="click-order-random" type="button" class="active" data-order="random" role="radio" aria-checked="true">随机</button>
+          <button id="click-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
         </div>
       </div>
       <div id="search-row">
@@ -79,6 +84,16 @@
         <button id="summary-submit" class="primary hidden" type="button">提交成绩</button>
         <button id="summary-restart" class="primary" type="button">再来一轮</button>
         <button id="summary-close" class="ghost" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settlement" class="overlay hidden">
+    <div class="card">
+      <div id="settlement-body"></div>
+      <div class="card-actions">
+        <button id="settlement-submit" class="primary" type="button">提交成绩</button>
+        <button id="settlement-close" class="ghost" type="button">关闭</button>
       </div>
     </div>
   </div>

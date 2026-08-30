@@ -63,7 +63,7 @@ export interface Settings {
 }
 
 export interface RoundResult {
-  mode: Extract<Mode, 'self' | 'click'>;
+  mode: Extract<Mode, 'self' | 'click' | 'endless'>;
   scopeProvince: string | null;
   scopeLabel: string;
   totalUnits: number;
@@ -71,6 +71,10 @@ export interface RoundResult {
   wrong: number;
   elapsedMs: number;
   finishedAt: number;
+  /** 无尽闯关：累计收集金币（排行榜按此排序） */
+  coins?: number;
+  /** 无尽闯关：到达的关卡 */
+  level?: number;
 }
 
 export interface UserHometown {

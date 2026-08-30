@@ -4,7 +4,7 @@ const LEADERBOARD_KEY = 'china-admin-leaderboard-v1';
 const LEADERBOARD_VERSION = 1;
 const MAX_GROUP_ROWS = 50;
 
-export type LeaderboardMode = Extract<Mode, 'self' | 'click'>;
+export type LeaderboardMode = Extract<Mode, 'self' | 'click' | 'endless'>;
 
 export interface LeaderboardEntry {
   id: string;
@@ -13,8 +13,13 @@ export interface LeaderboardEntry {
   scopeProvince: string | null;
   scopeLabel: string;
   totalUnits: number;
+  correct: number;
   elapsedMs: number;
   submittedAt: number;
+  /** 无尽闯关：累计收集金币 */
+  coins?: number;
+  /** 无尽闯关：到达关卡 */
+  level?: number;
 }
 
 interface LeaderboardState {
@@ -39,7 +44,7 @@ export class LeaderboardStore {
       (entry) => entry.mode === mode && sameScope(entry.scopeProvince, scopeProvince) && sameUser(entry.username, username),
     );
 
-    if (existingIndex >= 0 && this.state.entries[existingIndex].elapsedMs <= result.elapsedMs) return 'kept';
+    if (existingIndex >= 0 && !isBetter(result, this.state.entries[existingIndex])) return 'kept';
 
     const entry: LeaderboardEntry = {
       id: `${mode}:${scopeProvince ?? 'nation'}:${userKey(username)}:${result.finishedAt}`,
@@ -48,8 +53,11 @@ export class LeaderboardStore {
       scopeProvince,
       scopeLabel: result.scopeLabel,
       totalUnits: result.totalUnits,
+      correct: result.correct,
       elapsedMs: Math.max(0, Math.round(result.elapsedMs)),
       submittedAt: result.finishedAt,
+      coins: result.coins,
+      level: result.level,
     };
 
     if (existingIndex >= 0) {
@@ -106,11 +114,17 @@ export class LeaderboardStore {
 function normalizeEntry(value: unknown): LeaderboardEntry | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Partial<LeaderboardEntry>;
-  if (row.mode !== 'self' && row.mode !== 'click') return null;
+  if (row.mode !== 'self' && row.mode !== 'click' && row.mode !== 'endless') return null;
   if (typeof row.username !== 'string' || !row.username.trim()) return null;
   if (row.scopeProvince !== null && typeof row.scopeProvince !== 'string') return null;
   if (typeof row.scopeLabel !== 'string' || !row.scopeLabel.trim()) return null;
   if (!finitePositive(row.totalUnits) || !finitePositive(row.elapsedMs) || !finitePositive(row.submittedAt)) return null;
+  // 旧数据没有 correct：旧 self/click 条目都是全对提交，correct 回退为 totalUnits
+  const correct = finitePositive(row.correct)
+    ? Math.floor(row.correct)
+    : row.mode === 'endless'
+      ? 0
+      : Math.floor(row.totalUnits);
   return {
     id: typeof row.id === 'string' && row.id ? row.id : `${row.mode}:${row.scopeProvince ?? 'nation'}:${userKey(row.username)}:${row.submittedAt}`,
     username: row.username.slice(0, 24),
@@ -118,12 +132,34 @@ function normalizeEntry(value: unknown): LeaderboardEntry | null {
     scopeProvince: row.scopeProvince,
     scopeLabel: row.scopeLabel,
     totalUnits: Math.floor(row.totalUnits),
+    correct,
     elapsedMs: Math.round(row.elapsedMs),
     submittedAt: Math.floor(row.submittedAt),
+    coins: row.mode === 'endless' && finitePositive(row.coins) ? Math.floor(row.coins) : undefined,
+    level: row.mode === 'endless' && finitePositive(row.level) ? Math.floor(row.level) : undefined,
   };
 }
 
+/** 新成绩是否比已有成绩更优：endless 按金币/关卡，全国按答对题数，省级按用时。 */
+function isBetter(next: RoundResult, existing: LeaderboardEntry) {
+  if (next.mode === 'endless') {
+    const nextCoins = next.coins ?? 0;
+    const existingCoins = existing.coins ?? 0;
+    return nextCoins > existingCoins || (nextCoins === existingCoins && (next.level ?? 1) > (existing.level ?? 1));
+  }
+  if (existing.scopeProvince === null) {
+    return next.correct > existing.correct || (next.correct === existing.correct && next.elapsedMs < existing.elapsedMs);
+  }
+  return next.elapsedMs < existing.elapsedMs;
+}
+
 function compareEntry(a: LeaderboardEntry, b: LeaderboardEntry) {
+  if (a.mode === 'endless') {
+    return (b.coins ?? 0) - (a.coins ?? 0) || (b.level ?? 1) - (a.level ?? 1) || a.submittedAt - b.submittedAt || a.username.localeCompare(b.username, 'zh-CN');
+  }
+  if (a.scopeProvince === null) {
+    return b.correct - a.correct || a.elapsedMs - b.elapsedMs || a.submittedAt - b.submittedAt || a.username.localeCompare(b.username, 'zh-CN');
+  }
   return a.elapsedMs - b.elapsedMs || a.submittedAt - b.submittedAt || a.username.localeCompare(b.username, 'zh-CN');
 }
 

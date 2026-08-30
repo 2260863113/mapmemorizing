@@ -426,7 +426,7 @@ body.theme-dark .mode-action:hover { background: rgba(30,41,59,0.58); }
   background: rgba(255,255,255,0.38);
 }
 .mode-segmented button.active {
-  background: linear-gradient(180deg, rgba(75, 85, 99, 0.58), rgba(31, 41, 55, 0.42));
+  background: linear-gradient(180deg, rgba(55, 65, 81, 0.82), rgba(17, 24, 39, 0.7));
   color: #fff;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 0 0 1px rgba(255,255,255,0.12);
   backdrop-filter: blur(12px) saturate(150%);
@@ -435,7 +435,7 @@ body.theme-dark .mode-segmented button:hover {
   background: rgba(30,41,59,0.58);
 }
 body.theme-dark .mode-segmented button.active {
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.48), rgba(51, 65, 85, 0.36));
+  background: linear-gradient(180deg, rgba(71, 85, 105, 0.7), rgba(30, 41, 59, 0.55));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
 }
 .mode-action.danger-hover:hover,
@@ -773,6 +773,11 @@ body.theme-dark #side-panel::before {
   opacity: 1;
   transform: translateX(0);
   transition: opacity 0.16s ease, transform 0.24s ease, visibility 0.24s ease;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#side-panel-content::-webkit-scrollbar {
+  display: none;
 }
 #side-panel.collapsed {
   width: 0;

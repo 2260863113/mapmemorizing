@@ -1,4 +1,4 @@
-import type { Mode, Unit } from '../types';
+import type { Mode, RoundResult, Unit } from '../types';
 import type { ModeCtx, ModeController } from './types';
 import { Countdown } from '../ui/countdown';
 import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
@@ -513,9 +513,22 @@ export class EndlessMode implements ModeController {
     this.switching = false;
     this.ctx.updateProgress();
     const elapsedMs = this.runStartAt ? Date.now() - this.runStartAt : 0;
+    const result: RoundResult = {
+      mode: 'endless',
+      scopeProvince: null,
+      scopeLabel: '全国',
+      totalUnits: 0,
+      correct: 0,
+      wrong: 0,
+      elapsedMs,
+      finishedAt: Date.now(),
+      coins: this.totalCoins,
+      level: this.level,
+    };
     this.ctx.showSummary(
       `闯关结束<div class="sum-stats">到达第 <b>${this.level}</b> 关 ｜ 累计金币 <b>${fmt(this.totalCoins)}￥</b> ｜ 收集 <b>${this.totalCollects}</b> 次 ｜ 用时 ${formatElapsedSeconds(elapsedMs)}</div>`,
       () => this.enter(),
+      result,
     );
     this.showStartHint();
     endlessStatus('');

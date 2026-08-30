@@ -1,10 +1,11 @@
 import type { Mode, RoundResult, Unit } from '../types';
-import type { ModeCtx, ModeController, ProgressSegment } from './types';
+import type { ModeCtx, ModeController, OrderMode, ProgressSegment } from './types';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView, unvisitedUnits } from './progress';
 import { formatElapsedSeconds } from '../ui/format';
+import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
 
-type SelfOrderMode = 'sequential' | 'random';
+type SelfOrderMode = OrderMode;
 
 /**
  * 自测模式（BFS 扩张）：
@@ -30,6 +31,7 @@ export class SelfTestMode implements ModeController {
   private stopwatch = new Stopwatch();
   private paused = false;
   private orderMode: SelfOrderMode = this.loadOrderMode();
+  private wrongOrder: WrongOrderState = initWrongOrderState([], () => 0);
 
   constructor(private ctx: ModeCtx) {}
 
@@ -193,7 +195,7 @@ export class SelfTestMode implements ModeController {
   private loadOrderMode(): SelfOrderMode {
     try {
       const raw = localStorage.getItem(this.orderModeStorageKey());
-      return raw === 'random' ? 'random' : 'sequential';
+      return raw === 'random' || raw === 'wrong' ? raw : 'sequential';
     } catch {
       return 'sequential';
     }
@@ -246,6 +248,7 @@ export class SelfTestMode implements ModeController {
     this.activeProvince = typeof saved.record.activeProvince === 'string' ? saved.record.activeProvince : this.scopeProvince;
     this.ok = this.green.size;
     this.fail = this.red.size;
+    this.wrongOrder.toastShown = saved.record.wrongToastShown === true;
   }
 
   private persist() {
@@ -254,7 +257,7 @@ export class SelfTestMode implements ModeController {
       red: this.red,
       results: this.results,
       question: this.question,
-    }, { lastGreen: this.lastGreen, activeProvince: this.activeProvince });
+    }, { lastGreen: this.lastGreen, activeProvince: this.activeProvince, wrongToastShown: this.wrongOrder.toastShown });
     this.ctx.updateProgress();
   }
 
@@ -271,6 +274,7 @@ export class SelfTestMode implements ModeController {
     this.ok = 0;
     this.fail = 0;
     this.results = [];
+    this.wrongOrder = initWrongOrderState(scopedUnits(this.ctx.data, this.scopeProvince), this.scoreOf);
   }
 
   private showStartHint() {
@@ -298,7 +302,7 @@ export class SelfTestMode implements ModeController {
 
     const resumed = this.question ? this.ctx.byAdcode.get(this.question) ?? null : null;
     const pool = unvisitedUnits(this.ctx.data, this.scopeProvince, this.green, this.red);
-    const first = resumed ?? (pool.length ? this.ctx.randomUnit(pool) : null);
+    const first = resumed ?? (pool.length ? this.chooseFirst(pool) : null);
     if (!first) {
       this.finish();
       return;
@@ -348,8 +352,23 @@ export class SelfTestMode implements ModeController {
       this.finish();
       return;
     }
-    this.ask(this.orderMode === 'random' ? this.ctx.randomUnit(remain) : this.pickNext());
+    this.ask(this.nextUnit(remain));
   }
+
+  /** 首题选择：错题模式按分数最低，其余随机。 */
+  private chooseFirst(pool: Unit[]): Unit {
+    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, this.wrongOrder, this.ctx.toast);
+    return this.ctx.randomUnit(pool);
+  }
+
+  /** 后续选题：按当前出题顺序分发。 */
+  private nextUnit(pool: Unit[]): Unit {
+    if (this.orderMode === 'random') return this.ctx.randomUnit(pool);
+    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, this.wrongOrder, this.ctx.toast);
+    return this.pickNext();
+  }
+
+  private scoreOf = (u: Unit) => this.ctx.store.getPractice(u.adcode).score;
 
   /** 省内优先 BFS：当前省未出完前不跨省；省内优先邻居，否则选同省最近未测点 */
   private pickNext(): Unit {
@@ -412,6 +431,21 @@ export class SelfTestMode implements ModeController {
 
   getScopeProvince() {
     return this.scopeProvince;
+  }
+
+  /** 快照当前会话结果（全国排行榜结算卡片用）。 */
+  collectResult(): RoundResult | null {
+    if (!this.started && !this.question && this.green.size === 0 && this.red.size === 0) return null;
+    return {
+      mode: 'self',
+      scopeProvince: this.scopeProvince,
+      scopeLabel: this.scopeLabel(),
+      totalUnits: this.order.length,
+      correct: this.ok,
+      wrong: this.fail,
+      elapsedMs: this.stopwatch.elapsedMs(),
+      finishedAt: Date.now(),
+    };
   }
 
   private scopeLabel() {
