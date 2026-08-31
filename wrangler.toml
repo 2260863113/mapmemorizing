@@ -5,5 +5,5 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "china-admin-memory-db"
-database_id = "REPLACE_ME_D1_DATABASE_ID"
-preview_database_id = "REPLACE_ME_SAME_OR_PREVIEW_ID"
+database_id = "864554a1-8a1e-4b3e-8cb3-75751e739cac"
+preview_database_id = "864554a1-8a1e-4b3e-8cb3-75751e739cac"
