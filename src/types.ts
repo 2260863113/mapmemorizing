@@ -1,4 +1,4 @@
-export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory';
+export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board';
 export type UnitColor =
   | 'green'
   | 'blue'

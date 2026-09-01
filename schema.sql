@@ -43,3 +43,23 @@ CREATE TABLE IF NOT EXISTS leaderboard (
   UNIQUE(user_id, mode, scope_province)
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_lookup ON leaderboard(mode, scope_province);
+
+-- 留言板
+-- 帖子表：用户可发帖（登录），删除自己的帖子时级联删除其回复
+CREATE TABLE IF NOT EXISTS board_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  content    TEXT    NOT NULL,              -- 纯文本，≤200 字
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_board_posts_created ON board_posts(created_at DESC);
+
+-- 回复表：针对某帖子的从属内容（登录），≤100 字
+CREATE TABLE IF NOT EXISTS board_replies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id    INTEGER NOT NULL REFERENCES board_posts(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  content    TEXT    NOT NULL,              -- 纯文本，≤100 字
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_board_replies_post ON board_replies(post_id, created_at);

@@ -2,7 +2,7 @@ import type { AppData, Unit } from '../types';
 import type { MemoryStore } from '../store';
 import { t } from '../i18n';
 
-type ProvinceStats = { positive: number; negative: number; zero: number };
+type ProvinceStats = { mastered: number; unknown: number; unfamiliar: number };
 
 /** 侧栏：按地级单位累计答题分数展示熟练度。 */
 export class StatsPanel {
@@ -29,7 +29,7 @@ export class StatsPanel {
     let html = this.summary(t('stats.nationOverview'), total);
     html += '<div class="prov-list">' + this.provinceList.map((p) => {
       const stats = this.statsOf(p.units);
-      return `<div class="prov-name">${t('stats.provinceRow', { name: p.name, positive: stats.positive, negative: stats.negative, zero: stats.zero })}</div>${this.bar(stats)}`;
+      return `<div class="prov-name">${t('stats.provinceRow', { name: p.name, mastered: stats.mastered, unknown: stats.unknown, unfamiliar: stats.unfamiliar })}</div>${this.bar(stats)}`;
     }).join('') + '</div>';
     this.el.innerHTML = html;
   }
@@ -37,22 +37,22 @@ export class StatsPanel {
   private statsOf(units: Unit[]): ProvinceStats {
     return units.reduce<ProvinceStats>((acc, unit) => {
       const score = this.store.getPractice(unit.adcode).score;
-      if (score > 0) acc.positive += score;
-      else if (score < 0) acc.negative += Math.abs(score);
-      else acc.zero += 1;
+      if (score > 0) acc.mastered += 1;
+      else if (score < 0) acc.unfamiliar += 1;
+      else acc.unknown += 1;
       return acc;
-    }, { positive: 0, negative: 0, zero: 0 });
+    }, { mastered: 0, unknown: 0, unfamiliar: 0 });
   }
 
   private summary(label: string, stats: ProvinceStats) {
-    return `<div class="stat-head">${label} <span class="pct">${t('stats.scoreSummary', { positive: stats.positive, negative: stats.negative, zero: stats.zero })}</span></div>${this.bar(stats)}`;
+    return `<div class="stat-head">${label} <span class="pct">${t('stats.scoreSummary', { mastered: stats.mastered, unknown: stats.unknown, unfamiliar: stats.unfamiliar })}</span></div>${this.bar(stats)}`;
   }
 
   private bar(stats: ProvinceStats) {
-    const total = stats.positive + stats.negative + stats.zero;
-    const positive = total ? (stats.positive / total) * 100 : 0;
-    const zero = total ? (stats.zero / total) * 100 : 0;
-    const negative = total ? (stats.negative / total) * 100 : 0;
+    const total = stats.mastered + stats.unknown + stats.unfamiliar;
+    const positive = total ? (stats.mastered / total) * 100 : 0;
+    const zero = total ? (stats.unknown / total) * 100 : 0;
+    const negative = total ? (stats.unfamiliar / total) * 100 : 0;
     return `<div class="mastery-bar"><span class="mastery-positive" style="width:${positive}%"></span><span class="mastery-zero" style="width:${zero}%"></span><span class="mastery-negative" style="width:${negative}%"></span></div>`;
   }
 }

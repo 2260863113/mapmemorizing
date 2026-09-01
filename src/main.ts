@@ -19,6 +19,9 @@ import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
+import { BoardMode } from './modes/board';
+import { BoardStore } from './boardStore';
+import { BoardPanel } from './ui/boardPanel';
 import type { Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
@@ -78,7 +81,9 @@ async function boot() {
   void authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
   const authPanel = new AuthPanel(authStore, data);
   const leaderboardStore = new LeaderboardStore();
-  const leaderboard = new LeaderboardPanel('leaderboard', leaderboardStore);
+  const leaderboard = new LeaderboardPanel('leaderboard', leaderboardStore, data);
+  const boardStore = new BoardStore();
+  const boardPanel = new BoardPanel('board', boardStore, authStore, authPanel);
 
   let pendingLeaderboardResult: RoundResult | null = null;
   let current: ModeController | null = null;
@@ -142,6 +147,7 @@ async function boot() {
     endless: new EndlessMode(ctx),
     click: clickMode,
     memory: new MemoryMode(ctx),
+    board: new BoardMode(boardPanel),
   };
 
   const confirmTimers = new Map<string, number>();
@@ -192,6 +198,8 @@ async function boot() {
     syncPauseOverlay();
     updateProgress();
     refreshSidePanel();
+    // 从留言板切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
+    if (mode !== 'board') renderer.resize();
   }
 
   function showPauseOverlay() {
@@ -211,6 +219,7 @@ async function boot() {
 
   function syncModeChrome() {
     const mode = current?.id;
+    const isBoard = mode === 'board';
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
     const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
@@ -219,6 +228,9 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
+    $('map').classList.toggle('hidden', isBoard);
+    $('board').classList.toggle('hidden', !isBoard);
+    $('mode-info').classList.toggle('hidden', isBoard);
     $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted?.());
     $('btn-endless-settings').classList.toggle('hidden', mode !== 'endless');
     $('endless-items').classList.toggle('hidden', mode !== 'endless');
@@ -228,7 +240,7 @@ async function boot() {
       $('endless-settings-panel').classList.add('hidden');
       $('endless-shop').classList.add('hidden');
     }
-    const showSidePanel = isAnalysis || showLeaderboard;
+    const showSidePanel = (isAnalysis || showLeaderboard) && !isBoard;
     const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
     $('side-panel').classList.toggle('collapsed', showSidePanel && !panelOpen);
@@ -239,7 +251,7 @@ async function boot() {
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
-    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis);
+    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isBoard);
     $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless');
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);

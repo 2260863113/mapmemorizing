@@ -1,6 +1,25 @@
 import type { LeaderboardEntry } from './leaderboardStore';
 import type { RoundResult, UserProfile } from './types';
 
+/** 留言板帖子（含前 3 条预览回复）。 */
+export interface BoardPost {
+  id: number;
+  content: string;
+  createdAt: number;
+  username: string;
+  replyCount: number;
+  replies: BoardReply[];
+}
+
+/** 留言板回复。 */
+export interface BoardReply {
+  id: number;
+  postId: number;
+  content: string;
+  createdAt: number;
+  username: string;
+}
+
 /** 统一 fetch 封装：部署后与 Pages Functions 同源（相对路径 /api）；本地 dev 由 vite 代理转发。 */
 
 export class ApiError extends Error {
@@ -79,4 +98,17 @@ export const api = {
     request<{ status: 'added' | 'improved' | 'kept' }>('/score', { method: 'POST', token, body: result }),
   leaderboard: (mode: string, scope: string | null) =>
     request<{ entries: LeaderboardEntry[] }>(`/leaderboard?mode=${encodeURIComponent(mode)}&scope=${scope ? encodeURIComponent(scope) : ''}`),
+  // ---------- 留言板 ----------
+  boardPosts: (before = 0, limit = 20) =>
+    request<{ posts: BoardPost[] }>(`/board?before=${before}&limit=${limit}`),
+  boardReplies: (postId: number, before = 0, limit = 20) =>
+    request<{ replies: BoardReply[] }>(`/board?post=${postId}&before=${before}&limit=${limit}`),
+  createPost: (token: string, content: string) =>
+    request<{ post: BoardPost }>('/board', { method: 'POST', token, body: { content } }),
+  createReply: (token: string, postId: number, content: string) =>
+    request<{ reply: BoardReply }>('/board/reply', { method: 'POST', token, body: { postId, content } }),
+  deletePost: (token: string, id: number) =>
+    request<{ ok: true }>(`/board/${id}`, { method: 'DELETE', token }),
+  deleteReply: (token: string, id: number) =>
+    request<{ ok: true }>(`/board/reply/${id}`, { method: 'DELETE', token }),
 };

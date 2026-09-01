@@ -22,6 +22,8 @@ export interface LeaderboardEntry {
   submittedAt: number;
   coins?: number;
   level?: number;
+  /** 用户所在地 adcode 对（个人资料填写），未填写为 null */
+  hometown: { provinceAdcode: string; cityAdcode: string } | null;
 }
 
 /** 服务端绝不返回密码哈希。 */
@@ -47,6 +49,7 @@ export interface LeaderboardRow {
   coins: number | null;
   level: number | null;
   username: string;
+  hometown: string | null;
 }
 
 export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
@@ -60,6 +63,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     correct: row.correct,
     elapsedMs: row.elapsed_ms,
     submittedAt: row.submitted_at,
+    hometown: parseJson<{ provinceAdcode: string; cityAdcode: string }>(row.hometown),
   };
   if (row.mode === 'endless') {
     entry.coins = row.coins ?? 0;

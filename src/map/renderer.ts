@@ -322,6 +322,11 @@ export class MapRenderer {
     window.addEventListener('resize', () => this.chart.resize());
   }
 
+  /** 容器尺寸变化（如从留言板切回地图）时重算画布。 */
+  resize() {
+    this.chart.resize();
+  }
+
   setDarkMode(darkMode: boolean) {
     const next: ThemeName = darkMode ? 'dark' : 'light';
     if (next === this.themeName) return;

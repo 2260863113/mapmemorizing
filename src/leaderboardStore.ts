@@ -17,6 +17,8 @@ export interface LeaderboardEntry {
   coins?: number;
   /** 无尽闯关：到达关卡 */
   level?: number;
+  /** 用户所在地 adcode 对（个人资料填写），未填写为 null */
+  hometown: { provinceAdcode: string; cityAdcode: string } | null;
 }
 
 export type SubmitResult = 'added' | 'improved' | 'kept';

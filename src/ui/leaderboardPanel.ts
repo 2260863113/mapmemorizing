@@ -1,5 +1,7 @@
 import { LeaderboardStore, type LeaderboardEntry, type LeaderboardMode } from '../leaderboardStore';
 import { formatElapsedCentiseconds } from './format';
+import { normalize, normalizeProvince } from '../matcher';
+import type { AppData } from '../types';
 import { t } from '../i18n';
 
 /** 侧栏：按当前测试模式和范围展示云端共享排行榜。 */
@@ -7,7 +9,7 @@ export class LeaderboardPanel {
   private el: HTMLElement;
   private renderSeq = 0; // 过期渲染守卫：快速连续调用时丢弃旧结果
 
-  constructor(containerId: string, private store: LeaderboardStore) {
+  constructor(containerId: string, private store: LeaderboardStore, private data: AppData) {
     this.el = document.getElementById(containerId) as HTMLElement;
   }
 
@@ -34,13 +36,30 @@ export class LeaderboardPanel {
       .map((entry, index) => {
         const rank = index + 1;
         const medalClass = rank <= 3 ? ` medal-${rank}` : '';
-        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${escapeHtml(entry.username)}</span><span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
+        const loc = this.hometownText(entry.hometown);
+        // 始终渲染 loc 占位：无所在地时内容为空，但保持 time 列固定在第 4 列右对齐
+        const locHtml = `<span class="leaderboard-loc">${escapeHtml(loc)}</span>`;
+        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
       })
       .join('')}</div>`;
   }
 
   private renderError(title: string) {
     this.el.innerHTML = `<div class="leaderboard-title">${escapeHtml(title)}</div><div class="leaderboard-empty">${t('leaderboard.loadFailed')}</div>`;
+  }
+
+  /** 所在地简名：省简名 + 市简名（如 新疆伊犁）；直辖市/特别行政区省=市时只显示一个；无 hometown 返回空。 */
+  private hometownText(hometown: LeaderboardEntry['hometown']): string {
+    if (!hometown) return '';
+    const province = this.data.provinces.find((p) => p.adcode === hometown.provinceAdcode);
+    if (!province) return '';
+    const provinceShort = normalizeProvince(province.name);
+    if (hometown.provinceAdcode === hometown.cityAdcode) return provinceShort;
+    const city = this.data.units.find((u) => u.adcode === hometown.cityAdcode);
+    if (!city) return provinceShort;
+    const cityShort = normalize(city.name) || city.shortName;
+    if (!cityShort || cityShort === provinceShort) return provinceShort;
+    return provinceShort + cityShort;
   }
 }
 

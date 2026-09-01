@@ -285,7 +285,9 @@ export class AuthPanel {
       toast(t('auth.toast.loggedIn'));
       this.completeSuccess();
     } catch (error) {
+      // 登录失败：面板保持打开，仅展示错误，绝不自动关闭（避免待提交成绩丢失）
       this.showMessage(errorMessage(error));
+      this.keepOpen();
     }
   }
 
@@ -298,7 +300,9 @@ export class AuthPanel {
       toast(t('auth.toast.registered', { username: user.username }));
       this.completeSuccess();
     } catch (error) {
+      // 注册失败：面板保持打开，仅展示错误，绝不自动关闭
       this.showMessage(errorMessage(error));
+      this.keepOpen();
     }
   }
 
@@ -432,9 +436,19 @@ export class AuthPanel {
     el.textContent = initialOf(user.username);
   }
 
+  /** 登录/注册失败后的防御：确保浮层始终可见，绝不因任何意外路径自动关闭。 */
+  private keepOpen() {
+    this.overlay.classList.remove('hidden');
+  }
+
   private showMessage(message: string) {
     const el = document.getElementById('auth-message');
-    if (el) el.textContent = message;
+    if (el) {
+      el.textContent = message;
+    } else {
+      // 兜底：当前视图没有消息区时用 toast 展示，避免错误静默丢失
+      toast(message);
+    }
   }
 }
 
