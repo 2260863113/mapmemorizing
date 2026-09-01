@@ -23,7 +23,7 @@ export const onRequestPost = handle(async (context) => {
   }
 
   const row = await env.DB.prepare(
-    `SELECT id, username, password_salt, password_hash, password_iterations, hometown, avatar, created_at, updated_at
+    `SELECT id, username, password_salt, password_hash, password_iterations, hometown, avatar, is_admin, created_at, updated_at
      FROM users WHERE username = ?`,
   )
     .bind(username)

@@ -12,6 +12,7 @@ export interface UserRow {
   password_iterations: number;
   hometown: string | null;
   avatar: string | null;
+  is_admin: number;
   created_at: number;
   updated_at: number;
 }
@@ -48,7 +49,7 @@ export async function verifySession(request: Request, env: Env, now: number): Pr
   const tokenHash = await sha256Hex(token);
   const res = await env.DB.prepare(
     `SELECT u.id, u.username, u.password_salt, u.password_hash, u.password_iterations,
-            u.hometown, u.avatar, u.created_at, u.updated_at
+            u.hometown, u.avatar, u.is_admin, u.created_at, u.updated_at
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`,
   )

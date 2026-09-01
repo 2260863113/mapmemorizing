@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_iterations INTEGER NOT NULL DEFAULT 120000,
   hometown            TEXT,                          -- JSON 或 NULL {provinceAdcode,cityAdcode}
   avatar              TEXT,                          -- JSON 或 NULL {dataUrl,name,size,type}（dataUrl≤20KB）
+  is_admin            INTEGER NOT NULL DEFAULT 0,    -- 1 = 管理员
   created_at          INTEGER NOT NULL,              -- epoch ms
   updated_at          INTEGER NOT NULL
 );
@@ -63,3 +64,22 @@ CREATE TABLE IF NOT EXISTS board_replies (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_board_replies_post ON board_replies(post_id, created_at);
+
+-- 公告表：标题 + 正文（纯文本），pinned=1 置顶（站点介绍）
+CREATE TABLE IF NOT EXISTS announcements (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT    NOT NULL,
+  content    TEXT    NOT NULL,
+  pinned     INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- 访问日志表：每次页面访问一条（不含 IP），user_id 可为 NULL（游客）
+CREATE TABLE IF NOT EXISTS access_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER,                               -- NULL = 游客
+  ua         TEXT,                                  -- User-Agent
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at DESC);

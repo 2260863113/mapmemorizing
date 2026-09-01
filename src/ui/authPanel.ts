@@ -21,6 +21,8 @@ export class AuthPanel {
   private location: LocationState = { provinceAdcode: '', cityAdcode: '' };
   private avatar: UserAvatar | null = null;
   private onSuccess: (() => void) | null = null;
+  /** 管理员点击管理入口时回调（main.ts 设置，切换到 admin 模式）。 */
+  onAdminAction: ((view: 'users' | 'logs' | 'announcements') => void) | null = null;
 
   constructor(private store: AuthStore, private data: AppData) {
     this.menu = $('user-menu');
@@ -76,8 +78,15 @@ export class AuthPanel {
     this.menu.append(
       this.menuButton(t('auth.menu.profile'), () => this.openProfile(), !user),
       this.menuButton(t('auth.menu.changePassword'), () => this.openPassword(), !user),
-      this.menuButton(t('auth.menu.logout'), () => this.logout(), !user),
     );
+    if (user?.isAdmin) {
+      this.menu.append(
+        this.menuButton(t('auth.menu.adminUsers'), () => this.onAdminAction?.('users')),
+        this.menuButton(t('auth.menu.adminLogs'), () => this.onAdminAction?.('logs')),
+        this.menuButton(t('auth.menu.adminAnnouncements'), () => this.onAdminAction?.('announcements')),
+      );
+    }
+    this.menu.append(this.menuButton(t('auth.menu.logout'), () => this.logout(), !user));
   }
 
   private menuButton(label: string, onClick: () => void, disabled = false) {

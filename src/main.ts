@@ -22,6 +22,12 @@ import { ClickMode } from './modes/click';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
+import { AdminMode } from './modes/admin';
+import { AdminPanel } from './ui/adminPanel';
+import { AnnouncementStore } from './announcementStore';
+import { AnnouncementPanel } from './ui/announcementPanel';
+import { IntroCard } from './ui/introCard';
+import { api } from './api';
 import type { Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
@@ -84,6 +90,23 @@ async function boot() {
   const leaderboard = new LeaderboardPanel('leaderboard', leaderboardStore, data);
   const boardStore = new BoardStore();
   const boardPanel = new BoardPanel('board', boardStore, authStore, authPanel);
+  const announcementStore = new AnnouncementStore();
+  const announcementPanel = new AnnouncementPanel('announcement-panel', announcementStore);
+  const introCard = new IntroCard('intro-card', announcementStore);
+  const adminPanel = new AdminPanel('admin', authStore, announcementStore, data);
+  const adminMode = new AdminMode(adminPanel);
+
+  // 访问日志上报（带 token 记录登录用户）
+  void api.visit(authStore.sessionToken() ?? undefined).catch(() => {});
+  // 公告按钮 → 弹出公告浮层
+  $('btn-announcement').addEventListener('click', () => void announcementPanel.open());
+  // 管理员入口回调：切换到 admin 模式并打开对应视图
+  authPanel.onAdminAction = (view) => {
+    adminMode.setView(view);
+    switchMode('admin');
+  };
+  // 介绍卡片：首次进入弹出「站点介绍」
+  void introCard.maybeShow();
 
   let pendingLeaderboardResult: RoundResult | null = null;
   let current: ModeController | null = null;
@@ -148,6 +171,7 @@ async function boot() {
     click: clickMode,
     memory: new MemoryMode(ctx),
     board: new BoardMode(boardPanel),
+    admin: adminMode,
   };
 
   const confirmTimers = new Map<string, number>();
@@ -198,8 +222,8 @@ async function boot() {
     syncPauseOverlay();
     updateProgress();
     refreshSidePanel();
-    // 从留言板切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
-    if (mode !== 'board') renderer.resize();
+    // 从留言板/管理员切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
+    if (mode !== 'board' && mode !== 'admin') renderer.resize();
   }
 
   function showPauseOverlay() {
@@ -219,7 +243,7 @@ async function boot() {
 
   function syncModeChrome() {
     const mode = current?.id;
-    const isBoard = mode === 'board';
+    const isNonMap = mode === 'board' || mode === 'admin';
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
     const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
@@ -228,9 +252,10 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
-    $('map').classList.toggle('hidden', isBoard);
-    $('board').classList.toggle('hidden', !isBoard);
-    $('mode-info').classList.toggle('hidden', isBoard);
+    $('map').classList.toggle('hidden', isNonMap);
+    $('board').classList.toggle('hidden', mode !== 'board');
+    $('admin').classList.toggle('hidden', mode !== 'admin');
+    $('mode-info').classList.toggle('hidden', isNonMap);
     $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted?.());
     $('btn-endless-settings').classList.toggle('hidden', mode !== 'endless');
     $('endless-items').classList.toggle('hidden', mode !== 'endless');
@@ -240,7 +265,7 @@ async function boot() {
       $('endless-settings-panel').classList.add('hidden');
       $('endless-shop').classList.add('hidden');
     }
-    const showSidePanel = (isAnalysis || showLeaderboard) && !isBoard;
+    const showSidePanel = (isAnalysis || showLeaderboard) && !isNonMap;
     const panelOpen = isAnalysis ? statsVisible : sidePanelOpen;
     $('side-panel').classList.toggle('hidden', !showSidePanel);
     $('side-panel').classList.toggle('collapsed', showSidePanel && !panelOpen);
@@ -251,7 +276,7 @@ async function boot() {
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
     $('btn-stats').classList.toggle('hidden', !isAnalysis);
-    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isBoard);
+    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap);
     $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless');
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);

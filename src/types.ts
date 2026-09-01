@@ -1,4 +1,4 @@
-export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board';
+export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board' | 'admin';
 export type UnitColor =
   | 'green'
   | 'blue'
@@ -110,6 +110,7 @@ export interface UserProfile {
   username: string;
   hometown: UserHometown | null;
   avatar: UserAvatar | null;
+  isAdmin: boolean;
   createdAt: number;
   updatedAt: number;
 }

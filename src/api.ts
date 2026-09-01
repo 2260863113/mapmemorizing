@@ -22,6 +22,40 @@ export interface BoardReply {
   avatar: string | null;
 }
 
+/** 公告。 */
+export interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 管理端用户行。 */
+export interface AdminUser {
+  id: number;
+  username: string;
+  hometown: { provinceAdcode: string; cityAdcode: string } | null;
+  avatar: string | null;
+  isAdmin: boolean;
+  createdAt: number;
+}
+
+/** 访问日志条目。 */
+export interface AccessLogEntry {
+  id: number;
+  username: string | null;
+  ua: string;
+  createdAt: number;
+}
+
+/** 访问量统计（按天/小时）。 */
+export interface AccessStats {
+  days: { day: string; count: number }[];
+  hours: { hour: string; count: number }[];
+}
+
 /** 统一 fetch 封装：部署后与 Pages Functions 同源（相对路径 /api）；本地 dev 由 vite 代理转发。 */
 
 export class ApiError extends Error {
@@ -113,4 +147,17 @@ export const api = {
     request<{ ok: true }>(`/board/${id}`, { method: 'DELETE', token }),
   deleteReply: (token: string, id: number) =>
     request<{ ok: true }>(`/board/reply/${id}`, { method: 'DELETE', token }),
+  // ---------- 公告 ----------
+  announcements: () => request<{ announcements: Announcement[] }>('/announcements'),
+  visit: (token?: string) => request<{ ok: true }>('/visit', { method: 'POST', token }),
+  // ---------- 管理员 ----------
+  adminUsers: (token: string) => request<{ users: AdminUser[] }>('/admin/users', { token }),
+  adminLogs: (token: string, before = 0) => request<{ logs: AccessLogEntry[] }>(`/admin/logs?view=logs&before=${before}`, { token }),
+  adminStats: (token: string) => request<AccessStats>('/admin/logs?view=stats', { token }),
+  createAnnouncement: (token: string, body: { title: string; content: string; pinned?: boolean }) =>
+    request<{ announcement: Announcement }>('/admin/announcements', { method: 'POST', token, body }),
+  updateAnnouncement: (token: string, id: number, body: { title: string; content: string; pinned?: boolean }) =>
+    request<{ announcement: Announcement }>(`/admin/announcements/${id}`, { method: 'PUT', token, body }),
+  deleteAnnouncement: (token: string, id: number) =>
+    request<{ ok: true }>(`/admin/announcements/${id}`, { method: 'DELETE', token }),
 };

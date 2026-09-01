@@ -6,6 +6,7 @@ export interface PublicUser {
   username: string;
   hometown: { provinceAdcode: string; cityAdcode: string } | null;
   avatar: { dataUrl: string; name: string; size: number; type: string } | null;
+  isAdmin: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -34,6 +35,7 @@ export function toPublicUser(row: UserRow): PublicUser {
     username: row.username,
     hometown: parseJson<{ provinceAdcode: string; cityAdcode: string }>(row.hometown),
     avatar: parseJson<{ dataUrl: string; name: string; size: number; type: string }>(row.avatar),
+    isAdmin: row.is_admin === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
