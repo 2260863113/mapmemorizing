@@ -10,17 +10,17 @@
     <header class="topbar">
       <div class="brand">中国行政区记忆</div>
       <nav id="mode-tabs">
-        <button data-mode="free" class="active">熟练度分析</button>
+        <button data-mode="daily" class="active">每日竞速</button>
+        <button data-mode="click">点击模式</button>
         <button data-mode="self">输入模式</button>
         <button data-mode="endless">无尽闯关</button>
-        <button data-mode="click">点击模式</button>
         <button data-mode="memory">自由模式</button>
-        <button data-mode="board">留言板</button>
       </nav>
       <div class="top-actions">
-        <button id="btn-stats" class="ghost">进度</button>
-        <button id="btn-settings" class="ghost">设置</button>
+        <button id="btn-free" class="ghost">熟练度分析</button>
+        <button id="btn-board" class="ghost">留言板</button>
         <button id="btn-announcement" class="ghost">公告</button>
+        <button id="btn-settings" class="ghost">设置</button>
         <div class="user-center-wrap">
           <button id="user-center" class="user-center" type="button" aria-haspopup="menu" aria-expanded="false"></button>
           <div id="user-menu" class="user-menu hidden" role="menu"></div>
@@ -43,6 +43,10 @@
         <div id="click-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="点击模式出题顺序">
           <button id="click-order-random" type="button" class="active" data-order="random" role="radio" aria-checked="true">随机</button>
           <button id="click-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
+        </div>
+        <div id="daily-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="每日竞速作答方式">
+          <button id="daily-order-click" type="button" class="active" data-order="click" role="radio" aria-checked="true">点击</button>
+          <button id="daily-order-input" type="button" data-order="input" role="radio" aria-checked="false">输入</button>
         </div>
       </div>
       <div id="search-row">

@@ -1,4 +1,4 @@
-export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board' | 'admin';
+export type Mode = 'daily' | 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board' | 'admin';
 export type UnitColor =
   | 'green'
   | 'blue'
@@ -63,7 +63,7 @@ export interface Settings {
 }
 
 export interface RoundResult {
-  mode: Extract<Mode, 'self' | 'click' | 'endless'>;
+  mode: Extract<Mode, 'self' | 'click' | 'endless' | 'daily'>;
   scopeProvince: string | null;
   scopeLabel: string;
   totalUnits: number;

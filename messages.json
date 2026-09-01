@@ -51,6 +51,16 @@
   "click.complete": "点击模式完成",
   "click.summary": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个地图单位",
 
+  "mode.daily.title": "每日竞速",
+  "daily.startTitle": "每日竞速",
+  "daily.startSubtitleClick": "范围：全国，共 {total} 个省级单元，请按提示点击地图",
+  "daily.startSubtitleInput": "范围：全国，共 {total} 个省级单元，请输入省名",
+  "daily.inputPlaceholder": "输入省名",
+  "daily.complete": "每日竞速完成",
+  "daily.summary": "全部答对！用时 {time}，覆盖 {total} 个省级单元",
+  "daily.notAllCorrect": "存在 {wrong} 题答错，无法提交，请重新开始",
+  "leaderboard.mode.daily": "每日竞速",
+
   "endless.startTitle": "无尽闯关",
   "endless.startScope": "范围：全国",
   "endless.shieldBlocked": "盾牌：抵挡一次罚时",
@@ -203,8 +213,8 @@
   "leaderboard.nationMeta": "{correct} 个 · {time}",
 
   "stats.nationOverview": "全国概览",
-  "stats.scoreSummary": "熟练：{mastered} 未知：{unknown} 陌生：{unfamiliar}",
-  "stats.provinceRow": "{name} <span>熟练：{mastered} 未知：{unknown} 陌生：{unfamiliar}</span>",
+  "stats.scoreSummary": "熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span>",
+  "stats.provinceRow": "{name} <span>熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span></span>",
 
   "matcher.provinceHint": "省级 · {count} 个地图单位，点击进入",
 
@@ -291,6 +301,8 @@
   "help.free.body": "地图按累计答题分数分层着色。悬停地图单位可查看正确和错误次数；此模式不响应点击和输入。",
   "help.click.title": "点击模式说明",
   "help.click.body": "按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。",
+  "help.daily.title": "每日竞速说明",
+  "help.daily.body": "在全国 34 个省级单元中竞速，随机出题，点击或输入省名作答。每题只答一次，答错标红不重出；全部答对才可提交成绩，排行榜按用时排名。本模式不计入熟练度。",
   "help.memory.title": "自由模式说明",
   "help.memory.body": "这是自由浏览模式，可以查看全部地图单位名称并自由缩放、双击区域进入该省。",
 

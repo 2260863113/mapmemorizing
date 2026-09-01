@@ -226,6 +226,7 @@ export class MapRenderer {
   private themeName: ThemeName = 'light';
   private cityBoundaryTone: BoundaryTone = 'light';
   private provinceBoundaryTone: BoundaryTone = 'dark';
+  private provinceMode = false; // 省级模式：不画地级边界、省界加粗、不支持下钻
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   onViewChange: (() => void) | null = null;
@@ -255,6 +256,11 @@ export class MapRenderer {
         if (this.viewProvince) this.handlers.onBlankClick();
         return;
       }
+      // 省级模式：命中任意地级 unit → 映射为省级 adcode 回传，且不支持下钻
+      if (this.provinceMode) {
+        this.handlers.onUnitClick(u.provinceAdcode);
+        return;
+      }
       if (!this.viewProvince) {
         if (this.handlers.onUnitClick(u.adcode) === true) return;
         this.drillToProvince(u.provinceAdcode);
@@ -281,6 +287,7 @@ export class MapRenderer {
 
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
+      if (this.provinceMode) return; // 省级模式不支持下钻
       if (this.viewProvince) {
         this.handlers.onBlankClick();
         return;
@@ -338,6 +345,19 @@ export class MapRenderer {
     if (cityBoundaryTone === this.cityBoundaryTone && provinceBoundaryTone === this.provinceBoundaryTone) return;
     this.cityBoundaryTone = cityBoundaryTone;
     this.provinceBoundaryTone = provinceBoundaryTone;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  /** 省级模式：仅显示省级边界，地级边界隐藏，省界加粗；不支持下钻。 */
+  setProvinceMode(on: boolean) {
+    if (this.provinceMode === on) return;
+    this.provinceMode = on;
+    if (this.viewProvince) {
+      this.viewProvince = null;
+      this.center = [104.5, 35];
+      this.zoom = 1;
+      this.labelMode = 'none';
+    }
     if (this.lastState) this.render(this.lastState);
   }
 
@@ -404,8 +424,9 @@ export class MapRenderer {
         silent: !inView,
         itemStyle: {
           areaColor: state.coin ? (theme.coinGreen(coinCoins) ?? theme.fill[color]) : inView ? theme.fill[color] : 'rgba(0,0,0,0)',
-          borderColor: inView ? theme.boundary[this.cityBoundaryTone] : 'rgba(0,0,0,0)',
-          borderWidth: inView ? 0.6 : 0,
+          // 省级模式不画地级边界（省界由 province-lines 系列单独绘制）
+          borderColor: inView && !this.provinceMode ? theme.boundary[this.cityBoundaryTone] : 'rgba(0,0,0,0)',
+          borderWidth: inView && !this.provinceMode ? 0.6 : 0,
         },
         emphasis: {
           itemStyle: {
@@ -543,7 +564,7 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
+          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: this.provinceMode ? 3.2 : 2.4, opacity: 1 },
           data: this.buildLineData(),
         },
         {

@@ -19,6 +19,7 @@ import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
+import { DailyMode, type DailyAnswerMode } from './modes/daily';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
@@ -164,7 +165,9 @@ async function boot() {
 
   const selfMode = new SelfTestMode(ctx);
   const clickMode = new ClickMode(ctx);
+  const dailyMode = new DailyMode(ctx);
   const modes: Record<Mode, ModeController> = {
+    daily: dailyMode,
     free: new FreeMode(ctx),
     self: selfMode,
     endless: new EndlessMode(ctx),
@@ -208,14 +211,19 @@ async function boot() {
     hideSummary();
     hideHelp();
     hideHoverStats();
+    // 修复：切换到留言板/管理界面后，顶部开始卡片不消失
+    setHint('');
     const active = current;
     if (active?.isStarted?.() && !active.isPaused?.()) active.pause?.();
     if (active && !active.isPaused?.()) active.exit();
     current = modes[mode];
+    // 退出每日竞速的省级视图：即使 daily 处于暂停（未 exit），进入其他模式也恢复地级边界
+    if (mode !== 'daily') renderer.setProvinceMode(false);
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
     });
-    const inputMode = mode === 'self' || mode === 'endless';
+    // 每日竞速：仅「输入」作答方式时显示搜索框
+    const inputMode = mode === 'self' || mode === 'endless' || (mode === 'daily' && dailyMode.getAnswerMode() === 'input');
     $('search-row').classList.toggle('hidden', !inputMode);
     current.enter();
     syncModeChrome();
@@ -245,8 +253,8 @@ async function boot() {
     const mode = current?.id;
     const isNonMap = mode === 'board' || mode === 'admin';
     const isAnalysis = mode === 'free';
-    const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
-    const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
+    const isTest = mode === 'self' || mode === 'endless' || mode === 'click' || mode === 'daily';
+    const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless' || mode === 'daily';
     if (!isTest) {
       showTimer(null);
       showStopwatch(null);
@@ -275,15 +283,18 @@ async function boot() {
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
-    $('btn-stats').classList.toggle('hidden', !isAnalysis);
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap);
-    $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless');
+    // 每日竞速无跳过按钮
+    $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless' || mode === 'daily');
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self');
     $('click-order-toggle').classList.toggle('hidden', mode !== 'click');
+    $('daily-order-toggle').classList.toggle('hidden', mode !== 'daily');
     syncSegmentedToggle('self-order-toggle', selfMode.getOrderMode());
     syncSegmentedToggle('click-order-toggle', clickMode.getOrderMode());
+    syncSegmentedToggle('daily-order-toggle', dailyMode.getAnswerMode());
+    syncSegmentedLock();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
     syncViewChrome();
   }
@@ -303,7 +314,7 @@ async function boot() {
   function updateProgress() {
     const el = $('mode-progress');
     const progress = current?.getProgress?.() ?? null;
-    if (!progress || (current?.id !== 'self' && current?.id !== 'click')) {
+    if (!progress || (current?.id !== 'self' && current?.id !== 'click' && current?.id !== 'daily')) {
       el.classList.add('hidden');
       el.innerHTML = '';
       return;
@@ -409,9 +420,10 @@ async function boot() {
     return result.mode === 'endless' ? t('main.rejectEndless') : t('main.rejectNotAllCorrect');
   }
 
-  /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
+  /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对；daily 需全国 34 省级全对。 */
   function canSubmit(result: RoundResult) {
     if (result.mode === 'endless') return typeof result.coins === 'number' && result.coins > 0;
+    if (result.mode === 'daily') return result.totalUnits === 34 && result.correct === 34 && result.wrong === 0;
     if (result.scopeProvince === null) return result.correct > 0 && result.wrong === 0;
     return result.totalUnits > 0 && result.correct + result.wrong === result.totalUnits && result.correct === result.totalUnits && result.wrong === 0;
   }
@@ -431,7 +443,7 @@ async function boot() {
   }
 
   function isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
-    return mode === 'self' || mode === 'click' || mode === 'endless';
+    return mode === 'self' || mode === 'click' || mode === 'endless' || mode === 'daily';
   }
 
   let sidePanelDrag: { pointerId: number; x: number; width: number; moved: boolean; wasOpen: boolean } | null = null;
@@ -479,6 +491,9 @@ async function boot() {
     if (mode === 'click') {
       return { title: t('help.click.title'), body: t('help.click.body') };
     }
+    if (mode === 'daily') {
+      return { title: t('help.daily.title'), body: t('help.daily.body') };
+    }
     return { title: t('help.memory.title'), body: t('help.memory.body') };
   }
 
@@ -487,11 +502,9 @@ async function boot() {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode as Mode));
   });
 
-  ($('btn-stats') as HTMLButtonElement).addEventListener('click', () => {
-    statsVisible = !statsVisible;
-    syncModeChrome();
-    refreshSidePanel();
-  });
+  // 右区按钮：熟练度分析 → 自由模式；留言板 → 留言板模式
+  ($('btn-free') as HTMLButtonElement).addEventListener('click', () => switchMode('free'));
+  ($('btn-board') as HTMLButtonElement).addEventListener('click', () => switchMode('board'));
 
   const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
   sidePanelToggle.addEventListener('pointerdown', (event) => {
@@ -541,6 +554,25 @@ async function boot() {
       syncSegmentedToggle('click-order-toggle', mode);
     });
   });
+  document.querySelectorAll<HTMLButtonElement>('#daily-order-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.order as DailyAnswerMode;
+      dailyMode.setAnswerMode(mode);
+      syncSegmentedToggle('daily-order-toggle', mode);
+      // 切换作答方式后同步搜索框显隐
+      if (current?.id === 'daily') {
+        $('search-row').classList.toggle('hidden', dailyMode.getAnswerMode() !== 'input');
+      }
+    });
+  });
+
+  /** 分段按钮在模式开始后锁定，防止中途切换出题/作答方式。 */
+  function syncSegmentedLock() {
+    const started = !!current?.isStarted?.();
+    document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button, #click-order-toggle button, #daily-order-toggle button').forEach((btn) => {
+      btn.disabled = started;
+    });
+  }
 
   // 设置
   ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
@@ -644,7 +676,7 @@ async function boot() {
   search.onSubmit((v) => current?.onSubmit(v));
   search.onInput((v) => current?.onInput?.(v));
 
-  switchMode('free');
+  switchMode('daily'); // 默认展示每日竞速
 }
 
 boot().catch((e) => {

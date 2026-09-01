@@ -9,7 +9,7 @@ export interface PasswordHashPayload {
   iterations: number;
 }
 
-export type ScoreMode = 'self' | 'click' | 'endless';
+export type ScoreMode = 'self' | 'click' | 'endless' | 'daily';
 
 /** 用户名归一化：与前端 cleanUsername 一致（trim、压缩空白、截 24）。 */
 export function cleanUsername(username: unknown): string {
@@ -32,7 +32,7 @@ export function normalizePasswordHash(value: unknown): PasswordHashPayload {
   return { algorithm: row.algorithm, salt: row.salt, hash: row.hash, iterations };
 }
 
-const MODES = new Set(['self', 'click', 'endless']);
+const MODES = new Set(['self', 'click', 'endless', 'daily']);
 
 export function validMode(mode: unknown): mode is ScoreMode {
   return typeof mode === 'string' && MODES.has(mode);
@@ -84,13 +84,20 @@ export function validateScore(body: unknown): ScorePayload {
     finishedAt: Math.floor(finishedAt),
   };
 
-  // 提交资格：endless 需有金币（不统计题数，totalUnits 恒 0）；全国 self/click 允许未答完（已答全对即可）；省级维持全对。
+  // 提交资格：endless 需有金币（不统计题数，totalUnits 恒 0）；全国 self/click 允许未答完（已答全对即可）；省级维持全对；daily 全国 34 省级全对。
   if (payload.mode === 'endless') {
     const coins = Number(row.coins);
     if (!Number.isFinite(coins) || coins <= 0) throw new ApiError(400, 'invalid_score', '尚未收集金币');
     payload.coins = Math.floor(coins);
     const level = Number(row.level);
     payload.level = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
+    return payload;
+  }
+  if (payload.mode === 'daily') {
+    // 每日竞速：仅全国范围，必须全部答对
+    if (payload.scopeProvince !== null) throw new ApiError(400, 'invalid_scope', '每日竞速仅全国榜');
+    if (payload.totalUnits !== 34) throw new ApiError(400, 'invalid_score', '每日竞速需答完全部省级单元');
+    if (!(payload.correct === 34 && payload.wrong === 0)) throw new ApiError(400, 'invalid_score', '每日竞速需全部答对');
     return payload;
   }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');

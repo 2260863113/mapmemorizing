@@ -2,7 +2,7 @@ import { verifySession } from '../_lib/auth';
 import { json, readJson, handle } from '../_lib/http';
 import { isBetter, validateScore } from '../_lib/validate';
 
-type ScoreMode = 'self' | 'click' | 'endless';
+type ScoreMode = 'self' | 'click' | 'endless' | 'daily';
 
 interface ExistingRow {
   id: number;
@@ -18,7 +18,9 @@ function upsertSql(mode: ScoreMode): string {
     mode === 'endless'
       ? `WHERE excluded.coins > leaderboard.coins
          OR (excluded.coins = leaderboard.coins AND COALESCE(excluded.level,1) > COALESCE(leaderboard.level,1))`
-      : `WHERE (leaderboard.scope_province = '' AND (
+      : mode === 'daily'
+        ? `WHERE excluded.elapsed_ms < leaderboard.elapsed_ms` // 每日竞速全对才上榜，仅比用时
+        : `WHERE (leaderboard.scope_province = '' AND (
             excluded.correct > leaderboard.correct
             OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)))
          OR (leaderboard.scope_province <> '' AND excluded.elapsed_ms < leaderboard.elapsed_ms)`;
