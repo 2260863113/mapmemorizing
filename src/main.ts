@@ -10,6 +10,7 @@ import { AuthPanel } from './ui/authPanel';
 import { LeaderboardPanel } from './ui/leaderboardPanel';
 import { StatsPanel } from './ui/statsPanel';
 import { openSettings } from './ui/settingsPanel';
+import { openModeSettings } from './ui/modeSettingsPanel';
 import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary, showSettlement, hideSettlement } from './ui/dom';
 import { formatElapsedCentiseconds } from './ui/format';
 import { ApiError } from './api';
@@ -82,7 +83,7 @@ async function boot() {
   applyTheme(settings.darkMode);
   const matcher = new Matcher(data);
   const search = new SearchBox('search-input');
-  search.setRequireEnter(settings.requireEnter);
+  search.setRequireEnter(true); // 每模式设置中按需调整（输入/无尽）
   const stats = new StatsPanel('stats', data, store);
   const authStore = new AuthStore();
   void authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
@@ -213,6 +214,7 @@ async function boot() {
     hideHoverStats();
     // 修复：切换到留言板/管理界面后，顶部开始卡片不消失
     setHint('');
+    $('mode-settings-panel').classList.add('hidden'); // 切换模式时收起设置浮层
     const active = current;
     if (active?.isStarted?.() && !active.isPaused?.()) active.pause?.();
     if (active && !active.isPaused?.()) active.exit();
@@ -265,12 +267,12 @@ async function boot() {
     $('admin').classList.toggle('hidden', mode !== 'admin');
     $('mode-info').classList.toggle('hidden', isNonMap);
     $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted?.());
-    $('btn-endless-settings').classList.toggle('hidden', mode !== 'endless');
+    // 每模式设置按钮：该模式提供设置面板时显示
+    $('btn-mode-settings').classList.toggle('hidden', !current?.getModeSettings?.());
     $('endless-items').classList.toggle('hidden', mode !== 'endless');
     $('endless-token').classList.toggle('hidden', mode !== 'endless');
     $('endless-food').classList.toggle('hidden', mode !== 'endless');
     if (mode !== 'endless') {
-      $('endless-settings-panel').classList.add('hidden');
       $('endless-shop').classList.add('hidden');
     }
     const showSidePanel = (isAnalysis || showLeaderboard) && !isNonMap;
@@ -582,32 +584,24 @@ async function boot() {
     if (target?.closest?.('.start-action')) syncSegmentedLock();
   });
 
-  // 设置
+  // 导航栏设置：仅个性化（黑夜模式、边界）
   ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
     openSettings(settings, (s) => {
       Object.assign(settings, s);
-      search.setRequireEnter(settings.requireEnter);
       applyTheme(settings.darkMode);
       renderer.setDarkMode(settings.darkMode);
       renderer.setBoundaryTones(settings.cityBoundaryTone, settings.provinceBoundaryTone);
     });
   });
 
-  // 无尽闯关设置卡片
-  ($('btn-endless-settings') as HTMLButtonElement).addEventListener('click', () => {
-    ($('set-hide-price') as HTMLInputElement).checked = (modes.endless as EndlessMode).isHidePrices();
-    ($('set-hide-price-bg') as HTMLInputElement).checked = (modes.endless as EndlessMode).isHidePriceBg();
-    $('endless-settings-panel').classList.remove('hidden');
+  // 每模式设置按钮：打开当前模式的设置浮层
+  ($('btn-mode-settings') as HTMLButtonElement).addEventListener('click', () => {
+    const panel = current?.getModeSettings?.();
+    if (panel) openModeSettings(panel);
   });
-  ($('endless-settings-close') as HTMLButtonElement).addEventListener('click', () => $('endless-settings-panel').classList.add('hidden'));
-  $('endless-settings-panel').addEventListener('click', (event) => {
-    if (event.target === $('endless-settings-panel')) $('endless-settings-panel').classList.add('hidden');
-  });
-  ($('set-hide-price') as HTMLInputElement).addEventListener('change', (event) => {
-    (modes.endless as EndlessMode).setHidePrices((event.target as HTMLInputElement).checked);
-  });
-  ($('set-hide-price-bg') as HTMLInputElement).addEventListener('change', (event) => {
-    (modes.endless as EndlessMode).setHidePriceBg((event.target as HTMLInputElement).checked);
+  // 模式切换时关闭设置浮层
+  $('mode-settings-panel').addEventListener('click', (event) => {
+    if (event.target === $('mode-settings-panel')) $('mode-settings-panel').classList.add('hidden');
   });
 
   ($('btn-skip') as HTMLButtonElement).addEventListener('click', () => current?.onSkip?.());

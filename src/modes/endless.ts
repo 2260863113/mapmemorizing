@@ -4,6 +4,7 @@ import { Countdown } from '../ui/countdown';
 import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
 import { t } from '../i18n';
+import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, saveEndlessAutoFollow, type ModeSettingsPanel } from '../modeSettings';
 
 /**
  * 无尽闯关：
@@ -46,12 +47,36 @@ export class EndlessMode implements ModeController {
   private activeFoods: FoodEntry[] = []; // 当前显示的 5 种食物
   private usedFoods = new Set<string>(); // 本关已使用的食物
 
+  private autoFollow = loadEndlessAutoFollow(); // 自动跟随（倍率固定默认值）
+
   constructor(private ctx: ModeCtx) {
     // 透视药水：任意方向键使用
     document.addEventListener('keydown', (event) => {
       if (!this.started || this.paused || this.switching) return;
       if (event.key.startsWith('Arrow')) this.usePotion();
     });
+  }
+
+  getModeSettings(): ModeSettingsPanel | null {
+    return {
+      title: t('mode.endless.title'),
+      toggles: [
+        { key: 'require-enter', label: t('settings.requireEnter'), value: true, fixed: true }, // 无尽固定按下 Enter 确认
+        { key: 'hide-prices', label: t('settings.hidePrices'), value: this.hidePrices },
+        { key: 'hide-price-bg', label: t('settings.hidePriceBg'), value: this.hidePriceBg },
+        { key: 'auto-follow', label: t('settings.autoFollow'), value: this.autoFollow },
+      ],
+      onChange: (key, value) => {
+        if (key === 'hide-prices') {
+          this.setHidePrices(value);
+        } else if (key === 'hide-price-bg') {
+          this.setHidePriceBg(value);
+        } else if (key === 'auto-follow') {
+          this.autoFollow = value;
+          saveEndlessAutoFollow(value);
+        }
+      },
+    };
   }
 
   enter() {
@@ -81,7 +106,6 @@ export class EndlessMode implements ModeController {
   exit() {
     this.countdown.stop();
     this.ctx.showTimer(null);
-    this.ctx.search.setRequireEnter(this.ctx.settings.requireEnter);
     hideLevelEnd();
     hideShop();
     endlessStatus('');
@@ -351,6 +375,7 @@ export class EndlessMode implements ModeController {
     this.ctx.search.focus();
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
+    if (this.autoFollow) this.ctx.renderer.focusUnit(unit.adcode, ENDLESS_FOLLOW_ZOOM);
     const extras: string[] = [];
     if (bonus > 0) extras.push(t('endless.bonusCoins', { value: fmt(bonus) }));
     if (timeBonus > 0) extras.push(t('endless.timeBonus', { seconds: timeBonus }));

@@ -276,6 +276,13 @@
   "admin.noAnnouncements": "暂无公告",
   "admin.annDeleteConfirm": "确定删除这条公告吗？",
 
+  "settings.requireEnter": "按下 Enter 确认",
+  "settings.errorRollback": "错误回滚",
+  "settings.autoFollow": "自动跟随",
+  "settings.hidePrices": "隐藏价格标签",
+  "settings.hidePriceBg": "隐藏价格标签衬底",
+  "settings.hideLabels": "隐藏标签",
+
   "main.sideTitle": "熟练度分析",
   "main.sideTipAnalysis": "进度自动保存在浏览器本地",
   "main.sideTipLeaderboard": "排行榜按当前测试范围筛选，成绩云端共享",

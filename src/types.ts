@@ -52,11 +52,6 @@ export interface MemoryRecord extends PracticeRecord {
 }
 
 export interface Settings {
-  selfTimerEnabled: boolean;
-  selfTimerSeconds: number;
-  requireEnter: boolean;
-  autoFollow: boolean;
-  followZoom: number;
   cityBoundaryTone: BoundaryTone;
   provinceBoundaryTone: BoundaryTone;
   darkMode: boolean;

@@ -4,6 +4,7 @@ import type { Matcher } from '../matcher';
 import type { MemoryStore } from '../store';
 import type { SearchBox } from '../ui/searchBox';
 import type { StatsPanel } from '../ui/statsPanel';
+import type { ModeSettingsPanel } from '../modeSettings';
 
 export interface ModeCtx {
   data: AppData;
@@ -63,4 +64,6 @@ export interface ModeController {
   hasProgress(): boolean;
   /** 模式会话是否已经开始（地图空白返回确认用） */
   isStarted?(): boolean;
+  /** 该模式的设置面板（设置按钮显示内容），返回 null 表示不显示设置按钮 */
+  getModeSettings?(): ModeSettingsPanel | null;
 }

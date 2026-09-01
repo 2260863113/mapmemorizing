@@ -5,6 +5,16 @@ import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgres
 import { formatElapsedSeconds } from '../ui/format';
 import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
 import { t } from '../i18n';
+import {
+  loadSelfAutoFollow,
+  loadSelfErrorRollback,
+  loadSelfRequireEnter,
+  SELF_FOLLOW_ZOOM,
+  saveSelfAutoFollow,
+  saveSelfErrorRollback,
+  saveSelfRequireEnter,
+  type ModeSettingsPanel,
+} from '../modeSettings';
 
 type SelfOrderMode = OrderMode;
 
@@ -33,8 +43,38 @@ export class SelfTestMode implements ModeController {
   private paused = false;
   private orderMode: SelfOrderMode = this.loadOrderMode();
   private wrongOrder: WrongOrderState = initWrongOrderState([], () => 0);
+  private requireEnter = loadSelfRequireEnter(); // 按下 Enter 确认
+  private errorRollback = loadSelfErrorRollback(); // 错误回滚：答错撤回重答
+  private autoFollow = loadSelfAutoFollow(); // 自动跟随（倍率固定默认值）
+  private rollbackCounted = new Set<string>(); // 错误回滚中已计入第一次答错的单位
+  private rollbacking = false; // 错误回滚展示中，暂不接受作答
+  private rollbackTimer: number | null = null; // 回滚延时定时器
 
   constructor(private ctx: ModeCtx) {}
+
+  getModeSettings(): ModeSettingsPanel | null {
+    return {
+      title: t('mode.self.title'),
+      toggles: [
+        { key: 'require-enter', label: t('settings.requireEnter'), value: this.requireEnter },
+        { key: 'error-rollback', label: t('settings.errorRollback'), value: this.errorRollback },
+        { key: 'auto-follow', label: t('settings.autoFollow'), value: this.autoFollow },
+      ],
+      onChange: (key, value) => {
+        if (key === 'require-enter') {
+          this.requireEnter = value;
+          saveSelfRequireEnter(value);
+          this.ctx.search.setRequireEnter(value);
+        } else if (key === 'error-rollback') {
+          this.errorRollback = value;
+          saveSelfErrorRollback(value);
+        } else if (key === 'auto-follow') {
+          this.autoFollow = value;
+          saveSelfAutoFollow(value);
+        }
+      },
+    };
+  }
 
   enter() {
     if (this.paused) {
@@ -62,6 +102,7 @@ export class SelfTestMode implements ModeController {
     this.restore();
     this.syncScopeView();
     this.ctx.search.setPlaceholder(t('self.placeholder'));
+    this.ctx.search.setRequireEnter(this.requireEnter);
     this.showStartHint();
     this.refresh();
     this.ctx.updateProgress();
@@ -72,6 +113,11 @@ export class SelfTestMode implements ModeController {
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
+    this.rollbacking = false;
+    if (this.rollbackTimer !== null) {
+      window.clearTimeout(this.rollbackTimer);
+      this.rollbackTimer = null;
+    }
     this.ctx.showTimer(null);
     this.ctx.showStopwatch(null);
   }
@@ -88,7 +134,7 @@ export class SelfTestMode implements ModeController {
     if (!this.started || !this.paused) return;
     this.paused = false;
     this.stopwatch.resume();
-    if (!this.ctx.settings.selfTimerEnabled) this.ctx.showTimer(null);
+    this.ctx.showTimer(null);
   }
 
   isPaused() {
@@ -128,13 +174,13 @@ export class SelfTestMode implements ModeController {
   }
 
   onSubmit(v: string) {
-    if (this.paused || !this.question || !v.trim()) return;
+    if (this.paused || this.rollbacking || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     this.answer(!!best && best.adcode === this.question);
   }
 
   onInput(v: string) {
-    if (this.paused || !this.question || !v.trim()) return;
+    if (this.paused || this.rollbacking || !this.question || !v.trim()) return;
     const best = this.ctx.matcher.bestUnit(v);
     if (best?.adcode === this.question) this.answer(true);
   }
@@ -157,7 +203,7 @@ export class SelfTestMode implements ModeController {
   }
 
   onSkip() {
-    if (!this.started || !this.question) return;
+    if (!this.started || this.rollbacking || !this.question) return;
     this.answer(false, false, false);
   }
 
@@ -275,6 +321,7 @@ export class SelfTestMode implements ModeController {
     this.ok = 0;
     this.fail = 0;
     this.results = [];
+    this.rollbackCounted.clear();
     this.wrongOrder = initWrongOrderState(scopedUnits(this.ctx.data, this.scopeProvince), this.scoreOf);
   }
 
@@ -320,7 +367,7 @@ export class SelfTestMode implements ModeController {
   private ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
-    if (this.ctx.settings.autoFollow) this.ctx.renderer.focusUnit(u.adcode, this.ctx.settings.followZoom);
+    if (this.autoFollow) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
@@ -331,13 +378,47 @@ export class SelfTestMode implements ModeController {
     this.ctx.showTimer(null);
     const q = this.question;
     if (!q) return;
+
+    // 错误回滚：第一次答错计入 fail/熟练度/进度红格，随后短暂显示红色并撤回，重答同一题直到答对
+    if (this.errorRollback && !correct) {
+      const name = this.ctx.byAdcode.get(q)?.name ?? q;
+      const firstWrong = !this.rollbackCounted.has(q);
+      if (firstWrong) {
+        this.rollbackCounted.add(q);
+        this.ctx.store.recordAnswer(q, false);
+        this.red.add(q);
+        this.fail++;
+        this.results.push('red');
+      }
+      this.question = null;
+      this.ctx.toast(timedOut ? t('self.timeoutAnswer', { name }) : t('self.correctAnswer', { name }));
+      this.persist();
+      // 先显示红色标记，短暂停留后撤回，恢复当前题（蓝色）重新作答
+      this.refresh();
+      this.rollbacking = true;
+      if (this.rollbackTimer !== null) window.clearTimeout(this.rollbackTimer);
+      this.rollbackTimer = window.setTimeout(() => {
+        this.rollbackTimer = null;
+        this.rollbacking = false;
+        this.red.delete(q);
+        this.question = q;
+        this.refresh();
+        this.ctx.search.clear();
+        this.ctx.search.focus();
+      }, 700);
+      return;
+    }
+
     this.question = null;
     if (scored) this.ctx.store.recordAnswer(q, correct);
     if (correct) {
       this.green.add(q);
-      this.ok++;
+      // 错误回滚后的最终答对：地图变绿，但不计入 ok/进度（进度保留第一次红格），也不重复记熟练度
+      if (!this.rollbackCounted.has(q)) {
+        this.ok++;
+        this.results.push('green');
+      }
       this.lastGreen = q;
-      this.results.push('green');
       this.ctx.renderer.flash(q);
     } else {
       this.red.add(q);

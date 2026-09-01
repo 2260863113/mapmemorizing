@@ -5,6 +5,7 @@ import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgres
 import { formatElapsedSeconds } from '../ui/format';
 import { initWrongOrderState, pickWrongNext, type WrongOrderState } from './wrongOrder';
 import { t } from '../i18n';
+import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
 
 /** 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。 */
 export class ClickMode implements ModeController {
@@ -25,8 +26,25 @@ export class ClickMode implements ModeController {
   private syncingScope = false;
   private orderMode: ClickOrderMode = this.loadOrderMode();
   private wrongOrder: WrongOrderState = initWrongOrderState([], () => 0);
+  private errorRollback = loadClickErrorRollback(); // 错误回滚：答错撤回重答
+  private rollbackCounted = new Set<string>(); // 错误回滚中已计入第一次答错的单位
+  private rollbacking = false; // 错误回滚展示中，暂不接受作答
+  private rollbackTimer: number | null = null; // 回滚延时定时器
 
   constructor(private ctx: ModeCtx) {}
+
+  getModeSettings(): ModeSettingsPanel | null {
+    return {
+      title: t('mode.click.title'),
+      toggles: [{ key: 'error-rollback', label: t('settings.errorRollback'), value: this.errorRollback }],
+      onChange: (key, value) => {
+        if (key === 'error-rollback') {
+          this.errorRollback = value;
+          saveClickErrorRollback(value);
+        }
+      },
+    };
+  }
 
   enter() {
     if (this.paused) {
@@ -51,6 +69,11 @@ export class ClickMode implements ModeController {
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
+    this.rollbacking = false;
+    if (this.rollbackTimer !== null) {
+      window.clearTimeout(this.rollbackTimer);
+      this.rollbackTimer = null;
+    }
     this.ctx.showTimer(null);
     this.ctx.showStopwatch(null);
   }
@@ -103,7 +126,7 @@ export class ClickMode implements ModeController {
   onInput() {}
 
   onUnitClick(adcode: string) {
-    if (this.paused) return true;
+    if (this.paused || this.rollbacking) return true;
     if (!this.started || !this.question) return false;
     const clicked = this.ctx.byAdcode.get(adcode);
     if (!clicked || (this.scopeProvince !== null && clicked.provinceAdcode !== this.scopeProvince)) return true;
@@ -121,7 +144,7 @@ export class ClickMode implements ModeController {
   }
 
   onSkip() {
-    if (!this.started || !this.question) return;
+    if (!this.started || this.rollbacking || !this.question) return;
     this.answer(false, false);
   }
 
@@ -134,6 +157,11 @@ export class ClickMode implements ModeController {
     this.ctx.showStopwatch(null);
     this.started = false;
     this.paused = false;
+    this.rollbacking = false;
+    if (this.rollbackTimer !== null) {
+      window.clearTimeout(this.rollbackTimer);
+      this.rollbackTimer = null;
+    }
     this.clearSaved();
     this.enter();
   }
@@ -216,6 +244,7 @@ export class ClickMode implements ModeController {
     this.results = [];
     this.ok = 0;
     this.fail = 0;
+    this.rollbackCounted.clear();
     this.wrongOrder = initWrongOrderState(scopedUnits(this.ctx.data, this.scopeProvince), this.scoreOf);
     const saved = loadProgress(this.storageKey(), this.order);
     this.green = saved.green;
@@ -294,13 +323,45 @@ export class ClickMode implements ModeController {
   private answer(correct: boolean, scored = true) {
     const q = this.question;
     if (!q) return;
+
+    // 错误回滚：第一次答错计入 fail/熟练度/进度红格，随后短暂显示红色并撤回，重答同一题直到答对
+    if (this.errorRollback && !correct) {
+      const name = this.ctx.byAdcode.get(q)?.name ?? q;
+      const firstWrong = !this.rollbackCounted.has(q);
+      if (firstWrong) {
+        this.rollbackCounted.add(q);
+        this.ctx.store.recordAnswer(q, false);
+        this.red.add(q);
+        this.fail += 1;
+        this.results.push('red');
+      }
+      this.question = null;
+      this.ctx.toast(t('click.correctAnswer', { name }));
+      this.persist();
+      // 先显示红色标记，短暂停留后撤回，恢复当前题（灰色）重新作答
+      this.refresh();
+      this.rollbacking = true;
+      if (this.rollbackTimer !== null) window.clearTimeout(this.rollbackTimer);
+      this.rollbackTimer = window.setTimeout(() => {
+        this.rollbackTimer = null;
+        this.rollbacking = false;
+        this.red.delete(q);
+        this.question = q;
+        this.refresh();
+      }, 700);
+      return;
+    }
+
     this.question = null;
     if (scored) this.ctx.store.recordAnswer(q, correct);
     if (correct) {
       this.green.add(q);
-      this.ok += 1;
+      // 错误回滚后的最终答对：地图变绿，但不计入 ok/进度（进度保留第一次红格），也不重复记熟练度
+      if (!this.rollbackCounted.has(q)) {
+        this.ok += 1;
+        this.results.push('green');
+      }
       this.ctx.toast(t('click.correctToast'));
-      this.results.push('green');
       this.ctx.renderer.flash(q);
     } else {
       this.red.add(q);

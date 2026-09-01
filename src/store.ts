@@ -126,11 +126,6 @@ function finiteCount(value: unknown) {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  selfTimerEnabled: false,
-  selfTimerSeconds: 60,
-  requireEnter: true,
-  autoFollow: true,
-  followZoom: 12,
   cityBoundaryTone: 'light',
   provinceBoundaryTone: 'dark',
   darkMode: false,
