@@ -19,6 +19,8 @@ export interface LeaderboardEntry {
   level?: number;
   /** 用户所在地 adcode 对（个人资料填写），未填写为 null */
   hometown: { provinceAdcode: string; cityAdcode: string } | null;
+  /** 用户头像 dataUrl，未填写为 null */
+  avatar: string | null;
 }
 
 export type SubmitResult = 'added' | 'improved' | 'kept';

@@ -1,6 +1,7 @@
 import { LeaderboardStore, type LeaderboardEntry, type LeaderboardMode } from '../leaderboardStore';
 import { formatElapsedCentiseconds } from './format';
 import { normalize, normalizeProvince } from '../matcher';
+import { avatarHtml } from './avatar';
 import type { AppData } from '../types';
 import { t } from '../i18n';
 
@@ -39,7 +40,8 @@ export class LeaderboardPanel {
         const loc = this.hometownText(entry.hometown);
         // 始终渲染 loc 占位：无所在地时内容为空，但保持 time 列固定在第 4 列右对齐
         const locHtml = `<span class="leaderboard-loc">${escapeHtml(loc)}</span>`;
-        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
+        const avatar = avatarHtml({ username: entry.username, avatar: entry.avatar });
+        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${avatar}${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
       })
       .join('')}</div>`;
   }

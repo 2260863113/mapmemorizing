@@ -1,6 +1,7 @@
 import { verifySession } from '../../_lib/auth';
 import { json, readJson, handle } from '../../_lib/http';
 import { MAX_POST_LEN, cleanBoardText, parseBefore, parseLimit, parsePositiveInt } from '../../_lib/board';
+import { parseJson } from '../../_lib/rows';
 
 interface ReplyRow {
   id: number;
@@ -8,6 +9,7 @@ interface ReplyRow {
   content: string;
   created_at: number;
   username: string;
+  avatar: string | null;
 }
 
 interface PostRow {
@@ -15,6 +17,7 @@ interface PostRow {
   content: string;
   created_at: number;
   username: string;
+  avatar: string | null;
 }
 
 export interface BoardReplyDto {
@@ -23,6 +26,7 @@ export interface BoardReplyDto {
   content: string;
   createdAt: number;
   username: string;
+  avatar: string | null;
 }
 
 export interface BoardPostDto {
@@ -30,6 +34,7 @@ export interface BoardPostDto {
   content: string;
   createdAt: number;
   username: string;
+  avatar: string | null;
   replyCount: number;
   replies: BoardReplyDto[];
 }
@@ -39,7 +44,7 @@ const PREVIEW_REPLIES = 3;
 /** 按 reply id 倒序分页拉取某帖的更多回复（before=0 表示从最新开始）。 */
 async function fetchReplies(env: { DB: import('@cloudflare/workers-types').D1Database }, postId: number, before: number, limit: number): Promise<BoardReplyDto[]> {
   const rows = await env.DB.prepare(
-    `SELECT r.id, r.post_id, r.content, r.created_at, u.username
+    `SELECT r.id, r.post_id, r.content, r.created_at, u.username, u.avatar
      FROM board_replies r JOIN users u ON u.id = r.user_id
      WHERE r.post_id = ? AND (? = 0 OR r.id < ?)
      ORDER BY r.id DESC
@@ -52,7 +57,11 @@ async function fetchReplies(env: { DB: import('@cloudflare/workers-types').D1Dat
 }
 
 function toReply(row: ReplyRow): BoardReplyDto {
-  return { id: row.id, postId: row.post_id, content: row.content, createdAt: row.created_at, username: row.username };
+  return { id: row.id, postId: row.post_id, content: row.content, createdAt: row.created_at, username: row.username, avatar: avatarOf(row.avatar) };
+}
+
+function avatarOf(json: string | null): string | null {
+  return parseJson<{ dataUrl: string }>(json)?.dataUrl ?? null;
 }
 
 export const onRequestGet = handle(async (context) => {
@@ -73,7 +82,7 @@ export const onRequestGet = handle(async (context) => {
   // 帖子列表（按 id 倒序分页，每帖带预览回复）
   const before = parseBefore(beforeParam);
   const postRows = await env.DB.prepare(
-    `SELECT p.id, p.content, p.created_at, u.username
+    `SELECT p.id, p.content, p.created_at, u.username, u.avatar
      FROM board_posts p JOIN users u ON u.id = p.user_id
      WHERE ? = 0 OR p.id < ?
      ORDER BY p.id DESC
@@ -91,6 +100,7 @@ export const onRequestGet = handle(async (context) => {
       content: row.content,
       createdAt: row.created_at,
       username: row.username,
+      avatar: avatarOf(row.avatar),
       replyCount: countRow?.c ?? 0,
       replies: preview,
     });
@@ -113,6 +123,14 @@ export const onRequestPost = handle(async (context) => {
     .run();
   const id = Number(result.meta.last_row_id);
 
-  const post: BoardPostDto = { id, content, createdAt: now, username: session.user.username, replyCount: 0, replies: [] };
+  const post: BoardPostDto = {
+    id,
+    content,
+    createdAt: now,
+    username: session.user.username,
+    avatar: parseJson<{ dataUrl: string }>(session.user.avatar)?.dataUrl ?? null,
+    replyCount: 0,
+    replies: [],
+  };
   return json({ post }, 201);
 });

@@ -4,7 +4,7 @@ import type { AppData, AuthUser, UserAvatar, UserHometown } from '../types';
 import { t } from '../i18n';
 import { $, toast } from './dom';
 
-type AuthView = 'login' | 'register' | 'profile';
+type AuthView = 'login' | 'register' | 'profile' | 'password';
 
 interface LocationState {
   provinceAdcode: string;
@@ -42,10 +42,14 @@ export class AuthPanel {
       event.stopPropagation();
       this.toggleMenu();
     });
-    document.addEventListener('click', () => this.closeMenu());
+    document.addEventListener('click', () => {
+      this.closeMenu();
+      this.closeDropdowns();
+    });
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         this.closeMenu();
+        this.closeDropdowns();
         this.closeOverlay();
       }
     });
@@ -71,7 +75,7 @@ export class AuthPanel {
     this.menu.innerHTML = '';
     this.menu.append(
       this.menuButton(t('auth.menu.profile'), () => this.openProfile(), !user),
-      this.menuButton(t('auth.menu.login'), () => this.openLogin()),
+      this.menuButton(t('auth.menu.changePassword'), () => this.openPassword(), !user),
       this.menuButton(t('auth.menu.logout'), () => this.logout(), !user),
     );
   }
@@ -123,6 +127,14 @@ export class AuthPanel {
     this.openOverlay('profile');
   }
 
+  private openPassword() {
+    if (!this.store.currentUser()) {
+      this.openLogin();
+      return;
+    }
+    this.openOverlay('password');
+  }
+
   private openOverlay(view: AuthView) {
     this.overlay.classList.remove('hidden');
     this.renderView(view);
@@ -142,6 +154,7 @@ export class AuthPanel {
   private renderView(view: AuthView) {
     if (view === 'login') this.renderLogin();
     else if (view === 'register') this.renderRegister();
+    else if (view === 'password') this.renderPassword();
     else this.renderProfile();
   }
 
@@ -193,14 +206,15 @@ export class AuthPanel {
       </div>
       <label class="form-row">${t('auth.profile.username')}<input id="auth-profile-name" type="text" maxlength="24" value="${escapeAttr(user.username)}" autocomplete="username" /></label>
       <div class="location-grid">
-        <label class="form-row">${t('auth.profile.province')}<input id="auth-profile-province" type="text" value="${escapeAttr(province?.name ?? '')}" placeholder="${t('auth.profile.provincePlaceholder')}" autocomplete="off" /></label>
-        <label class="form-row">${t('auth.profile.city')}<input id="auth-profile-city" type="text" value="${escapeAttr(city?.name ?? '')}" placeholder="${t('auth.profile.cityPlaceholder')}" autocomplete="off" /></label>
-        <div id="auth-province-options" class="auth-options"></div>
-        <div id="auth-city-options" class="auth-options"></div>
+        <div class="auth-select-wrap">
+          <label class="form-row">${t('auth.profile.province')}<input id="auth-profile-province" type="text" value="${escapeAttr(province?.name ?? '')}" placeholder="${t('auth.profile.provincePlaceholder')}" autocomplete="off" /></label>
+          <div id="auth-province-options" class="auth-options"></div>
+        </div>
+        <div class="auth-select-wrap">
+          <label class="form-row">${t('auth.profile.city')}<input id="auth-profile-city" type="text" value="${escapeAttr(city?.name ?? '')}" placeholder="${t('auth.profile.cityPlaceholder')}" autocomplete="off" /></label>
+          <div id="auth-city-options" class="auth-options"></div>
+        </div>
       </div>
-      <div class="settings-section-title">${t('auth.profile.changePassword')}</div>
-      <label class="form-row">${t('auth.profile.oldPassword')}<input id="auth-old-password" type="password" autocomplete="current-password" /></label>
-      <label class="form-row">${t('auth.profile.newPassword')}<input id="auth-new-password" type="password" autocomplete="new-password" /></label>
       <p id="auth-message" class="auth-message"></p>
       <div class="card-actions">
         <button id="auth-profile-save" class="primary" type="button">${t('auth.profile.save')}</button>
@@ -216,9 +230,11 @@ export class AuthPanel {
     const cityInput = $('auth-profile-city') as HTMLInputElement;
     const avatarInput = $('auth-avatar-file') as HTMLInputElement;
 
-    this.renderProvinceOptions(provinceInput.value);
-    this.renderCityOptions(cityInput.value);
-
+    provinceInput.addEventListener('click', (event) => event.stopPropagation());
+    provinceInput.addEventListener('focus', () => {
+      this.openDropdown('auth-province-options');
+      this.renderProvinceOptions(provinceInput.value);
+    });
     provinceInput.addEventListener('input', () => {
       const province = this.matchProvince(provinceInput.value);
       if (province?.adcode !== this.location.provinceAdcode) {
@@ -226,17 +242,50 @@ export class AuthPanel {
         this.location.cityAdcode = '';
         cityInput.value = '';
       }
+      this.openDropdown('auth-province-options');
       this.renderProvinceOptions(provinceInput.value);
       this.renderCityOptions(cityInput.value);
     });
+    cityInput.addEventListener('click', (event) => event.stopPropagation());
+    cityInput.addEventListener('focus', () => {
+      if (!this.location.provinceAdcode) {
+        this.openDropdown('auth-city-options');
+        this.renderEmptyCityOptions();
+        return;
+      }
+      this.openDropdown('auth-city-options');
+      this.renderCityOptions(cityInput.value);
+    });
     cityInput.addEventListener('input', () => {
+      if (!this.location.provinceAdcode) {
+        this.openDropdown('auth-city-options');
+        this.renderEmptyCityOptions();
+        return;
+      }
       const city = this.matchCity(cityInput.value);
       this.location.cityAdcode = city?.adcode ?? '';
+      this.openDropdown('auth-city-options');
       this.renderCityOptions(cityInput.value);
     });
     avatarInput.addEventListener('change', () => this.readAvatar(avatarInput));
     $('auth-profile-save').addEventListener('click', () => this.submitProfile());
     $('auth-profile-cancel').addEventListener('click', () => this.closeOverlay());
+  }
+
+  /** 展开指定下拉并记录当前激活的下拉（用于点外部收起）。 */
+  private openDropdown(hostId: string) {
+    document.querySelectorAll<HTMLElement>('.auth-options').forEach((el) => {
+      const isTarget = el.id === hostId;
+      el.classList.toggle('open', isTarget);
+      el.classList.toggle('hidden', !isTarget);
+    });
+  }
+
+  private closeDropdowns() {
+    document.querySelectorAll<HTMLElement>('.auth-options').forEach((el) => {
+      el.classList.remove('open');
+      el.classList.add('hidden');
+    });
   }
 
   private renderProvinceOptions(input: string) {
@@ -252,8 +301,7 @@ export class AuthPanel {
         this.location.cityAdcode = '';
         ($('auth-profile-province') as HTMLInputElement).value = province.name;
         ($('auth-profile-city') as HTMLInputElement).value = '';
-        this.renderProvinceOptions(province.name);
-        this.renderCityOptions('');
+        this.closeDropdowns();
       });
       host.append(btn);
     }
@@ -262,6 +310,10 @@ export class AuthPanel {
   private renderCityOptions(input: string) {
     const host = $('auth-city-options');
     host.innerHTML = '';
+    if (!this.location.provinceAdcode) {
+      this.renderEmptyCityOptions();
+      return;
+    }
     const rows = this.rankCities(input).slice(0, 10);
     for (const city of rows) {
       const btn = document.createElement('button');
@@ -270,10 +322,15 @@ export class AuthPanel {
       btn.addEventListener('click', () => {
         this.location.cityAdcode = city.adcode;
         ($('auth-profile-city') as HTMLInputElement).value = city.name;
-        this.renderCityOptions(city.name);
+        this.closeDropdowns();
       });
       host.append(btn);
     }
+  }
+
+  private renderEmptyCityOptions() {
+    const host = $('auth-city-options');
+    host.innerHTML = `<span class="auth-options-empty">${t('auth.profile.selectProvinceFirst')}</span>`;
   }
 
   private async submitLogin() {
@@ -308,8 +365,6 @@ export class AuthPanel {
 
   private async submitProfile() {
     const username = ($('auth-profile-name') as HTMLInputElement).value;
-    const oldPassword = ($('auth-old-password') as HTMLInputElement).value;
-    const newPassword = ($('auth-new-password') as HTMLInputElement).value;
     const provinceText = ($('auth-profile-province') as HTMLInputElement).value.trim();
     const cityText = ($('auth-profile-city') as HTMLInputElement).value.trim();
     const hometown = this.resolveHometown(provinceText, cityText);
@@ -321,13 +376,57 @@ export class AuthPanel {
       username,
       hometown,
       avatar: this.avatar,
-      oldPassword: oldPassword || undefined,
-      newPassword: newPassword || undefined,
     };
     try {
       await this.store.updateProfile(update);
       this.closeOverlay();
       toast(t('auth.toast.profileSaved'));
+    } catch (error) {
+      this.showMessage(errorMessage(error));
+    }
+  }
+
+  private renderPassword() {
+    const user = this.store.currentUser();
+    if (!user) {
+      this.openLogin();
+      return;
+    }
+    this.card.innerHTML = `
+      <h3>${t('auth.password.title')}</h3>
+      <label class="form-row">${t('auth.password.oldPassword')}<input id="auth-old-password" type="password" autocomplete="current-password" /></label>
+      <label class="form-row">${t('auth.password.newPassword')}<input id="auth-new-password" type="password" autocomplete="new-password" /></label>
+      <label class="form-row">${t('auth.password.confirm')}<input id="auth-confirm-password" type="password" autocomplete="new-password" /></label>
+      <p id="auth-message" class="auth-message"></p>
+      <div class="card-actions">
+        <button id="auth-password-save" class="primary" type="button">${t('auth.password.save')}</button>
+        <button id="auth-password-cancel" class="ghost" type="button">${t('auth.password.cancel')}</button>
+      </div>
+    `;
+    $('auth-password-save').addEventListener('click', () => this.submitPassword());
+    $('auth-password-cancel').addEventListener('click', () => this.closeOverlay());
+  }
+
+  private async submitPassword() {
+    const oldPassword = ($('auth-old-password') as HTMLInputElement).value;
+    const newPassword = ($('auth-new-password') as HTMLInputElement).value;
+    const confirm = ($('auth-confirm-password') as HTMLInputElement).value;
+    if (!oldPassword) {
+      this.showMessage(t('auth.error.oldPasswordRequired'));
+      return;
+    }
+    if (!newPassword) {
+      this.showMessage(t('auth.error.passwordRequired'));
+      return;
+    }
+    if (newPassword !== confirm) {
+      this.showMessage(t('auth.error.passwordMismatch'));
+      return;
+    }
+    try {
+      await this.store.changePassword(oldPassword, newPassword);
+      this.closeOverlay(false);
+      toast(t('auth.toast.passwordChanged'));
     } catch (error) {
       this.showMessage(errorMessage(error));
     }
@@ -341,18 +440,20 @@ export class AuthPanel {
   private async readAvatar(input: HTMLInputElement) {
     const file = input.files?.[0];
     if (!file) return;
-    if (file.size > MAX_AVATAR_SIZE) {
-      input.value = '';
-      this.showMessage(t('auth.toast.avatarTooLarge'));
-      return;
-    }
     if (!file.type.startsWith('image/')) {
       input.value = '';
       this.showMessage(t('auth.toast.chooseImage'));
       return;
     }
-    const dataUrl = await fileToDataUrl(file);
-    this.avatar = { dataUrl, name: file.name, size: file.size, type: file.type };
+    let compressed: { dataUrl: string; size: number; type: string };
+    try {
+      compressed = await compressImage(file, MAX_AVATAR_SIZE);
+    } catch (error) {
+      input.value = '';
+      this.showMessage(errorMessage(error));
+      return;
+    }
+    this.avatar = { dataUrl: compressed.dataUrl, name: file.name, size: compressed.size, type: compressed.type };
     const preview = document.querySelector<HTMLElement>('.profile-avatar');
     if (preview) this.paintAvatar(preview, { username: this.store.currentUser()?.username ?? '', avatar: this.avatar });
     this.showMessage(t('auth.toast.avatarSelected'));
@@ -470,12 +571,47 @@ function initialOf(username: string) {
   return ch ? ch.toLocaleUpperCase() : '?';
 }
 
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error(t('auth.error.avatarReadFail')));
-    reader.readAsDataURL(file);
+/** 头像压缩：canvas 缩放（最长边 128px）→ 透明补白 → JPEG 质量逐档降到 ≤maxBytes。压到底仍超则抛错。 */
+async function compressImage(
+  file: File,
+  maxBytes: number,
+): Promise<{ dataUrl: string; size: number; type: string }> {
+  const img = await loadImage(file);
+  const maxEdge = 128;
+  const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error(t('auth.error.avatarCompressFail'));
+  // 透明背景补白（PNG/GIF 转 JPEG 时避免黑底）
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+
+  for (const quality of [0.85, 0.72, 0.6, 0.5, 0.4, 0.3, 0.22, 0.15, 0.1, 0.08]) {
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    const size = Math.round(((dataUrl.length - 'data:image/jpeg;base64,'.length) * 3) / 4);
+    if (size <= maxBytes) return { dataUrl, size, type: 'image/jpeg' };
+  }
+  throw new Error(t('auth.toast.avatarTooLarge'));
+}
+
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(t('auth.error.avatarReadFail')));
+    };
+    img.src = url;
   });
 }
 

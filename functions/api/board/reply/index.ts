@@ -1,6 +1,7 @@
 import { verifySession } from '../../../_lib/auth';
 import { json, readJson, handle } from '../../../_lib/http';
 import { MAX_REPLY_LEN, cleanBoardText, parsePositiveInt } from '../../../_lib/board';
+import { parseJson } from '../../../_lib/rows';
 import type { BoardReplyDto } from '../index';
 
 export const onRequestPost = handle(async (context) => {
@@ -22,6 +23,13 @@ export const onRequestPost = handle(async (context) => {
     .run();
   const id = Number(result.meta.last_row_id);
 
-  const reply: BoardReplyDto = { id, postId, content, createdAt: now, username: session.user.username };
+  const reply: BoardReplyDto = {
+    id,
+    postId,
+    content,
+    createdAt: now,
+    username: session.user.username,
+    avatar: parseJson<{ dataUrl: string }>(session.user.avatar)?.dataUrl ?? null,
+  };
   return json({ reply }, 201);
 });

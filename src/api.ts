@@ -7,6 +7,7 @@ export interface BoardPost {
   content: string;
   createdAt: number;
   username: string;
+  avatar: string | null;
   replyCount: number;
   replies: BoardReply[];
 }
@@ -18,6 +19,7 @@ export interface BoardReply {
   content: string;
   createdAt: number;
   username: string;
+  avatar: string | null;
 }
 
 /** 统一 fetch 封装：部署后与 Pages Functions 同源（相对路径 /api）；本地 dev 由 vite 代理转发。 */

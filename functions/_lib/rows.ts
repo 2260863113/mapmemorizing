@@ -24,6 +24,8 @@ export interface LeaderboardEntry {
   level?: number;
   /** 用户所在地 adcode 对（个人资料填写），未填写为 null */
   hometown: { provinceAdcode: string; cityAdcode: string } | null;
+  /** 用户头像 dataUrl（个人资料填写），未填写为 null */
+  avatar: string | null;
 }
 
 /** 服务端绝不返回密码哈希。 */
@@ -50,6 +52,7 @@ export interface LeaderboardRow {
   level: number | null;
   username: string;
   hometown: string | null;
+  avatar: string | null;
 }
 
 export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
@@ -64,6 +67,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     elapsedMs: row.elapsed_ms,
     submittedAt: row.submitted_at,
     hometown: parseJson<{ provinceAdcode: string; cityAdcode: string }>(row.hometown),
+    avatar: parseJson<{ dataUrl: string }>(row.avatar)?.dataUrl ?? null,
   };
   if (row.mode === 'endless') {
     entry.coins = row.coins ?? 0;
@@ -72,7 +76,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
   return entry;
 }
 
-function parseJson<T>(value: string | null): T | null {
+export function parseJson<T>(value: string | null): T | null {
   if (!value) return null;
   try {
     return JSON.parse(value) as T;

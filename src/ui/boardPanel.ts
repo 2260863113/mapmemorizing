@@ -1,7 +1,8 @@
 import { BoardStore } from '../boardStore';
 import type { AuthStore } from '../authStore';
 import type { AuthPanel } from './authPanel';
-import type { BoardPost } from '../api';
+import { avatarHtml } from './avatar';
+import type { BoardPost, BoardReply } from '../api';
 import { t } from '../i18n';
 
 const MAX_POST = 200;
@@ -82,7 +83,7 @@ export class BoardPanel {
     const expanded = this.store.isExpanded(post.id);
     const expandedReplies = this.store.getExpandedReplies(post.id);
     const visibleReplies = expandedReplies ?? post.replies.slice(0, 3);
-    const repliesHtml = visibleReplies.map((r) => this.renderReply(post.id, r.id, r.username, r.content, r.createdAt)).join('');
+    const repliesHtml = visibleReplies.map((r) => this.renderReply(post.id, r)).join('');
     const hiddenCount = post.replyCount - visibleReplies.length;
     const expandBtn = expanded
       ? `<button class="board-expand" data-action="collapse" data-post="${post.id}" type="button">${t('board.collapse')}</button>`
@@ -90,10 +91,12 @@ export class BoardPanel {
         ? `<button class="board-expand" data-action="expand" data-post="${post.id}" type="button">${t('board.expand', { count: hiddenCount })}</button>`
         : '';
     const replyInput = this.expandedReplyInput === post.id ? this.renderReplyInput(post.id) : '';
+    const postAvatar = avatarHtml({ username: post.username, avatar: post.avatar });
 
     return `
       <div class="board-post" data-post="${post.id}">
         <div class="board-post-head">
+          ${postAvatar}
           <span class="board-author">${escapeHtml(post.username)}</span>
           <span class="board-time">${formatRelative(post.createdAt)}</span>
           ${mine ? `<button class="board-delete" data-action="delete-post" data-post="${post.id}" type="button">${t('board.delete')}</button>` : ''}
@@ -109,17 +112,19 @@ export class BoardPanel {
     `;
   }
 
-  private renderReply(postId: number, replyId: number, username: string, content: string, createdAt: number): string {
+  private renderReply(postId: number, reply: BoardReply): string {
     const user = this.auth.currentUser();
-    const mine = user !== null && user.username === username;
+    const mine = user !== null && user.username === reply.username;
+    const replyAvatar = avatarHtml({ username: reply.username, avatar: reply.avatar });
     return `
-      <div class="board-reply" data-reply="${replyId}">
+      <div class="board-reply" data-reply="${reply.id}">
         <div class="board-reply-head">
-          <span class="board-author">${escapeHtml(username)}</span>
-          <span class="board-time">${formatRelative(createdAt)}</span>
-          ${mine ? `<button class="board-delete" data-action="delete-reply" data-post="${postId}" data-reply="${replyId}" type="button">${t('board.delete')}</button>` : ''}
+          ${replyAvatar}
+          <span class="board-author">${escapeHtml(reply.username)}</span>
+          <span class="board-time">${formatRelative(reply.createdAt)}</span>
+          ${mine ? `<button class="board-delete" data-action="delete-reply" data-post="${postId}" data-reply="${reply.id}" type="button">${t('board.delete')}</button>` : ''}
         </div>
-        <div class="board-content">${escapeHtml(content)}</div>
+        <div class="board-content">${escapeHtml(reply.content)}</div>
       </div>
     `;
   }

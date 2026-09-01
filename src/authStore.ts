@@ -146,6 +146,43 @@ export class AuthStore {
     return res.user;
   }
 
+  /** 独立修改密码：保留用户名/所在地/头像不变，仅替换密码哈希。 */
+  async changePassword(oldPassword: string, newPassword: string): Promise<UserProfile> {
+    const session = this.session;
+    if (!session) throw new Error(t('auth.error.loginRequired'));
+    const username = session.user.username;
+    if (!validPassword(newPassword)) throw new Error(t('auth.error.newPasswordTooShort'));
+
+    let saltInfo: { salt: string; iterations: number };
+    try {
+      saltInfo = await api.salt(username);
+    } catch {
+      throw new Error(t('auth.error.network'));
+    }
+    const oldPasswordHash = await hashWithSalt(oldPassword, saltInfo.salt, saltInfo.iterations);
+    const newPasswordHash = await hashPassword(newPassword);
+
+    let res;
+    try {
+      res = await api.updateProfile(session.token, {
+        username,
+        hometown: session.user.hometown,
+        avatar: session.user.avatar,
+        oldPasswordHash,
+        newPasswordHash,
+      });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === 'old_password_wrong') throw new Error(t('auth.error.oldPasswordWrong'));
+      }
+      throw new Error(t('auth.error.network'));
+    }
+
+    this.session = { token: session.token, user: res.user };
+    this.persist();
+    return res.user;
+  }
+
   private load(): SessionState | null {
     try {
       const raw = localStorage.getItem(SESSION_KEY);

@@ -22,7 +22,7 @@ export const onRequestGet = handle(async (context) => {
 
   const rows = await env.DB.prepare(
     `SELECT l.id, l.mode, l.scope_province, l.scope_label, l.total_units, l.correct, l.elapsed_ms,
-            l.submitted_at, l.coins, l.level, u.username, u.hometown
+            l.submitted_at, l.coins, l.level, u.username, u.hometown, u.avatar
      FROM leaderboard l JOIN users u ON u.id = l.user_id
      WHERE l.mode = ? AND l.scope_province = ?
      ORDER BY ${orderBy}
