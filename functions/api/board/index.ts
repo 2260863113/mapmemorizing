@@ -1,6 +1,6 @@
 import { verifySession } from '../../_lib/auth';
 import { json, readJson, handle } from '../../_lib/http';
-import { MAX_POST_LEN, cleanBoardText, parseLimit, parsePositiveInt } from '../../_lib/board';
+import { MAX_POST_LEN, cleanBoardText, parseBefore, parseLimit, parsePositiveInt } from '../../_lib/board';
 
 interface ReplyRow {
   id: number;
@@ -65,13 +65,13 @@ export const onRequestGet = handle(async (context) => {
   // 某帖的更多回复（按回复 id 倒序分页）
   if (postParam) {
     const postId = parsePositiveInt(postParam, '帖子ID');
-    const before = beforeParam ? parsePositiveInt(beforeParam, '回复ID') : 0;
+    const before = parseBefore(beforeParam);
     const replies = await fetchReplies(env, postId, before, limit);
     return json({ replies });
   }
 
   // 帖子列表（按 id 倒序分页，每帖带预览回复）
-  const before = beforeParam ? parsePositiveInt(beforeParam, '帖子ID') : 0;
+  const before = parseBefore(beforeParam);
   const postRows = await env.DB.prepare(
     `SELECT p.id, p.content, p.created_at, u.username
      FROM board_posts p JOIN users u ON u.id = p.user_id

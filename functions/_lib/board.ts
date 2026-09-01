@@ -24,6 +24,14 @@ export function parsePositiveInt(value: string | undefined, label: string): numb
   return n;
 }
 
+/** 解析分页游标 before：缺省或 0 表示从最新开始（合法）；非法抛 ApiError 400。 */
+export function parseBefore(value: string | null): number {
+  if (!value) return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) throw new ApiError(400, 'invalid_param', '分页游标无效');
+  return n;
+}
+
 /** 解析 limit，钳制到 [1, MAX_LIMIT]。 */
 export function parseLimit(value: string | null): number {
   const n = Number(value);
