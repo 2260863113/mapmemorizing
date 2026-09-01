@@ -141,6 +141,7 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const CITY_LABEL_SIZE = 14;
 const PRICE_LABEL_SIZE = 18; // 价格标签字号（随缩放缩放）
+const PROVINCE_LABEL_SIZE = 15; // 省名标签字号（每日竞速作答反馈）
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
@@ -215,6 +216,7 @@ export class MapRenderer {
   private adcodeToUnit = new Map<string, Unit>();
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
+  private provinceLabelAnchors = new Map<string, GeoPoint>();
   private viewProvince: string | null = null;
   private center: [number, number] = [104.5, 35];
   private zoom = 1;
@@ -242,6 +244,7 @@ export class MapRenderer {
     }
     this.provinceLines = this.buildProvinceLines();
     this.labelAnchors = this.buildLabelAnchors();
+    this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
 
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
@@ -409,6 +412,20 @@ export class MapRenderer {
     return out;
   }
 
+  /** 省级名字标签锚点：从省界 GeoJSON 计算（每日竞速省名标签用）。 */
+  private buildProvinceLabelAnchors(): Map<string, GeoPoint> {
+    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
+    const out = new Map<string, GeoPoint>();
+    for (const feature of geo.features ?? []) {
+      const adcode = feature.properties.adcode;
+      if (!adcode) continue;
+      const polygons = polygonsOf(feature);
+      if (!polygons.length) continue;
+      out.set(adcode, bestLabelAnchor(polygons));
+    }
+    return out;
+  }
+
   private labelAnchorOf(u: Unit): GeoPoint {
     return this.labelAnchors.get(u.adcode) ?? u.center;
   }
@@ -461,7 +478,25 @@ export class MapRenderer {
     });
   }
 
+  /** 每日竞速省名标签：已作答省份的简称（答对绿字/答错红字），始终显示不随缩放消失。 */
+  private buildProvinceLabelData(state: RenderState): LabelPoint[] {
+    if (!state.provinceLabel || !this.provinceMode) return [];
+    const theme = this.theme();
+    const out: LabelPoint[] = [];
+    for (const p of this.data.provinces) {
+      const lab = state.provinceLabel(p.adcode);
+      if (!lab) continue;
+      const anchor = this.provinceLabelAnchors.get(p.adcode);
+      if (!anchor) continue;
+      const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
+      out.push({ name: p.name, value: [...anchor, lab.text, color, 0, 0] });
+    }
+    return out;
+  }
+
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
+    // 省级模式：彻底禁用地级市地名标签（省名标签由 province-labels 系列单独渲染）
+    if (this.provinceMode) return 'none';
     const threshold = state?.labelZoomThreshold ?? LABEL_ZOOM;
     return this.zoom > threshold ? 'city' : 'none';
   }
@@ -474,7 +509,12 @@ export class MapRenderer {
     this.labelMode = mode;
     this.labelScaleApplied = scale;
     if (changed && this.lastState) {
-      this.chart.setOption({ series: [{ id: 'city-labels', data: this.buildLabelData(this.lastState) }] } as never);
+      this.chart.setOption({
+        series: [
+          { id: 'city-labels', data: this.buildLabelData(this.lastState) },
+          { id: 'province-labels', data: this.buildProvinceLabelData(this.lastState) },
+        ],
+      } as never);
     }
   }
 
@@ -495,6 +535,7 @@ export class MapRenderer {
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
     const cityData = this.units.map((u) => ({ name: u.name }));
     const labelData = this.buildLabelData(state);
+    const provinceLabelData = this.buildProvinceLabelData(state);
     const theme = this.theme();
 
     const option: echarts.EChartsOption = {
@@ -564,7 +605,7 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: this.provinceMode ? 3.2 : 2.4, opacity: 1 },
+          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
           data: this.buildLineData(),
         },
         {
@@ -647,6 +688,61 @@ export class MapRenderer {
             };
           },
           data: labelData,
+        },
+        {
+          // 每日竞速省名标签：已作答省的简称，始终显示
+          id: 'province-labels',
+          type: 'custom',
+          coordinateSystem: 'geo',
+          geoIndex: 0,
+          z: 9, // 低于 city-labels 但高于省界线
+          silent: true,
+          tooltip: { show: false },
+          renderItem: (_params, api) => {
+            const value = [api.value(0), api.value(1)] as [number, number];
+            const rawText = api.value(2);
+            const name = rawText == null ? '' : String(rawText);
+            const color = String(api.value(3));
+            const point = api.coord(value) as number[];
+            // NaN 防御
+            if (!Number.isFinite(point[0]) || !Number.isFinite(point[1]) || !name || name === 'NaN' || name === 'undefined') {
+              return { type: 'group', children: [] };
+            }
+            const scale = labelScale(this.zoom);
+            const fontSize = PROVINCE_LABEL_SIZE * scale;
+            const font = `600 ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
+            const padX = 7 * scale;
+            const padY = 4 * scale;
+            const shape = labelShape(name, point, fontSize, padX, padY, 30 * scale);
+            return {
+              type: 'group',
+              children: [
+                {
+                  type: 'rect',
+                  shape,
+                  style: {
+                    fill: theme.labelBg,
+                    shadowColor: theme.labelShadow,
+                    shadowBlur: 8 * scale,
+                    shadowOffsetY: 2 * scale,
+                  },
+                },
+                {
+                  type: 'text',
+                  style: {
+                    x: point[0],
+                    y: point[1],
+                    text: name,
+                    fill: color,
+                    font,
+                    align: 'center',
+                    verticalAlign: 'middle',
+                  },
+                },
+              ],
+            };
+          },
+          data: provinceLabelData,
         },
       ],
     };

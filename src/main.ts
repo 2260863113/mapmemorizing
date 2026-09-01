@@ -312,6 +312,8 @@ async function boot() {
   }
 
   function updateProgress() {
+    // 分段按钮锁定随模式状态同步：开始/作答/结束/重置都会经过这里
+    syncSegmentedLock();
     const el = $('mode-progress');
     const progress = current?.getProgress?.() ?? null;
     if (!progress || (current?.id !== 'self' && current?.id !== 'click' && current?.id !== 'daily')) {
@@ -573,6 +575,12 @@ async function boot() {
       btn.disabled = started;
     });
   }
+
+  // 点击「开始」按钮后立即锁定分段按钮（开始动作不经过 switchMode，syncSegmentedLock 需在此重新调用）
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.start-action')) syncSegmentedLock();
+  });
 
   // 设置
   ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {

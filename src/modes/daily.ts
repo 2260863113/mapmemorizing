@@ -95,10 +95,23 @@ export class DailyMode implements ModeController {
         const province = this.provinceOf(adcode);
         if (this.green.has(province)) return 'green';
         if (this.red.has(province)) return 'red';
-        if (this.question === province) return 'blue';
+        // 仅输入模式蓝色高亮当前题目省（蓝块=题目）；点击模式不高亮避免泄露位置
+        if (this.answerMode === 'input' && this.question === province) return 'blue';
         return 'gray';
       },
       disableTooltip: true,
+      // 省名标签：已作答省显示简称（答对绿字/答错红字）
+      provinceLabel: (provinceAdcode) => {
+        if (this.green.has(provinceAdcode)) {
+          const p = this.provinceByAdcode(provinceAdcode);
+          return p ? { text: normalizeProvince(p.name), color: 'green' } : null;
+        }
+        if (this.red.has(provinceAdcode)) {
+          const p = this.provinceByAdcode(provinceAdcode);
+          return p ? { text: normalizeProvince(p.name), color: 'red' } : null;
+        }
+        return null;
+      },
     });
   }
 
@@ -250,8 +263,12 @@ export class DailyMode implements ModeController {
     }
     this.question = remaining[0];
     const province = this.provinceByAdcode(this.question);
-    if (province) {
+    if (province && this.answerMode === 'click') {
+      // 点击模式：顶部显示省名文字，地图不高亮目标省
       this.ctx.setHint(`<div class="start-panel click-question"><div class="start-title">${province.name}</div></div>`);
+    } else {
+      // 输入模式：不显示顶部文字，地图蓝色高亮目标省（蓝块=题目）
+      this.ctx.setHint('');
     }
     this.refresh();
     this.ctx.updateProgress();
