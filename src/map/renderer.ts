@@ -6,7 +6,7 @@ type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
 type GeoPoint = [number, number];
 type PolygonRings = GeoPoint[][];
-type GeoFeature = { properties: { adcode?: string }; geometry: { type: string; coordinates: unknown } };
+type GeoFeature = { properties: { adcode?: string; name?: string }; geometry: { type: string; coordinates: unknown } };
 type ThemeName = 'light' | 'dark';
 type MapTheme = {
   background: string;
@@ -217,6 +217,9 @@ export class MapRenderer {
   private provinceLines: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
   private provinceLabelAnchors = new Map<string, GeoPoint>();
+  private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
+  private insetEl: HTMLElement | null = null;
+  private insetChart: echarts.ECharts | null = null;
   private viewProvince: string | null = null;
   private center: [number, number] = [104.5, 35];
   private zoom = 1;
@@ -236,6 +239,8 @@ export class MapRenderer {
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：每日竞速只渲染 35 个省面
+    echarts.registerMap('hkmac', this.buildHkmacGeo() as never); // 港澳放大框：香港+澳门+广东沿海
     this.chart = echarts.init(el);
     this.units = data.allUnits;
     for (const u of this.units) {
@@ -245,6 +250,12 @@ export class MapRenderer {
     this.provinceLines = this.buildProvinceLines();
     this.labelAnchors = this.buildLabelAnchors();
     this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
+    // 省全名 → 省 adcode（省级地图点击/悬浮命中整省时回传）
+    const provGeo = data.provincesGeoJson as { features?: GeoFeature[] };
+    for (const f of provGeo.features ?? []) {
+      if (f.properties.name && f.properties.adcode) this.provinceNameToAdcode.set(f.properties.name, f.properties.adcode);
+    }
+    this.insetEl = document.getElementById('hkmac-inset');
 
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
@@ -254,14 +265,16 @@ export class MapRenderer {
         if (this.viewProvince) this.handlers.onBlankClick();
         return;
       }
+      // 省级模式：命中省级面 → 按省全名查省 adcode 回传，不支持下钻
+      if (this.provinceMode) {
+        const adcode = this.provinceNameToAdcode.get(params.name ?? '');
+        if (adcode && adcode !== '100000_JD') this.handlers.onUnitClick(adcode);
+        else if (this.viewProvince) this.handlers.onBlankClick();
+        return;
+      }
       const u = this.nameToUnit.get(params.name ?? '');
       if (!u) {
         if (this.viewProvince) this.handlers.onBlankClick();
-        return;
-      }
-      // 省级模式：命中任意地级 unit → 映射为省级 adcode 回传，且不支持下钻
-      if (this.provinceMode) {
-        this.handlers.onUnitClick(u.provinceAdcode);
         return;
       }
       if (!this.viewProvince) {
@@ -280,6 +293,12 @@ export class MapRenderer {
     this.chart.on('mouseover', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
+      // 省级模式：命中省级面 → 按省全名查省 adcode
+      if (this.provinceMode) {
+        const adcode = this.provinceNameToAdcode.get(params.name ?? '');
+        if (adcode) this.handlers.onUnitHover?.(adcode);
+        return;
+      }
       const u = this.nameToUnit.get(params.name ?? '');
       if (u) this.handlers.onUnitHover?.(u.adcode);
     });
@@ -329,12 +348,16 @@ export class MapRenderer {
       this.onZoomChange?.();
     });
 
-    window.addEventListener('resize', () => this.chart.resize());
+    window.addEventListener('resize', () => {
+      this.chart.resize();
+      this.insetChart?.resize();
+    });
   }
 
   /** 容器尺寸变化（如从留言板切回地图）时重算画布。 */
   resize() {
     this.chart.resize();
+    this.insetChart?.resize();
   }
 
   setDarkMode(darkMode: boolean) {
@@ -351,7 +374,7 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
-  /** 省级模式：仅显示省级边界，地级边界隐藏，省界加粗；不支持下钻。 */
+  /** 省级模式：仅渲染省级地图（35 个省面），不渲染地级市行政区；不支持下钻；港澳放大框联动显隐。 */
   setProvinceMode(on: boolean) {
     if (this.provinceMode === on) return;
     this.provinceMode = on;
@@ -361,7 +384,26 @@ export class MapRenderer {
       this.zoom = 1;
       this.labelMode = 'none';
     }
+    if (on) this.showInset();
+    else this.hideInset();
     if (this.lastState) this.render(this.lastState);
+  }
+
+  /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
+  private showInset() {
+    if (!this.insetEl) return;
+    this.insetEl.classList.remove('hidden');
+    if (!this.insetChart) {
+      this.insetChart = echarts.init(this.insetEl);
+      this.insetChart.on('click', (p) => this.onInsetClick(p));
+      this.insetChart.on('mouseover', (p) => this.onInsetHover(p));
+      this.insetChart.on('mouseout', () => this.handlers.onUnitHoverEnd?.());
+    }
+    this.renderInset();
+  }
+
+  private hideInset() {
+    if (this.insetEl) this.insetEl.classList.add('hidden');
   }
 
   private theme(): MapTheme {
@@ -426,6 +468,16 @@ export class MapRenderer {
     return out;
   }
 
+  /** 港澳放大框专用地图：香港 + 澳门 + 广东（周边海岸），从省界 GeoJSON 抽取。 */
+  private buildHkmacGeo(): unknown {
+    const src = this.data.provincesGeoJson as { type: string; features?: GeoFeature[] };
+    const keep = new Set(['440000', '810000', '820000']);
+    return {
+      type: src.type,
+      features: (src.features ?? []).filter((f) => keep.has(f.properties.adcode ?? '')),
+    };
+  }
+
   private labelAnchorOf(u: Unit): GeoPoint {
     return this.labelAnchors.get(u.adcode) ?? u.center;
   }
@@ -449,6 +501,39 @@ export class MapRenderer {
           itemStyle: {
             areaColor: state.coin ? (theme.coinGreen(coinCoins, true) ?? theme.emphasis[color]) : theme.emphasis[color],
           },
+          label: { show: false },
+        },
+        label: { show: false },
+      };
+    });
+  }
+
+  /** 省级模式的省面数据（供 map series 的 tooltip/事件按省全名匹配）。 */
+  private buildProvinceEventData(): { name: string }[] {
+    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
+    return (geo.features ?? [])
+      .filter((f) => f.properties.adcode !== '100000_JD') // 南海诸岛装饰面不参与事件
+      .map((f) => ({ name: f.properties.name ?? '' }));
+  }
+
+  /** 省级模式的省面 region 数据：整省着色 + 整个省悬浮高亮。 */
+  private buildProvinceRegionData(state: RenderState): GeoRegion[] {
+    const theme = this.theme();
+    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
+    return (geo.features ?? []).map((f) => {
+      const adcode = f.properties.adcode ?? '';
+      const isDecorative = adcode === '100000_JD';
+      const color: UnitColor = isDecorative || !adcode ? 'gray' : state.colorOf(adcode);
+      return {
+        name: f.properties.name ?? '',
+        silent: isDecorative,
+        itemStyle: {
+          areaColor: theme.fill[color],
+          borderColor: 'rgba(0,0,0,0)', // 省界由 province-lines 系列单独绘制
+          borderWidth: 0,
+        },
+        emphasis: {
+          itemStyle: { areaColor: theme.emphasis[color] }, // 整个省面高亮
           label: { show: false },
         },
         label: { show: false },
@@ -494,6 +579,72 @@ export class MapRenderer {
     return out;
   }
 
+  /** 港澳放大框渲染：香港、澳门按主图状态着色并显示简称标签，广东为淡灰底（不可作答）。 */
+  private renderInset() {
+    const chart = this.insetChart;
+    if (!chart) return;
+    const state = this.lastState;
+    if (!state) return;
+    const theme = this.theme();
+    const regionOf = (adcode: string, short: string): GeoRegion => {
+      const color: UnitColor = state.colorOf(adcode);
+      return {
+        name: this.provinceFeatureName(adcode),
+        itemStyle: { areaColor: theme.fill[color], borderColor: theme.boundary[this.provinceBoundaryTone], borderWidth: 1 },
+        emphasis: { itemStyle: { areaColor: theme.emphasis[color] }, label: { show: false } },
+        label: { show: true, formatter: short, color: theme.labelNeutral, fontSize: 10, fontWeight: 600 },
+      };
+    };
+    const hk = regionOf('810000', '香港');
+    const mo = regionOf('820000', '澳门');
+    // 广东沿海：淡灰底，silent 不参与作答
+    const gd: GeoRegion = {
+      name: this.provinceFeatureName('440000'),
+      silent: true,
+      itemStyle: { areaColor: theme.fill.gray, borderColor: theme.boundary[this.provinceBoundaryTone], borderWidth: 1 },
+      emphasis: { itemStyle: { areaColor: theme.fill.gray }, label: { show: false } },
+      label: { show: false },
+    };
+    chart.setOption({
+      backgroundColor: 'transparent',
+      geo: {
+        map: 'hkmac',
+        roam: false,
+        silent: false,
+        zoom: 6,
+        center: [113.97, 22.34],
+        itemStyle: { borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
+        regions: [gd, hk, mo],
+      },
+    } as never);
+  }
+
+  private provinceFeatureName(adcode: string): string {
+    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
+    const f = (geo.features ?? []).find((x) => x.properties.adcode === adcode);
+    return f?.properties.name ?? '';
+  }
+
+  /** 放大框点击：命中香港/澳门省面时回传省 adcode。 */
+  private onInsetClick(p: unknown) {
+    const params = p as { name?: string };
+    const adcode = this.insetNameToAdcode(params.name);
+    if (adcode) this.handlers.onUnitClick(adcode);
+  }
+
+  private onInsetHover(p: unknown) {
+    const params = p as { name?: string };
+    const adcode = this.insetNameToAdcode(params.name);
+    if (adcode) this.handlers.onUnitHover?.(adcode);
+  }
+
+  private insetNameToAdcode(name: string | undefined): string | null {
+    if (!name) return null;
+    if (name === this.provinceFeatureName('810000')) return '810000';
+    if (name === this.provinceFeatureName('820000')) return '820000';
+    return null;
+  }
+
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
     // 省级模式：彻底禁用地级市地名标签（省名标签由 province-labels 系列单独渲染）
     if (this.provinceMode) return 'none';
@@ -532,8 +683,10 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode(state);
     this.labelScaleApplied = labelScale(this.zoom);
 
+    // 省级模式：geo 切换为省级地图（只渲染 35 个省面，不渲染地级市行政区）
+    const mapName = this.provinceMode ? 'china-provinces' : 'china';
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
-    const cityData = this.units.map((u) => ({ name: u.name }));
+    const eventData = this.provinceMode ? this.buildProvinceEventData() : this.units.map((u) => ({ name: u.name }));
     const labelData = this.buildLabelData(state);
     const provinceLabelData = this.buildProvinceLabelData(state);
     const theme = this.theme();
@@ -565,7 +718,7 @@ export class MapRenderer {
             },
           },
       geo: {
-        map: 'china', // 坐标系 = 地级数据（series 绑定后使用同一地图，地级名才能匹配上）
+        map: mapName, // 省级模式用省级地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
         roam: true,
         scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
         silent: false,
@@ -574,27 +727,27 @@ export class MapRenderer {
         label: { show: false },
         emphasis: {
           label: { show: false },
-          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩）
+          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个省面）
         },
         select: { label: { show: false } },
         itemStyle: {
           areaColor: 'rgba(0,0,0,0)',
           borderColor: 'rgba(0,0,0,0)',
-          borderWidth: 0, // geo 自身透明；地级边界由 geo.regions 绘制
+          borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
         },
-        regions: this.buildRegionData(state),
+        regions: this.provinceMode ? this.buildProvinceRegionData(state) : this.buildRegionData(state),
       },
       series: [
         {
           id: 'city-events',
           type: 'map',
-          map: 'china',
+          map: mapName,
           geoIndex: 0,
           selectedMode: false,
           label: { show: false },
           emphasis: { label: { show: false } },
           select: { label: { show: false } },
-          data: cityData,
+          data: eventData,
         },
         {
           id: 'province-lines',
@@ -747,6 +900,8 @@ export class MapRenderer {
       ],
     };
     this.chart.setOption(option);
+    // 省级模式下同步刷新港澳放大框着色
+    if (this.provinceMode) this.renderInset();
   }
 
   /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
@@ -825,7 +980,7 @@ export class MapRenderer {
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
       this.center = center;
-      this.chart.setOption({ geo: { map: 'china', center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      this.chart.setOption({ geo: { map: this.currentMapName(), center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
       lastFrame = now;
       this.onZoomChange?.();
       if (t < 1) {
@@ -876,7 +1031,7 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode();
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
-    this.chart.setOption({ geo: { map: 'china', center: this.center, zoom } });
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom } });
     this.onZoomChange?.();
     this.onViewChange?.();
   }
@@ -887,9 +1042,14 @@ export class MapRenderer {
     this.zoom = 1;
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
-    this.chart.setOption({ geo: { map: 'china', center: this.center, zoom: 1 } });
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: 1 } });
     this.onZoomChange?.();
     this.onViewChange?.();
+  }
+
+  /** 当前 geo 地图名：省级模式用省级地图，否则地级地图。 */
+  private currentMapName(): string {
+    return this.provinceMode ? 'china-provinces' : 'china';
   }
 
   currentProvince(): string | null {
@@ -914,6 +1074,8 @@ export class MapRenderer {
       this.followRaf = null;
     }
     this.chart.dispose();
+    this.insetChart?.dispose();
+    this.insetChart = null;
   }
 }
 
