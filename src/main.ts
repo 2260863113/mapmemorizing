@@ -293,10 +293,6 @@ async function boot() {
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap);
-    // 每日竞速无跳过按钮
-    $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless' || mode === 'daily');
-    $('btn-end').classList.toggle('hidden', !isTest);
-    $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
     syncSegments();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
     syncViewChrome();
@@ -636,6 +632,11 @@ async function boot() {
     const testStarted = !!current?.isStarted?.();
     const scopeIsNation = current?.getScopeProvince?.() === null || current?.getScopeProvince?.() === PROVINCE_NATION_SCOPE;
     const isGranularityMode = mode === 'click' || mode === 'self';
+    const isTestMode = mode === 'self' || mode === 'click' || mode === 'daily' || mode === 'endless';
+    // 跳过/暂停/重置显隐：click/self 未开始只留「重置」，开始后显示 跳过·暂停·重置（顺序：跳过→暂停→重置）
+    $('btn-skip').classList.toggle('hidden', !isTestMode || mode === 'endless' || mode === 'daily' || (isGranularityMode && !testStarted));
+    $('btn-end').classList.toggle('hidden', !isTestMode || (isGranularityMode && !testStarted));
+    $('btn-reset').classList.toggle('hidden', isGranularityMode ? false : !isTestMode && mode !== 'free');
     // 「省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
     const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
