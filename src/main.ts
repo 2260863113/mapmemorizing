@@ -766,7 +766,7 @@ async function boot() {
   search.onSubmit((v) => current?.onSubmit(v));
   search.onInput((v) => current?.onInput?.(v));
 
-  switchMode('daily'); // 默认展示每日竞速
+  switchMode('click'); // 默认展示点击模式（每日竞速已弃用）
 }
 
 boot().catch((e) => {
