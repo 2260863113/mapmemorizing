@@ -226,9 +226,6 @@ async function boot() {
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === mode);
     });
-    // 每日竞速：仅「输入」作答方式时显示搜索框
-    const inputMode = mode === 'self' || mode === 'endless' || (mode === 'daily' && dailyMode.getAnswerMode() === 'input');
-    $('search-row').classList.toggle('hidden', !inputMode);
     current.enter();
     syncModeChrome();
     syncPauseOverlay();
@@ -594,10 +591,7 @@ async function boot() {
       const mode = btn.dataset.order as DailyAnswerMode;
       dailyMode.setAnswerMode(mode);
       syncSegmentedToggle('daily-order-toggle', mode);
-      // 切换作答方式后同步搜索框显隐
-      if (current?.id === 'daily') {
-        $('search-row').classList.toggle('hidden', dailyMode.getAnswerMode() !== 'input');
-      }
+      syncSegments(); // 输入框/按钮显隐随作答方式同步
     });
   });
 
@@ -637,6 +631,10 @@ async function boot() {
     $('btn-skip').classList.toggle('hidden', !isTestMode || mode === 'endless' || mode === 'daily' || (isGranularityMode && !testStarted));
     $('btn-end').classList.toggle('hidden', !isTestMode || (isGranularityMode && !testStarted));
     $('btn-reset').classList.toggle('hidden', isGranularityMode ? false : !isTestMode && mode !== 'free');
+    // 搜索输入框：输入/自测(daily 输入作答)仅测试开始时显示；无尽闯关输入框常驻
+    const searchVisible =
+      mode === 'endless' || ((mode === 'self' || (mode === 'daily' && dailyMode.getAnswerMode() === 'input')) && testStarted);
+    $('search-row').classList.toggle('hidden', !searchVisible);
     // 「省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
     const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
