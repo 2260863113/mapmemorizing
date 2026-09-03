@@ -1,6 +1,6 @@
 import type { Mode, UnitColor } from '../types';
 import type { ModeCtx, ModeController } from './types';
-import { t } from '../i18n';
+import { t, type MessagesKey } from '../i18n';
 import type { Granularity } from '../province';
 
 /** 熟练度分析：按累计答题分数只读着色（地级市名称熟练度 / 省名称熟练度），不响应输入。 */
@@ -66,7 +66,7 @@ export class FreeMode implements ModeController {
 
   refresh() {
     if (this.granularity === 'province') {
-      // 省级熟练度分析：省级地图（无港澳放大框），四档着色（熟练绿/一般浅黄/陌生红/未知灰），
+      // 省级熟练度分析：省级地图（无港澳放大框），七档着色（糟糕/较差/陌生/一般/初识/熟练/炉火纯青），
       // 不常显省名标签；悬停省面经 onUnitHover 显示卡片；双击省可下钻其地级
       this.ctx.renderer.setProvinceMode(true, { inset: false, allowDrill: true });
       if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
@@ -138,10 +138,43 @@ export function scoreColor(score: number): UnitColor {
   return 'gray';
 }
 
-/** 省级熟练度四档着色：未知(从未答)→灰；一般(答过且正负相抵)→浅黄；熟练(正分)→绿阶；陌生(负分)→红阶。 */
-export function provinceColor(store: { getProvincePractice: (adcode: string) => { score: number }; hasProvincePractice: (adcode: string) => boolean }, adcode: string): UnitColor {
-  if (!store.hasProvincePractice(adcode)) return 'gray'; // 未知：从未答过
-  const { score } = store.getProvincePractice(adcode);
-  if (score === 0) return 'scoreNeutral'; // 一般：答过但正负相抵
-  return scoreColor(score); // 熟练(正)/陌生(负)
+/** 省级熟练度七档（从差到好）：糟糕(≤-5)/较差(-3~-4)/陌生(-1~-2)/一般(0)/初识(1~2)/熟练(3~4)/炉火纯青(≥5)。 */
+export type ProvinceLevel = 'terrible' | 'poor' | 'unfamiliar' | 'neutral' | 'beginner' | 'skilled' | 'master';
+
+/** 七档文案键。 */
+export const PROVINCE_LEVEL_WORD_KEY: Record<ProvinceLevel, MessagesKey> = {
+  terrible: 'stats.levelTerrible',
+  poor: 'stats.levelPoor',
+  unfamiliar: 'stats.levelUnfamiliar',
+  neutral: 'stats.levelNeutral',
+  beginner: 'stats.levelBeginner',
+  skilled: 'stats.levelSkilled',
+  master: 'stats.levelMaster',
+};
+
+/** 分数 → 七档档位。0 分统一为「一般」，不再区分未答与相抵。 */
+export function provinceLevelOf(score: number): ProvinceLevel {
+  if (score >= 5) return 'master';
+  if (score >= 3) return 'skilled';
+  if (score >= 1) return 'beginner';
+  if (score === 0) return 'neutral';
+  if (score <= -5) return 'terrible';
+  if (score <= -3) return 'poor';
+  return 'unfamiliar';
+}
+
+/** 七档 → 地图色（与 provinceLevelOf 同一阈值）。 */
+export function provinceLevelColor(level: ProvinceLevel): UnitColor {
+  if (level === 'master') return 'scoreGreenDark';
+  if (level === 'skilled') return 'scoreGreenMedium';
+  if (level === 'beginner') return 'scoreGreenLight';
+  if (level === 'neutral') return 'scoreNeutral';
+  if (level === 'terrible') return 'scoreRedDark';
+  if (level === 'poor') return 'scoreRedMedium';
+  return 'scoreRedLight';
+}
+
+/** 省级熟练度七档着色（按省 adcode 查熟练度）。 */
+export function provinceColor(store: { getProvincePractice: (adcode: string) => { score: number } }, adcode: string): UnitColor {
+  return provinceLevelColor(provinceLevelOf(store.getProvincePractice(adcode).score));
 }

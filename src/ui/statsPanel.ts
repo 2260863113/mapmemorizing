@@ -1,20 +1,15 @@
 import type { AppData, Unit } from '../types';
 import type { MemoryStore } from '../store';
-import { t, type MessagesKey } from '../i18n';
+import { t } from '../i18n';
 import { normalizeProvince } from '../matcher';
+import { provinceLevelOf, PROVINCE_LEVEL_WORD_KEY, type ProvinceLevel } from '../modes/free';
 
 type ProvinceStats = { mastered: number; unknown: number; unfamiliar: number };
-type ProvinceLevel = 'mastered' | 'neutral' | 'unfamiliar' | 'unknown';
 type ProvinceLevelStats = Record<ProvinceLevel, number>;
 
-const LEVEL_TXT_KEY: Record<ProvinceLevel, MessagesKey> = {
-  mastered: 'stats.levelMastered',
-  neutral: 'stats.levelNeutral',
-  unfamiliar: 'stats.levelUnfamiliar',
-  unknown: 'stats.levelUnknown',
-};
+const LEVEL_ORDER: ProvinceLevel[] = ['terrible', 'poor', 'unfamiliar', 'neutral', 'beginner', 'skilled', 'master'];
 
-/** 侧栏：按累计答题分数展示熟练度。支持地级（各属地级单位三态）与省级（各省四档词）两套数据源。 */
+/** 侧栏：按累计答题分数展示熟练度。支持地级（各属地级单位三态）与省级（各省七档词）两套数据源。 */
 export class StatsPanel {
   private el: HTMLElement;
   private provinceList: { adcode: string; name: string; units: Unit[] }[];
@@ -45,32 +40,24 @@ export class StatsPanel {
     this.el.innerHTML = html;
   }
 
-  /** 省级档：全国 34 省按省熟练度四档统计 + 每省一行「省名 + 档位词」。 */
+  /** 省级档：全国 34 省按省熟练度七档统计 + 每省一行「省名 + 档位词」。 */
   refreshProvinceLevel() {
     const provinces = [...this.provinceList].sort((a, b) => normalizeProvince(a.name).localeCompare(normalizeProvince(b.name), 'zh-CN'));
-    const levelOf = (adcode: string): ProvinceLevel => {
-      if (!this.store.hasProvincePractice(adcode)) return 'unknown'; // 从未答
-      const score = this.store.getProvincePractice(adcode).score;
-      if (score > 0) return 'mastered';
-      if (score < 0) return 'unfamiliar';
-      return 'neutral'; // 答过但正负相抵
-    };
-    const total: ProvinceLevelStats = { mastered: 0, neutral: 0, unfamiliar: 0, unknown: 0 };
+    const total: ProvinceLevelStats = { terrible: 0, poor: 0, unfamiliar: 0, neutral: 0, beginner: 0, skilled: 0, master: 0 };
     const rows = provinces.map((p) => {
-      const level = levelOf(p.adcode);
+      const level = provinceLevelOf(this.store.getProvincePractice(p.adcode).score);
       total[level] += 1;
       return `<div class="prov-name">${t('stats.provinceLevelRow', {
         name: normalizeProvince(p.name),
         levelClass: level,
-        levelWord: t(LEVEL_TXT_KEY[level]),
+        levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
       })}</div>`;
     });
-    const head = `<div class="stat-head">${t('stats.provinceOverview')} <span class="pct">${t('stats.provinceScoreSummary4', {
-      mastered: total.mastered,
-      neutral: total.neutral,
-      unfamiliar: total.unfamiliar,
-      unknown: total.unknown,
-    })}</span></div>`;
+    const summaryParts = LEVEL_ORDER.map((level) => {
+      const word = t(PROVINCE_LEVEL_WORD_KEY[level]);
+      return `${word}：<span class="stat-num">${total[level]}</span>`;
+    }).join(' ');
+    const head = `<div class="stat-head">${t('stats.provinceOverview')} <span class="pct">${summaryParts}</span></div>`;
     this.el.innerHTML = head + '<div class="prov-list">' + rows.join('') + '</div>';
   }
 

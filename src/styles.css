@@ -33,6 +33,14 @@ html, body, #app { height: 100%; }
   --progress-green: #7fbf8b;
   --progress-red: #d98989;
   --progress-neutral: #d9c98f; /* 熟练度「一般」：答过但正负相抵 */
+  /* 省级熟练度七档字色（明主题：深色可读） */
+  --lv-terrible: #b05252;
+  --lv-poor: #c46a6a;
+  --lv-unfamiliar: #d68f8f;
+  --lv-neutral: #a8943a;
+  --lv-beginner: #5f9e6d;
+  --lv-skilled: #3f8f55;
+  --lv-master: #1f7a3d;
   --bar-bg: #e5e7eb;
   --bar-fill-a: #34d399;
   --bar-fill-b: #10b981;
@@ -84,6 +92,14 @@ body.theme-dark {
   --progress-green: #166534;
   --progress-red: #991b1b;
   --progress-neutral: #7a6a2e; /* 熟练度「一般」：答过但正负相抵（暗米黄） */
+  /* 省级熟练度七档字色（暗主题：亮色可读） */
+  --lv-terrible: #f0a3a3;
+  --lv-poor: #e0b1b1;
+  --lv-unfamiliar: #d9a0a0;
+  --lv-neutral: #cfbb62;
+  --lv-beginner: #7fc98f;
+  --lv-skilled: #5cb873;
+  --lv-master: #3aa35c;
   --bar-bg: #263246;
   --bar-fill-a: #22c55e;
   --bar-fill-b: #14b8a6;
@@ -336,14 +352,14 @@ body.theme-dark #test-timer.urgent {
 /* 每日竞速 / 点击·输入模式的省级全国视图：港澳放大框在左下角，说明/缩放按钮移到其正上方 */
 #app[data-mode='daily'] #mode-info,
 #app[data-province-inset='1'] #mode-info {
-  bottom: 200px;
+  bottom: 255px;
 }
 #hkmac-inset {
   position: absolute;
   left: 12px;
   bottom: 12px;
-  width: 330px;
-  height: 180px;
+  width: 340px;
+  height: 230px;
   z-index: 18;
   border: 2px solid var(--muted);
   border-radius: 8px;
@@ -900,12 +916,15 @@ body.theme-dark .side-panel-toggle::before {
 .mastery-negative { background: var(--progress-red); }
 .prov-name { font-size: 13px; color: var(--control-text); display: flex; justify-content: space-between; }
 .prov-name span { color: var(--muted); }
-/* 省级熟练度四档徽标（每省一行：省名 + 档位词） */
+/* 省级熟练度七档徽标（每省一行：省名 + 档位词；字色与地图档位色同色系） */
 .prov-level { font-size: 12px; font-weight: 600; }
-.prov-level.mastered { color: var(--progress-green); }
-.prov-level.neutral { color: var(--progress-neutral); }
-.prov-level.unfamiliar { color: var(--progress-red); }
-.prov-level.unknown { color: var(--muted); }
+.prov-level.terrible { color: var(--lv-terrible); }
+.prov-level.poor { color: var(--lv-poor); }
+.prov-level.unfamiliar { color: var(--lv-unfamiliar); }
+.prov-level.neutral { color: var(--lv-neutral); }
+.prov-level.beginner { color: var(--lv-beginner); }
+.prov-level.skilled { color: var(--lv-skilled); }
+.prov-level.master { color: var(--lv-master); }
 .tip { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
 .leaderboard-title {
   margin-bottom: 14px;

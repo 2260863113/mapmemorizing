@@ -15,7 +15,7 @@ import { $, toast, setHint, showTimer, showStopwatch, showSummary, hideSummary, 
 import { formatElapsedCentiseconds } from './ui/format';
 import { ApiError } from './api';
 import { t } from './i18n';
-import { FreeMode } from './modes/free';
+import { FreeMode, provinceLevelOf, PROVINCE_LEVEL_WORD_KEY } from './modes/free';
 import { SelfTestMode } from './modes/selfTest';
 import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
@@ -361,12 +361,19 @@ async function boot() {
   function showHoverStats(adcode: string) {
     if (current?.id !== 'free') return;
     if (freeMode.getAnalysisGranularity() === 'province') {
-      // 省级档：悬停省面 → 顶部卡片显示省名 + 省级熟练度对错次数（与地级卡一致）
+      // 省级档：悬停省面 → 顶部卡片显示省名 + 档位词（颜色同地图档位）+ 对错次数
       const province = data.provinces.find((p) => p.adcode === adcode);
       if (!province) return;
       const practice = store.getProvincePractice(adcode);
+      const level = provinceLevelOf(practice.score);
       const card = $('hover-stats');
-      card.textContent = t('main.hoverStats', { name: province.name, correct: practice.correctCount, wrong: practice.wrongCount });
+      card.innerHTML = t('main.hoverStatsProvince', {
+        name: province.name,
+        levelClass: level,
+        levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
+        correct: practice.correctCount,
+        wrong: practice.wrongCount,
+      });
       card.classList.remove('hidden');
       return;
     }
