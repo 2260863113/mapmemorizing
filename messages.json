@@ -32,6 +32,7 @@
   "map.status.scoreRedLight": "需复习",
   "map.status.scoreRedMedium": "掌握较弱",
   "map.status.scoreRedDark": "重点复习",
+  "map.status.scoreNeutral": "一般（正负相抵）",
   "map.tooltip.body": "<b>{name}</b><br/>所属：{province}<br/>金币：{coins}",
   "map.tooltip.bodyBase": "<b>{name}</b><br/>所属：{province}{status}",
   "map.tooltip.statusLine": "<br/>状态：{status}",
@@ -220,6 +221,12 @@
   "stats.provinceOverview": "省级概览（省名熟练度）",
   "stats.scoreSummary": "熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span>",
   "stats.provinceRow": "{name} <span>熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span></span>",
+  "stats.levelMastered": "熟练",
+  "stats.levelNeutral": "一般",
+  "stats.levelUnfamiliar": "陌生",
+  "stats.levelUnknown": "未知",
+  "stats.provinceScoreSummary4": "熟练：<span class=\"stat-num\">{mastered}</span> 一般：<span class=\"stat-num\">{neutral}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span> 未知：<span class=\"stat-num\">{unknown}</span>",
+  "stats.provinceLevelRow": "{name} <span class=\"prov-level {levelClass}\">{levelWord}</span>",
 
   "matcher.provinceHint": "省级 · {count} 个地图单位，点击进入",
 

@@ -66,12 +66,12 @@ export class FreeMode implements ModeController {
 
   refresh() {
     if (this.granularity === 'province') {
-      // 省级熟练度分析：省级地图（无港澳放大框），按省熟练度着色，常显全部省名；双击省可下钻其地级
+      // 省级熟练度分析：省级地图（无港澳放大框），四档着色（熟练绿/一般浅黄/陌生红/未知灰），
+      // 不常显省名标签；悬停省面经 onUnitHover 显示卡片；双击省可下钻其地级
       this.ctx.renderer.setProvinceMode(true, { inset: false, allowDrill: true });
       if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
       this.ctx.renderer.render({
-        colorOf: (adcode) => scoreColor(this.ctx.store.getProvincePractice(adcode).score),
-        showAllProvinceLabels: true,
+        colorOf: (adcode) => provinceColor(this.ctx.store, adcode),
         disableTooltip: true,
       });
       this.ctx.stats.refreshProvinceLevel();
@@ -136,4 +136,12 @@ export function scoreColor(score: number): UnitColor {
   if (score <= -3) return 'scoreRedMedium';
   if (score <= -1) return 'scoreRedLight';
   return 'gray';
+}
+
+/** 省级熟练度四档着色：未知(从未答)→灰；一般(答过且正负相抵)→浅黄；熟练(正分)→绿阶；陌生(负分)→红阶。 */
+export function provinceColor(store: { getProvincePractice: (adcode: string) => { score: number }; hasProvincePractice: (adcode: string) => boolean }, adcode: string): UnitColor {
+  if (!store.hasProvincePractice(adcode)) return 'gray'; // 未知：从未答过
+  const { score } = store.getProvincePractice(adcode);
+  if (score === 0) return 'scoreNeutral'; // 一般：答过但正负相抵
+  return scoreColor(score); // 熟练(正)/陌生(负)
 }

@@ -32,6 +32,7 @@ html, body, #app { height: 100%; }
   --progress-separator: rgba(255,255,255,0.7);
   --progress-green: #7fbf8b;
   --progress-red: #d98989;
+  --progress-neutral: #d9c98f; /* 熟练度「一般」：答过但正负相抵 */
   --bar-bg: #e5e7eb;
   --bar-fill-a: #34d399;
   --bar-fill-b: #10b981;
@@ -82,6 +83,7 @@ body.theme-dark {
   --progress-separator: rgba(15,23,42,0.72);
   --progress-green: #166534;
   --progress-red: #991b1b;
+  --progress-neutral: #7a6a2e; /* 熟练度「一般」：答过但正负相抵（暗米黄） */
   --bar-bg: #263246;
   --bar-fill-a: #22c55e;
   --bar-fill-b: #14b8a6;
@@ -334,14 +336,14 @@ body.theme-dark #test-timer.urgent {
 /* 每日竞速 / 点击·输入模式的省级全国视图：港澳放大框在左下角，说明/缩放按钮移到其正上方 */
 #app[data-mode='daily'] #mode-info,
 #app[data-province-inset='1'] #mode-info {
-  bottom: 240px;
+  bottom: 200px;
 }
 #hkmac-inset {
   position: absolute;
   left: 12px;
   bottom: 12px;
-  width: 220px;
-  height: 220px;
+  width: 330px;
+  height: 180px;
   z-index: 18;
   border: 2px solid var(--muted);
   border-radius: 8px;
@@ -898,6 +900,12 @@ body.theme-dark .side-panel-toggle::before {
 .mastery-negative { background: var(--progress-red); }
 .prov-name { font-size: 13px; color: var(--control-text); display: flex; justify-content: space-between; }
 .prov-name span { color: var(--muted); }
+/* 省级熟练度四档徽标（每省一行：省名 + 档位词） */
+.prov-level { font-size: 12px; font-weight: 600; }
+.prov-level.mastered { color: var(--progress-green); }
+.prov-level.neutral { color: var(--progress-neutral); }
+.prov-level.unfamiliar { color: var(--progress-red); }
+.prov-level.unknown { color: var(--muted); }
 .tip { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
 .leaderboard-title {
   margin-bottom: 14px;

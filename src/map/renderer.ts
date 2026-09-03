@@ -43,6 +43,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#f0c8c8',
       scoreRedMedium: '#dc9292',
       scoreRedDark: '#bd5d5d',
+      scoreNeutral: '#e3d5a8', // 熟练度「一般」：答过但正负相抵（浅米黄，明暗主题通用感弱化）
     },
     emphasis: {
       green: '#93cfa0',
@@ -55,6 +56,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#f6dada',
       scoreRedMedium: '#e5aaaa',
       scoreRedDark: '#cf7777',
+      scoreNeutral: '#ece0bd',
     },
     boundary: {
       light: '#b9b2a6',
@@ -93,6 +95,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#8b4b4b',
       scoreRedMedium: '#a23737',
       scoreRedDark: '#991b1b',
+      scoreNeutral: '#6b5d2e', // 熟练度「一般」：答过但正负相抵（暗米黄）
     },
     emphasis: {
       green: '#15803d',
@@ -105,6 +108,7 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#a65b5b',
       scoreRedMedium: '#b83f3f',
       scoreRedDark: '#b91c1c',
+      scoreNeutral: '#85753c',
     },
     boundary: {
       light: '#475569',
@@ -157,6 +161,7 @@ const STATUS_TXT: Record<UnitColor, string> = {
   scoreRedLight: t('map.status.scoreRedLight'),
   scoreRedMedium: t('map.status.scoreRedMedium'),
   scoreRedDark: t('map.status.scoreRedDark'),
+  scoreNeutral: t('map.status.scoreNeutral'),
 };
 
 export interface MapHandlers {
@@ -224,6 +229,8 @@ export class MapRenderer {
   private viewProvince: string | null = null;
   private center: [number, number] = [104.5, 35];
   private zoom = 1;
+  /** 下钻前全国视图快照：从全国下钻某省时记录 center/zoom，返回全国（backToNation）时恢复。 */
+  private savedNationView: { center: [number, number]; zoom: number } | null = null;
   private labelMode: 'none' | 'city' = 'none';
   private labelScaleApplied = 1; // 最近一次应用的标签缩放（缩放变化时触发重绘）
   private labelUpdateTimer: number | null = null;
@@ -391,15 +398,25 @@ export class MapRenderer {
     this.provinceMode = on;
     this.provinceModeInset = nextInset;
     this.provinceModeDrill = nextDrill;
+    let resetFromDrill = false;
     if (this.viewProvince) {
+      // 离开钻省状态回到全国：若存在下钻前视图快照则恢复之（否则回默认全国视图）
+      const saved = this.savedNationView;
+      this.savedNationView = null;
       this.viewProvince = null;
-      this.center = [104.5, 35];
-      this.zoom = 1;
+      this.center = saved ? saved.center : [104.5, 35];
+      this.zoom = saved ? saved.zoom : 1;
       this.labelMode = 'none';
+      resetFromDrill = true;
     }
     if (this.provinceMode && this.provinceModeInset) this.showInset();
     else this.hideInset();
     if (this.lastState) this.render(this.lastState);
+    if (resetFromDrill) {
+      // render 可能因地图切换（china ↔ china-provinces）重置相机，显式写回恢复的下钻前视图
+      this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+      this.onZoomChange?.();
+    }
   }
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
@@ -411,6 +428,9 @@ export class MapRenderer {
       this.insetChart.on('click', (p) => this.onInsetClick(p));
       this.insetChart.on('mouseover', (p) => this.onInsetHover(p));
       this.insetChart.on('mouseout', () => this.handlers.onUnitHoverEnd?.());
+    } else {
+      // 容器曾隐藏（display:none）时 ECharts 画布可能残留 0 尺寸/旧尺寸，恢复可见后强制重算
+      this.insetChart.resize();
     }
     this.renderInset();
   }
@@ -631,8 +651,8 @@ export class MapRenderer {
         map: 'hkmac',
         roam: false,
         silent: false,
-        zoom: 6,
-        center: [113.97, 22.34],
+        zoom: 10,
+        center: [113.95, 22.28],
         itemStyle: { borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
         regions: [gd, hk, mo],
       },
@@ -920,8 +940,11 @@ export class MapRenderer {
       ],
     };
     this.chart.setOption(option);
-    // 省级模式下同步刷新港澳放大框着色
-    if (this.provinceMode) this.renderInset();
+    // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
+    if (this.provinceMode) {
+      if (this.provinceModeInset) this.showInset();
+      this.renderInset();
+    }
   }
 
   /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
@@ -1045,6 +1068,10 @@ export class MapRenderer {
     const bw = Math.max(maxX - minX, 0.5);
     const bh = Math.max(maxY - minY, 0.5);
     const zoom = clampZoom(Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
+    if (this.viewProvince === null) {
+      // 从全国下钻：记住下钻前的全国视图（缩放/位置），返回全国（backToNation）时恢复
+      this.savedNationView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
+    }
     this.viewProvince = adcode;
     this.center = [(minX + maxX) / 2, (minY + maxY) / 2];
     this.zoom = zoom;
@@ -1057,12 +1084,19 @@ export class MapRenderer {
   }
 
   backToNation() {
+    const saved = this.savedNationView;
+    this.savedNationView = null; // 快照一次性使用：返回全国后清除
     this.viewProvince = null;
-    this.center = [104.5, 35];
-    this.zoom = 1;
+    if (saved) {
+      this.center = saved.center;
+      this.zoom = saved.zoom;
+    } else {
+      this.center = [104.5, 35];
+      this.zoom = 1;
+    }
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
-    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: 1 } });
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
     this.onZoomChange?.();
     this.onViewChange?.();
   }

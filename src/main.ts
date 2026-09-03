@@ -360,7 +360,16 @@ async function boot() {
 
   function showHoverStats(adcode: string) {
     if (current?.id !== 'free') return;
-    if (freeMode.getAnalysisGranularity() === 'province') return; // 省级档：悬停只高亮省面，不显示地级悬浮卡
+    if (freeMode.getAnalysisGranularity() === 'province') {
+      // 省级档：悬停省面 → 顶部卡片显示省名 + 省级熟练度对错次数（与地级卡一致）
+      const province = data.provinces.find((p) => p.adcode === adcode);
+      if (!province) return;
+      const practice = store.getProvincePractice(adcode);
+      const card = $('hover-stats');
+      card.textContent = t('main.hoverStats', { name: province.name, correct: practice.correctCount, wrong: practice.wrongCount });
+      card.classList.remove('hidden');
+      return;
+    }
     const unit = idx.byAdcode.get(adcode);
     if (!unit) return;
     const practice = store.getPractice(adcode);

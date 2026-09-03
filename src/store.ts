@@ -83,6 +83,11 @@ export class MemoryStore {
     this.persistProvince();
   }
 
+  /** 该省是否曾做过省级答题（区分「未知=从未答」与「一般=答过但正负相抵」）。 */
+  hasProvincePractice(adcode: string): boolean {
+    return !!this.provData[adcode];
+  }
+
   resetProvincePractice() {
     for (const rec of Object.values(this.provData)) {
       rec.correctCount = 0;
