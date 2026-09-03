@@ -43,7 +43,6 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#f0c8c8',
       scoreRedMedium: '#dc9292',
       scoreRedDark: '#bd5d5d',
-      scoreNeutral: '#e3d5a8', // 熟练度「一般」：答过但正负相抵（浅米黄，明暗主题通用感弱化）
     },
     emphasis: {
       green: '#93cfa0',
@@ -56,7 +55,6 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#f6dada',
       scoreRedMedium: '#e5aaaa',
       scoreRedDark: '#cf7777',
-      scoreNeutral: '#ece0bd',
     },
     boundary: {
       light: '#b9b2a6',
@@ -95,7 +93,6 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#8b4b4b',
       scoreRedMedium: '#a23737',
       scoreRedDark: '#991b1b',
-      scoreNeutral: '#6b5d2e', // 熟练度「一般」：答过但正负相抵（暗米黄）
     },
     emphasis: {
       green: '#15803d',
@@ -108,7 +105,6 @@ const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedLight: '#a65b5b',
       scoreRedMedium: '#b83f3f',
       scoreRedDark: '#b91c1c',
-      scoreNeutral: '#85753c',
     },
     boundary: {
       light: '#475569',
@@ -161,7 +157,6 @@ const STATUS_TXT: Record<UnitColor, string> = {
   scoreRedLight: t('map.status.scoreRedLight'),
   scoreRedMedium: t('map.status.scoreRedMedium'),
   scoreRedDark: t('map.status.scoreRedDark'),
-  scoreNeutral: t('map.status.scoreNeutral'),
 };
 
 export interface MapHandlers {

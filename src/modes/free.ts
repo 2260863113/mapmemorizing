@@ -163,12 +163,12 @@ export function provinceLevelOf(score: number): ProvinceLevel {
   return 'unfamiliar';
 }
 
-/** 七档 → 地图色（与 provinceLevelOf 同一阈值）。 */
+/** 七档 → 地图色（与 provinceLevelOf 同一阈值）。0 分(一般)沿用地图灰色系，与地级档 0 分同色。 */
 export function provinceLevelColor(level: ProvinceLevel): UnitColor {
   if (level === 'master') return 'scoreGreenDark';
   if (level === 'skilled') return 'scoreGreenMedium';
   if (level === 'beginner') return 'scoreGreenLight';
-  if (level === 'neutral') return 'scoreNeutral';
+  if (level === 'neutral') return 'gray';
   if (level === 'terrible') return 'scoreRedDark';
   if (level === 'poor') return 'scoreRedMedium';
   return 'scoreRedLight';

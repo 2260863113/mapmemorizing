@@ -9,8 +9,7 @@ export type UnitColor =
   | 'scoreGreenDark'
   | 'scoreRedLight'
   | 'scoreRedMedium'
-  | 'scoreRedDark'
-  | 'scoreNeutral'; // 熟练度「一般」：答过但正负相抵
+  | 'scoreRedDark';
 
 export interface Unit {
   adcode: string;

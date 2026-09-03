@@ -37,7 +37,7 @@ export function normalize(raw: string): string {
 }
 
 const PROV_SUFFIXES = [
-  '维吾尔自治区', '壮族自治区', '回族自治区', '西藏自治区', '内蒙古自治区',
+  '维吾尔自治区', '壮族自治区', '回族自治区',
   '特别行政区', '自治区', '省', '市',
 ];
 

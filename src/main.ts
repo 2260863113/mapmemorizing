@@ -380,8 +380,15 @@ async function boot() {
     const unit = idx.byAdcode.get(adcode);
     if (!unit) return;
     const practice = store.getPractice(adcode);
+    const level = provinceLevelOf(practice.score);
     const card = $('hover-stats');
-    card.textContent = t('main.hoverStats', { name: unit.name, correct: practice.correctCount, wrong: practice.wrongCount });
+    card.innerHTML = t('main.hoverStatsProvince', {
+      name: unit.name,
+      levelClass: level,
+      levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
+      correct: practice.correctCount,
+      wrong: practice.wrongCount,
+    });
     card.classList.remove('hidden');
   }
 
