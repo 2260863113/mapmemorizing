@@ -53,6 +53,8 @@ export interface ModeController {
   onEnd?(): void;
   onReset?(): void;
   onViewChange?(): void;
+  /** 地图空白点击返回全国（从单省/省级全国下钻返回）：模式自定义返回目标粒度。 */
+  onBackToNation?(): void;
   pause?(): void;
   resume?(): void;
   isPaused?(): boolean;

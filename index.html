@@ -32,6 +32,10 @@
 
     <main>
       <div id="mode-actions">
+        <div id="granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="测试粒度">
+          <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
+          <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
+        </div>
         <button id="btn-skip" class="mode-action">跳过</button>
         <button id="btn-end" class="mode-action danger-hover">暂停</button>
         <button id="btn-reset" class="mode-action">重置</button>
@@ -47,6 +51,10 @@
         <div id="daily-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="每日竞速作答方式">
           <button id="daily-order-click" type="button" class="active" data-order="click" role="radio" aria-checked="true">点击</button>
           <button id="daily-order-input" type="button" data-order="input" role="radio" aria-checked="false">输入</button>
+        </div>
+        <div id="analysis-granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="熟练度分析粒度">
+          <button id="analysis-granularity-province" type="button" data-analysis-granularity="province" role="radio" aria-checked="false">省级</button>
+          <button id="analysis-granularity-city" type="button" class="active" data-analysis-granularity="city" role="radio" aria-checked="true">地级</button>
         </div>
       </div>
       <div id="search-row">

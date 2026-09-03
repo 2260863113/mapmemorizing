@@ -1,6 +1,7 @@
 import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
 import { t } from '../i18n';
+import { normalizeProvince } from '../matcher';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
@@ -232,6 +233,8 @@ export class MapRenderer {
   private cityBoundaryTone: BoundaryTone = 'light';
   private provinceBoundaryTone: BoundaryTone = 'dark';
   private provinceMode = false; // 省级模式：不画地级边界、省界加粗、不支持下钻
+  private provinceModeInset = true; // 省级模式是否显示港澳放大框
+  private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   onViewChange: (() => void) | null = null;
@@ -309,7 +312,13 @@ export class MapRenderer {
 
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
-      if (this.provinceMode) return; // 省级模式不支持下钻
+      if (this.provinceMode) {
+        if (!this.provinceModeDrill) return; // 省级模式：默认不支持下钻
+        // 省级浏览（熟练度分析省级档）：双击省级面 → 回传省 adcode 交给模式下钻
+        const adcode = this.provinceNameToAdcode.get(params.name ?? '');
+        if (adcode && adcode !== '100000_JD') this.handlers.onUnitDblClick(adcode);
+        return;
+      }
       if (this.viewProvince) {
         this.handlers.onBlankClick();
         return;
@@ -374,17 +383,21 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
-  /** 省级模式：仅渲染省级地图（35 个省面），不渲染地级市行政区；不支持下钻；港澳放大框联动显隐。 */
-  setProvinceMode(on: boolean) {
-    if (this.provinceMode === on) return;
+  /** 省级模式：仅渲染省级地图（35 个省面），不渲染地级市行政区；港澳放大框与下钻能力可选。 */
+  setProvinceMode(on: boolean, opts: { inset?: boolean; allowDrill?: boolean } = {}) {
+    const nextInset = opts.inset ?? true;
+    const nextDrill = opts.allowDrill ?? false;
+    if (this.provinceMode === on && this.provinceModeInset === nextInset && this.provinceModeDrill === nextDrill) return;
     this.provinceMode = on;
+    this.provinceModeInset = nextInset;
+    this.provinceModeDrill = nextDrill;
     if (this.viewProvince) {
       this.viewProvince = null;
       this.center = [104.5, 35];
       this.zoom = 1;
       this.labelMode = 'none';
     }
-    if (on) this.showInset();
+    if (this.provinceMode && this.provinceModeInset) this.showInset();
     else this.hideInset();
     if (this.lastState) this.render(this.lastState);
   }
@@ -563,16 +576,23 @@ export class MapRenderer {
     });
   }
 
-  /** 每日竞速省名标签：已作答省份的简称（答对绿字/答错红字），始终显示不随缩放消失。 */
+  /** 省名标签：已作答省（每日竞速/省级练习，绿/红）或省级地图常显全部省名（熟练度分析省级档，中性色）。 */
   private buildProvinceLabelData(state: RenderState): LabelPoint[] {
-    if (!state.provinceLabel || !this.provinceMode) return [];
+    if (!this.provinceMode) return [];
     const theme = this.theme();
     const out: LabelPoint[] = [];
     for (const p of this.data.provinces) {
-      const lab = state.provinceLabel(p.adcode);
-      if (!lab) continue;
       const anchor = this.provinceLabelAnchors.get(p.adcode);
       if (!anchor) continue;
+      // 熟练度分析省级档：全部省名中性色常显
+      if (state.showAllProvinceLabels) {
+        out.push({ name: p.name, value: [...anchor, normalizeProvince(p.name), theme.labelNeutral, 0, 0] });
+        continue;
+      }
+      // 测验档：仅已作答省显示绿/红简称
+      if (!state.provinceLabel) return [];
+      const lab = state.provinceLabel(p.adcode);
+      if (!lab) continue;
       const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
       out.push({ name: p.name, value: [...anchor, lab.text, color, 0, 0] });
     }
@@ -915,10 +935,10 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
-  /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制） */
+  /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制）；省级模式按省面 name 匹配。 */
   flash(adcode: string) {
-    const u = this.adcodeToUnit.get(adcode);
-    if (!u) return;
+    const matchName = this.provinceMode ? this.provinceFeatureName(adcode) : (this.adcodeToUnit.get(adcode)?.name ?? '');
+    if (!matchName) return;
     this.clearFlash();
     const opt = this.chart.getOption() as {
       geo?: { regions?: GeoRegion[] }[] | { regions?: GeoRegion[] };
@@ -928,15 +948,15 @@ export class MapRenderer {
     const theme = this.theme();
     if (Array.isArray(regions)) {
       for (const item of regions) {
-        if (item.name === u.name) {
+        if (item.name === matchName) {
           item.itemStyle = { ...item.itemStyle, areaColor: theme.flashArea, borderColor: theme.flashBorder, borderWidth: 1.2 };
         }
       }
       this.chart.setOption({ geo: { regions } } as never);
     }
-    this.flashAdcode = u.adcode;
+    this.flashAdcode = adcode;
     this.flashTimer = window.setTimeout(() => {
-      if (this.flashAdcode === u.adcode) {
+      if (this.flashAdcode === adcode) {
         this.flashAdcode = null;
         this.flashTimer = null;
         if (this.lastState) this.render(this.lastState);

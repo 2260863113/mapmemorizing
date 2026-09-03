@@ -21,6 +21,7 @@ import { EndlessMode } from './modes/endless';
 import { MemoryMode } from './modes/memory';
 import { ClickMode } from './modes/click';
 import { DailyMode, type DailyAnswerMode } from './modes/daily';
+import { PROVINCE_NATION_SCOPE, type Granularity } from './province';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
@@ -167,9 +168,10 @@ async function boot() {
   const selfMode = new SelfTestMode(ctx);
   const clickMode = new ClickMode(ctx);
   const dailyMode = new DailyMode(ctx);
+  const freeMode = new FreeMode(ctx);
   const modes: Record<Mode, ModeController> = {
     daily: dailyMode,
-    free: new FreeMode(ctx),
+    free: freeMode,
     self: selfMode,
     endless: new EndlessMode(ctx),
     click: clickMode,
@@ -262,6 +264,11 @@ async function boot() {
       showStopwatch(null);
     }
     $('app').dataset.mode = mode ?? '';
+    // 点击/输入模式处于省级全国（含港澳放大框）时，左下说明/缩放按钮上移避免被放大框遮挡
+    const provinceNationInset =
+      (mode === 'click' || mode === 'self') &&
+      (current === clickMode ? clickMode.isProvinceNation() : selfMode.isProvinceNation());
+    $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
     $('map').classList.toggle('hidden', isNonMap);
     $('board').classList.toggle('hidden', mode !== 'board');
     $('admin').classList.toggle('hidden', mode !== 'admin');
@@ -290,13 +297,7 @@ async function boot() {
     $('btn-skip').classList.toggle('hidden', !isTest || mode === 'endless' || mode === 'daily');
     $('btn-end').classList.toggle('hidden', !isTest);
     $('btn-reset').classList.toggle('hidden', !isTest && !isAnalysis);
-    $('self-order-toggle').classList.toggle('hidden', mode !== 'self');
-    $('click-order-toggle').classList.toggle('hidden', mode !== 'click');
-    $('daily-order-toggle').classList.toggle('hidden', mode !== 'daily');
-    syncSegmentedToggle('self-order-toggle', selfMode.getOrderMode());
-    syncSegmentedToggle('click-order-toggle', clickMode.getOrderMode());
-    syncSegmentedToggle('daily-order-toggle', dailyMode.getAnswerMode());
-    syncSegmentedLock();
+    syncSegments();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
     syncViewChrome();
   }
@@ -307,15 +308,16 @@ async function boot() {
 
   function syncSegmentedToggle(containerId: string, current: string) {
     document.querySelectorAll<HTMLButtonElement>(`#${containerId} button`).forEach((btn) => {
-      const active = btn.dataset.order === current;
+      const value = btn.dataset.order ?? btn.dataset.granularity ?? btn.dataset.analysisGranularity ?? btn.dataset.mode;
+      const active = value === current;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-checked', String(active));
     });
   }
 
   function updateProgress() {
-    // 分段按钮锁定随模式状态同步：开始/作答/结束/重置都会经过这里
-    syncSegmentedLock();
+    // 分段按钮显隐/锁定随模式状态同步：开始/作答/结束/重置都会经过这里
+    syncSegments();
     const el = $('mode-progress');
     const progress = current?.getProgress?.() ?? null;
     if (!progress || (current?.id !== 'self' && current?.id !== 'click' && current?.id !== 'daily')) {
@@ -332,6 +334,13 @@ async function boot() {
   function backToNationFromMap() {
     hideSummary();
     hidePauseOverlay();
+    if (current?.onBackToNation) {
+      // 点击/输入模式的省级全国钻省返回省级全国、自由模式省级档钻省返回省级档
+      current.onBackToNation();
+      updateProgress();
+      syncPauseOverlay();
+      return;
+    }
     current?.exit();
     renderer.backToNation();
     current?.enter();
@@ -351,6 +360,7 @@ async function boot() {
 
   function showHoverStats(adcode: string) {
     if (current?.id !== 'free') return;
+    if (freeMode.getAnalysisGranularity() === 'province') return; // 省级档：悬停只高亮省面，不显示地级悬浮卡
     const unit = idx.byAdcode.get(adcode);
     if (!unit) return;
     const practice = store.getPractice(adcode);
@@ -434,7 +444,8 @@ async function boot() {
 
   function refreshSidePanel(): Promise<void> {
     if (current?.id === 'free') {
-      stats.refresh(renderer.currentProvince());
+      if (freeMode.getAnalysisGranularity() === 'province') stats.refreshProvinceLevel();
+      else stats.refresh(renderer.currentProvince());
       return Promise.resolve();
     }
     if (!isLeaderboardMode(current?.id)) return Promise.resolve();
@@ -443,6 +454,7 @@ async function boot() {
   }
 
   function scopeLabel(scopeProvince: string | null) {
+    if (scopeProvince === PROVINCE_NATION_SCOPE) return t('common.provinceNation');
     return scopeProvince ? data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
@@ -570,18 +582,66 @@ async function boot() {
     });
   });
 
-  /** 分段按钮在模式开始后锁定，防止中途切换出题/作答方式。 */
-  function syncSegmentedLock() {
-    const started = !!current?.isStarted?.();
-    document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button, #click-order-toggle button, #daily-order-toggle button').forEach((btn) => {
-      btn.disabled = started;
+  // 点击/输入模式的省级/市级粒度切换（仅全国视图、未开始测试时可操作）
+  document.querySelectorAll<HTMLButtonElement>('#granularity-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const g = btn.dataset.granularity as Granularity;
+      const target = current === selfMode ? selfMode : clickMode;
+      if (target.setGranularity) target.setGranularity(g);
+      syncSegments();
+      syncModeChrome();
+      updateProgress();
+      refreshSidePanel();
+    });
+  });
+
+  // 熟练度分析的省级/地级切换
+  document.querySelectorAll<HTMLButtonElement>('#analysis-granularity-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const g = btn.dataset.analysisGranularity as Granularity;
+      freeMode.setAnalysisGranularity(g);
+      syncSegments();
+      syncModeChrome();
+      updateProgress();
+      refreshSidePanel();
+    });
+  });
+
+  /** 分段按钮显隐与锁定：click/self 的「省级/市级」与「顺序/随机/错题」开始后整组隐藏；daily 开始后置灰。 */
+  function syncSegments() {
+    const mode = current?.id;
+    const testStarted = !!current?.isStarted?.();
+    const scopeIsNation = current?.getScopeProvince?.() === null || current?.getScopeProvince?.() === PROVINCE_NATION_SCOPE;
+    const isGranularityMode = mode === 'click' || mode === 'self';
+    // 「省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
+    const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
+    $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
+    if (granularityVisible) {
+      const g: Granularity = current === selfMode ? selfMode.getGranularity() : clickMode.getGranularity();
+      syncSegmentedToggle('granularity-toggle', g);
+    }
+    // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）；daily 恒显示（但开始后置灰）
+    $('self-order-toggle').classList.toggle('hidden', mode !== 'self' || testStarted);
+    $('click-order-toggle').classList.toggle('hidden', mode !== 'click' || testStarted);
+    $('daily-order-toggle').classList.toggle('hidden', mode !== 'daily');
+    // 熟练度分析：省级/地级切换（自由模式常显）
+    $('analysis-granularity-toggle').classList.toggle('hidden', mode !== 'free');
+    if (mode === 'free') {
+      syncSegmentedToggle('analysis-granularity-toggle', freeMode.getAnalysisGranularity());
+    }
+    syncSegmentedToggle('self-order-toggle', selfMode.getOrderMode());
+    syncSegmentedToggle('click-order-toggle', clickMode.getOrderMode());
+    syncSegmentedToggle('daily-order-toggle', dailyMode.getAnswerMode());
+    // daily 开始后置灰锁定（click/self 已整组隐藏，无需 disabled）
+    document.querySelectorAll<HTMLButtonElement>('#daily-order-toggle button').forEach((btn) => {
+      btn.disabled = testStarted && mode === 'daily';
     });
   }
 
-  // 点击「开始」按钮后立即锁定分段按钮（开始动作不经过 switchMode，syncSegmentedLock 需在此重新调用）
+  // 点击「开始」按钮后立即锁定分段按钮（开始动作不经过 switchMode，同步需在此重新调用）
   document.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
-    if (target?.closest?.('.start-action')) syncSegmentedLock();
+    if (target?.closest?.('.start-action')) syncSegments();
   });
 
   // 导航栏设置：仅个性化（黑夜模式、边界）
@@ -613,14 +673,20 @@ async function boot() {
     confirmAction(event.currentTarget as HTMLButtonElement, () => {
       if (current?.isPaused?.()) hidePauseOverlay();
       if (current?.id === 'free') {
-        store.resetPractice();
-        stats.refresh(renderer.currentProvince());
+        if (freeMode.getAnalysisGranularity() === 'province') {
+          store.resetProvincePractice();
+          stats.refreshProvinceLevel();
+        } else {
+          store.resetPractice();
+          stats.refresh(renderer.currentProvince());
+        }
         current.refresh();
         toast(t('main.resetMasteryDone'));
         return;
       }
       const mode = current?.id;
-      if ((mode === 'self' || mode === 'click') && current?.getScopeProvince?.() === null && current.isStarted?.()) {
+      const scope = current?.getScopeProvince?.();
+      if ((mode === 'self' || mode === 'click') && (scope === null || scope === PROVINCE_NATION_SCOPE) && current?.isStarted?.()) {
         showSettlementCard();
         return;
       }
@@ -643,7 +709,7 @@ async function boot() {
       return;
     }
     showSettlement(
-      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${t('main.settlementNote')}</div></div>`,
+      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${result.scopeProvince === PROVINCE_NATION_SCOPE ? t('main.settlementNoteProvince') : t('main.settlementNote')}</div></div>`,
       () => submitSettlement(result),
       () => closeSettlement(),
     );

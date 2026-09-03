@@ -331,8 +331,9 @@ body.theme-dark #test-timer.urgent {
   gap: 8px;
   flex-wrap: nowrap;
 }
-/* 每日竞速：港澳放大框在左下角，说明/缩放按钮移到其正上方 */
-#app[data-mode='daily'] #mode-info {
+/* 每日竞速 / 点击·输入模式的省级全国视图：港澳放大框在左下角，说明/缩放按钮移到其正上方 */
+#app[data-mode='daily'] #mode-info,
+#app[data-province-inset='1'] #mode-info {
   bottom: 240px;
 }
 #hkmac-inset {

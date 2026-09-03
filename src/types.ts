@@ -128,5 +128,6 @@ export interface RenderState {
   labelZoomThreshold?: number; // 地名标签显示倍率阈值
   disableTooltip?: boolean; // 记忆模式：关闭提示
   coin?: CoinLayer; // 无尽闯关：金币绿色深浅着色 + 中心金币/地名标签
-  provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 每日竞速：已作答省的省名标签（null = 不显示）
+  provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 每日竞速/省级练习：已作答省的省名标签（null = 不显示）
+  showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）
 }
