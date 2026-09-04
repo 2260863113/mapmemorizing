@@ -1,9 +1,11 @@
 /** 留言板共享校验与常量。 */
 
 import { ApiError } from './http';
+import { MAX_POST_LEN, MAX_REPLY_LEN } from './limits';
 
-export const MAX_POST_LEN = 200;
-export const MAX_REPLY_LEN = 100;
+// 向后兼容再导出：既有调用方仍从 board 导入长度上限。
+export { MAX_POST_LEN, MAX_REPLY_LEN };
+
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 50;
 

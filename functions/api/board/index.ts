@@ -56,6 +56,46 @@ async function fetchReplies(env: { DB: import('@cloudflare/workers-types').D1Dat
   return (rows.results ?? []).reverse().map(toReply);
 }
 
+/** 批量取多帖的预览回复（每帖最多 preview 条），按 postId 分组，避免逐帖查询（N+1）。 */
+async function fetchPreviewReplies(env: { DB: import('@cloudflare/workers-types').D1Database }, postIds: number[], preview: number): Promise<Map<number, BoardReplyDto[]>> {
+  const out = new Map<number, BoardReplyDto[]>();
+  if (!postIds.length) return out;
+  const placeholders = postIds.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT r.id, r.post_id, r.content, r.created_at, u.username, u.avatar
+     FROM board_replies r JOIN users u ON u.id = r.user_id
+     WHERE r.post_id IN (${placeholders})
+     ORDER BY r.id DESC`,
+  )
+    .bind(...postIds)
+    .all<ReplyRow>();
+  const byPost = new Map<number, BoardReplyDto[]>();
+  for (const row of rows.results ?? []) {
+    const list = byPost.get(row.post_id) ?? [];
+    list.push(toReply(row));
+    byPost.set(row.post_id, list);
+  }
+  // 倒序取回，截断到 preview 条后转正序返回
+  for (const [postId, list] of byPost) {
+    out.set(postId, list.slice(0, preview).reverse());
+  }
+  return out;
+}
+
+/** 批量统计多帖的回复数，避免逐帖 COUNT(*)（N+1）。 */
+async function fetchReplyCounts(env: { DB: import('@cloudflare/workers-types').D1Database }, postIds: number[]): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (!postIds.length) return out;
+  const placeholders = postIds.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT post_id, COUNT(*) AS c FROM board_replies WHERE post_id IN (${placeholders}) GROUP BY post_id`,
+  )
+    .bind(...postIds)
+    .all<{ post_id: number; c: number }>();
+  for (const row of rows.results ?? []) out.set(row.post_id, row.c);
+  return out;
+}
+
 function toReply(row: ReplyRow): BoardReplyDto {
   return { id: row.id, postId: row.post_id, content: row.content, createdAt: row.created_at, username: row.username, avatar: avatarOf(row.avatar) };
 }
@@ -91,20 +131,22 @@ export const onRequestGet = handle(async (context) => {
     .bind(before, before, limit)
     .all<PostRow>();
 
-  const posts: BoardPostDto[] = [];
-  for (const row of postRows.results ?? []) {
-    const preview = await fetchReplies(env, row.id, 0, PREVIEW_REPLIES);
-    const countRow = await env.DB.prepare('SELECT COUNT(*) AS c FROM board_replies WHERE post_id = ?').bind(row.id).first<{ c: number }>();
-    posts.push({
-      id: row.id,
-      content: row.content,
-      createdAt: row.created_at,
-      username: row.username,
-      avatar: avatarOf(row.avatar),
-      replyCount: countRow?.c ?? 0,
-      replies: preview,
-    });
-  }
+  const rows = postRows.results ?? [];
+  // 批量取预览回复与回复数，替代逐帖 2 次查询（消除 N+1）。
+  const postIds = rows.map((r) => r.id);
+  const [previews, counts] = await Promise.all([
+    fetchPreviewReplies(env, postIds, PREVIEW_REPLIES),
+    fetchReplyCounts(env, postIds),
+  ]);
+  const posts: BoardPostDto[] = rows.map((row) => ({
+    id: row.id,
+    content: row.content,
+    createdAt: row.created_at,
+    username: row.username,
+    avatar: avatarOf(row.avatar),
+    replyCount: counts.get(row.id) ?? 0,
+    replies: previews.get(row.id) ?? [],
+  }));
   return json({ posts });
 });
 

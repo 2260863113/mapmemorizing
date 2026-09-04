@@ -2,6 +2,7 @@ import { json, readJson, handle } from '../../_lib/http';
 import { requireSession } from '../../_lib/guard';
 import { toPublicUser } from '../../_lib/rows';
 import { cleanUsername, normalizePasswordHash } from '../../_lib/validate';
+import { MAX_AVATAR_DATAURL_LEN, MAX_AVATAR_SIZE } from '../../_lib/limits';
 
 interface Hometown {
   provinceAdcode: string;
@@ -21,10 +22,6 @@ interface ProfileBody {
   oldPasswordHash?: unknown;
   newPasswordHash?: unknown;
 }
-
-const MAX_AVATAR_SIZE = 20 * 1024;
-/** dataUrl 字符串长度的绝对上限（>20KB 的 base64 必然超长），防止仅依赖客户端自报 size。 */
-const MAX_AVATAR_DATAURL_LEN = 40 * 1024;
 
 export const onRequestPost = handle(
   requireSession(async (context) => {

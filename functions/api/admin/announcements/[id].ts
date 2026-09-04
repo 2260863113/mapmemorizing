@@ -2,9 +2,7 @@ import { json, readJson, handle } from '../../../_lib/http';
 import { requireAdmin } from '../../../_lib/guard';
 import { parsePositiveInt } from '../../../_lib/board';
 import { cleanPlainText } from '../../../_lib/board';
-
-const MAX_TITLE = 60;
-const MAX_CONTENT = 2000;
+import { MAX_ANNOUNCEMENT_CONTENT as MAX_CONTENT, MAX_ANNOUNCEMENT_TITLE as MAX_TITLE } from '../../../_lib/limits';
 
 interface AnnouncementBody {
   title?: unknown;

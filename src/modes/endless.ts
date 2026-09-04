@@ -9,6 +9,26 @@ import { t } from '../i18n';
 import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, saveEndlessAutoFollow, type ModeSettingsPanel } from '../modeSettings';
 import { fbm, makePermutation } from './endlessNoise';
 import { FOODS, ITEM_DEFS, ITEM_KEYS, pickInitialFoods, pickTokenChar, type FoodEntry, type ItemKey, type OwnedItem } from './endlessData';
+import {
+  COIN_LABEL_ZOOM,
+  COIN_NOISE_AMPLIFY,
+  COIN_NOISE_SCALE,
+  HOURGLASS_USES,
+  LEVEL_SECONDS,
+  POTION_REVEAL_MS,
+  POTION_USES,
+  WRONG_INPUT_COIN_LOSS,
+  cloverBonus,
+  coinValue,
+  cumulativeTarget,
+  floatUpIncrement,
+  foodBonus as foodBonusAmount,
+  hourglassSeconds,
+  nextPrice,
+  rollShopKeys,
+  tokenBonus,
+  tokenMatchesName,
+} from './endlessEconomy';
 
 /**
  * 无尽闯关：
@@ -313,7 +333,7 @@ export class EndlessMode extends BaseMode {
     this.totalCollects = 0;
     this.targetHit = false;
     this.coins = this.generateCoins();
-    this.target = this.cumulativeTarget(1);
+    this.target = cumulativeTarget(1);
     this.runStartAt = Date.now();
     this.started = true;
     this.paused = false;
@@ -349,17 +369,17 @@ export class EndlessMode extends BaseMode {
     this.collectedThisLevel.add(unit.adcode);
     let bonus = 0;
     // 幸运草：额外 50-100 金币（不超过地名本身价格）
-    if (this.hasItem('clover')) bonus += Math.min(randInt(50, 100), value);
+    if (this.hasItem('clover')) bonus += cloverBonus(rand, value);
     // 飞花令牌：含关键字的地名额外获得金币，逐次递增（不超过地名本身价格）
-    if (this.hasItem('token') && this.tokenChar && this.nameHasToken(unit)) {
-      bonus += Math.min(randInt(50, 100) + this.tokenMatches * 50, value);
+    if (this.hasItem('token') && this.tokenChar && tokenMatchesName(this.tokenChar, unit.name, unit.shortName)) {
+      bonus += tokenBonus(rand, value, this.tokenMatches);
       this.tokenMatches += 1;
     }
     // 美食鉴赏家：命中食物省份额外 50-100 金币（不超过地名本身价格），随后该食物作废并替换
     let foodBonus = 0;
     const food = this.foodForUnit(unit);
     if (food) {
-      foodBonus = Math.min(randInt(50, 100), value);
+      foodBonus = foodBonusAmount(rand, value);
       bonus += foodBonus;
       this.consumeFood(food);
     }
@@ -370,7 +390,7 @@ export class EndlessMode extends BaseMode {
     let timeBonus = 0;
     const hourglass = this.owned.find((o) => o.key === 'hourglass');
     if (hourglass && hourglass.durability > 0) {
-      timeBonus = randInt(3, 5);
+      timeBonus = hourglassSeconds(rand);
       this.countdown.add(timeBonus * 1000);
       hourglass.durability -= 1;
       if (hourglass.durability <= 0) this.owned = this.owned.filter((o) => o.durability > 0);
@@ -427,7 +447,7 @@ export class EndlessMode extends BaseMode {
   /** 道具商店：每件道具 50% 概率出现，每关仅可购买一次。 */
   private openShop() {
     this.switching = true;
-    this.shopKeys = ITEM_KEYS.filter(() => Math.random() < 0.5);
+    this.shopKeys = rollShopKeys(rand, ITEM_KEYS) as ItemKey[];
     this.boughtThisShop.clear();
     this.renderShop();
     showShop();
@@ -470,7 +490,7 @@ export class EndlessMode extends BaseMode {
     if (this.totalCoins < price) return;
     this.totalCoins -= price;
     this.boughtThisShop.add(key);
-    this.itemPrices.set(key, price + randInt(80, 120)); // 下次购买涨价
+    this.itemPrices.set(key, nextPrice(rand, price)); // 下次购买涨价
     this.addOwned(key);
     this.renderShop();
   }
@@ -498,7 +518,7 @@ export class EndlessMode extends BaseMode {
     this.switching = false;
     this.floatUpCoins();
     this.level += 1;
-    this.target = this.cumulativeTarget(this.level);
+    this.target = cumulativeTarget(this.level);
     this.levelCoins = 0;
     this.targetHit = false;
     this.collectedThisLevel.clear();
@@ -600,15 +620,6 @@ export class EndlessMode extends BaseMode {
     return this.owned.some((o) => o.key === key && o.durability > 0);
   }
 
-  /** 飞花令牌命中：含关键字的名称命中；「自治州」中的「州」不作数。 */
-  private nameHasToken(unit: Unit) {
-    if (!this.tokenChar) return false;
-    if (this.tokenChar === '州') {
-      return unit.name.replace(/自治州/g, '').includes('州') || unit.shortName.includes('州');
-    }
-    return unit.name.includes(this.tokenChar) || unit.shortName.includes(this.tokenChar);
-  }
-
   /** 透视药水：方向键使用，显示全国地名标签 3 秒后自动恢复。 */
   private usePotion() {
     const potion = this.owned.find((o) => o.key === 'potion');
@@ -671,7 +682,7 @@ export class EndlessMode extends BaseMode {
     this.usedFoods.add(food.food);
     const remaining = FOODS.filter((f) => !this.usedFoods.has(f.food) && !this.activeFoods.some((a) => a.food === f.food));
     if (remaining.length) {
-      this.activeFoods.push(remaining[Math.floor(Math.random() * remaining.length)]);
+      this.activeFoods.push(remaining[Math.floor(rand() * remaining.length)]);
     }
     this.renderFoods();
   }
@@ -685,9 +696,7 @@ export class EndlessMode extends BaseMode {
         -1,
         1,
       );
-      const t = (n + 1) / 2;
-      const coins = Math.round((COIN_MIN + t * t * (COIN_MAX - COIN_MIN)) / 10) * 10;
-      map.set(u.adcode, Number.isFinite(coins) ? clamp(coins, COIN_MIN, COIN_MAX) : COIN_MIN);
+      map.set(u.adcode, coinValue(n));
     }
     return map;
   }
@@ -696,49 +705,29 @@ export class EndlessMode extends BaseMode {
   private floatUpCoins() {
     for (const [adcode, coins] of this.coins) {
       if (!Number.isFinite(coins)) continue; // NaN 防御
-      let inc: number;
-      if (coins < 100) inc = randInt(30, 50);
-      else if (coins < 300) inc = randInt(20, 40);
-      else if (coins < 500) inc = randInt(10, 30);
-      else inc = randInt(5, 15);
-      this.coins.set(adcode, coins + inc);
+      this.coins.set(adcode, coins + floatUpIncrement(rand, coins));
     }
-  }
-
-  /** 本关累计目标：通关所需的累计金币（第一关 1000，第二关 1000+1100=2100，逐关等比求和）。 */
-  private cumulativeTarget(level: number) {
-    return (BASE_TARGET * (Math.pow(TARGET_GROWTH, level) - 1)) / (TARGET_GROWTH - 1);
   }
 }
 
-// ---------- 常量 ----------
-const LEVEL_SECONDS = 45;
-const BASE_TARGET = 1000; // 第一关累计目标金币
-const TARGET_GROWTH = 1.1; // 累计目标每关增幅（第二关 1000+1100=2100）
-const COIN_MIN = 50; // 初始金币下限（约 50）
-const COIN_MAX = 400; // 初始金币上限（约 400）
-const COIN_NOISE_SCALE = 6; // 经/纬度噪声尺度
-const COIN_NOISE_AMPLIFY = 1.25; // 噪声起伏放大（拉开差距）
-const COIN_LABEL_ZOOM = 0; // 金币/地名标签始终显示（不按缩放倍率隐藏）
+// ---------- 本地持久化键 ----------
 const HIDE_PRICE_KEY = 'china-admin-endless-hide-price-v1';
 const HIDE_PRICE_BG_KEY = 'china-admin-endless-hide-price-bg-v1';
-const WRONG_INPUT_COIN_LOSS = 10; // 输错地名扣减的金币（盾牌可免疫）
-const HOURGLASS_USES = 5; // 时间沙漏激活后次数
-const POTION_USES = 3; // 透视药水使用次数（每购买一次）
-const POTION_REVEAL_MS = 3000; // 透视药水显示地名时长
 
 // ---------- 工具 ----------
+const rand = Math.random; // 随机源（经济纯函数默认注入 Math.random，测试走 endlessEconomy）
+
 function fmt(n: number) {
   if (!Number.isFinite(n)) return '0'; // NaN 防御
   return Math.round(n).toLocaleString('zh-CN');
 }
 
 function randInt(min: number, max: number) {
-  return min + Math.floor(Math.random() * (max - min + 1));
+  return min + Math.floor(rand() * (max - min + 1));
 }
 
 function randomSeed() {
-  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  return (Date.now() ^ Math.floor(rand() * 0xffffffff)) >>> 0;
 }
 
 function loadHidePrices(): boolean {

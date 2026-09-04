@@ -5,21 +5,25 @@ import { normalizeProvince } from '../matcher';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
 import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
 import { InsetMap } from './inset';
+import {
+  CITY_LABEL_SIZE,
+  PRICE_LABEL_SIZE,
+  PROVINCE_LABEL_SIZE,
+  buildLabelGraphic,
+  labelScale,
+  parseLabelValue,
+} from './labels';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
-const LABEL_FIX_ZOOM = 4; // 标签固定大小阈值：4x 以上不再放大，4x 以下随地图缩放（避免小倍率看不清价格）
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
 const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
-const CITY_LABEL_SIZE = 14;
-const PRICE_LABEL_SIZE = 18; // 价格标签字号（随缩放缩放）
-const PROVINCE_LABEL_SIZE = 15; // 省名标签字号（省级练习作答反馈）
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
@@ -42,31 +46,6 @@ export interface MapHandlers {
   onBlankClick: () => void;
   onUnitHover?: (adcode: string) => void;
   onUnitHoverEnd?: () => void;
-}
-
-/** 标签缩放：缩放倍率 <4x 时跟随地图等比例缩放（下限 0.5 保证小倍率可读），>=4x 时保持固定大小。 */
-function labelScale(zoom: number) {
-  return Math.max(0.5, Math.min(1, zoom / LABEL_FIX_ZOOM));
-}
-
-/** 文本渲染宽度估算：CJK 按全角、ASCII 按半角。 */
-function textRenderWidth(text: string, fontSize: number) {
-  let width = 0;
-  for (const ch of text) {
-    width += ch.charCodeAt(0) > 0xff ? fontSize : fontSize * 0.6;
-  }
-  return width;
-}
-
-function labelShape(name: string, point: number[], fontSize: number, padX: number, padY: number, minWidth: number) {
-  const width = Math.max(minWidth, textRenderWidth(name, fontSize) + padX * 2);
-  const height = fontSize + padY * 2;
-  return {
-    x: point[0] - width / 2,
-    y: point[1] - height / 2,
-    width,
-    height,
-  };
 }
 
 function clampZoom(zoom: number) {
@@ -115,6 +94,8 @@ export class MapRenderer {
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
+  /** 命名 resize 监听器引用，dispose 时移除，避免匿名监听泄漏。 */
+  private handleResize = () => this.resize();
   onViewChange: (() => void) | null = null;
   onZoomChange: (() => void) | null = null;
 
@@ -240,10 +221,7 @@ export class MapRenderer {
       this.onZoomChange?.();
     });
 
-    window.addEventListener('resize', () => {
-      this.chart.resize();
-      this.inset.resize();
-    });
+    window.addEventListener('resize', this.handleResize);
   }
 
   /** 容器尺寸变化（如从留言板切回地图）时重算画布。 */
@@ -597,75 +575,20 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           renderItem: (_params, api) => {
-            const value = [api.value(0), api.value(1)] as [number, number];
-            // ECharts custom series 会把 value 数组中的字符串数字转成 number，
-            // 这里统一转字符串，保证价格/地名都能显示。
-            const rawText = api.value(2);
-            const name = rawText == null ? '' : String(rawText);
-            const color = String(api.value(3));
-            const isPrice = Number(api.value(4)) === 1;
-            const noBg = Number(api.value(5)) === 1;
-            const point = api.coord(value) as number[];
-            // NaN 防御：坐标非有限或文本异常时跳过该标签，避免显示 "NaN"
-            if (!Number.isFinite(point[0]) || !Number.isFinite(point[1]) || !name || name === 'NaN' || name === 'undefined') {
-              return { type: 'group', children: [] };
-            }
+            const parsed = parseLabelValue(api);
+            if (!parsed) return { type: 'group', children: [] };
             const scale = labelScale(this.zoom);
-            const fontSize = (isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
-            const font = `${isPrice ? 700 : 600} ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
-            // 隐藏衬底的价格：无背景矩形，白色文字 + 细黑描边（固定 1-2px），不随字号变粗
-            if (isPrice && noBg) {
-              return {
-                type: 'group',
-                children: [
-                  {
-                    type: 'text',
-                    style: {
-                      x: point[0],
-                      y: point[1] + fontSize * 0.1,
-                      text: name,
-                      fill: '#ffffff',
-                      textBorderColor: '#000000',
-                      textBorderWidth: 1.5,
-                      font,
-                      align: 'center',
-                      verticalAlign: 'middle',
-                    },
-                  },
-                ],
-              };
-            }
-            const padX = (isPrice ? 4 : 8) * scale;
-            const padY = (isPrice ? 3 : 6) * scale;
-            const minWidth = (isPrice ? 26 : 34) * scale;
-            const shape = labelShape(name, point, fontSize, padX, padY, minWidth);
-            return {
-              type: 'group',
-              children: [
-                {
-                  type: 'rect',
-                  shape,
-                  style: {
-                    fill: theme.labelBg,
-                    shadowColor: theme.labelShadow,
-                    shadowBlur: 8 * scale,
-                    shadowOffsetY: 2 * scale,
-                  },
-                },
-                {
-                  type: 'text',
-                  style: {
-                    x: point[0],
-                    y: point[1] + (isPrice ? fontSize * 0.1 : 0), // 价格文本下移微调，保证垂直居中
-                    text: name,
-                    fill: color,
-                    font,
-                    align: 'center',
-                    verticalAlign: 'middle',
-                  },
-                },
-              ],
-            };
+            const fontSize = (parsed.isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
+            return buildLabelGraphic({
+              ...parsed,
+              scale,
+              theme,
+              fontSize,
+              padX: (parsed.isPrice ? 4 : 8) * scale,
+              padY: (parsed.isPrice ? 3 : 6) * scale,
+              minWidth: (parsed.isPrice ? 26 : 34) * scale,
+              fontWeight: parsed.isPrice ? 700 : 600,
+            });
           },
           data: labelData,
         },
@@ -679,48 +602,19 @@ export class MapRenderer {
           silent: true,
           tooltip: { show: false },
           renderItem: (_params, api) => {
-            const value = [api.value(0), api.value(1)] as [number, number];
-            const rawText = api.value(2);
-            const name = rawText == null ? '' : String(rawText);
-            const color = String(api.value(3));
-            const point = api.coord(value) as number[];
-            // NaN 防御
-            if (!Number.isFinite(point[0]) || !Number.isFinite(point[1]) || !name || name === 'NaN' || name === 'undefined') {
-              return { type: 'group', children: [] };
-            }
+            const parsed = parseLabelValue(api);
+            if (!parsed) return { type: 'group', children: [] };
             const scale = labelScale(this.zoom);
-            const fontSize = PROVINCE_LABEL_SIZE * scale;
-            const font = `600 ${fontSize}px Microsoft YaHei, PingFang SC, system-ui, sans-serif`;
-            const padX = 7 * scale;
-            const padY = 4 * scale;
-            const shape = labelShape(name, point, fontSize, padX, padY, 30 * scale);
-            return {
-              type: 'group',
-              children: [
-                {
-                  type: 'rect',
-                  shape,
-                  style: {
-                    fill: theme.labelBg,
-                    shadowColor: theme.labelShadow,
-                    shadowBlur: 8 * scale,
-                    shadowOffsetY: 2 * scale,
-                  },
-                },
-                {
-                  type: 'text',
-                  style: {
-                    x: point[0],
-                    y: point[1],
-                    text: name,
-                    fill: color,
-                    font,
-                    align: 'center',
-                    verticalAlign: 'middle',
-                  },
-                },
-              ],
-            };
+            return buildLabelGraphic({
+              ...parsed,
+              scale,
+              theme,
+              fontSize: PROVINCE_LABEL_SIZE * scale,
+              padX: 7 * scale,
+              padY: 4 * scale,
+              minWidth: 30 * scale,
+              fontWeight: 600,
+            });
           },
           data: provinceLabelData,
         },
@@ -899,6 +793,7 @@ export class MapRenderer {
   }
 
   dispose() {
+    window.removeEventListener('resize', this.handleResize);
     if (this.labelUpdateTimer !== null) {
       window.clearTimeout(this.labelUpdateTimer);
       this.labelUpdateTimer = null;
