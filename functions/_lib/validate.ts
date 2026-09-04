@@ -13,6 +13,8 @@ export type ScoreMode = 'self' | 'click' | 'endless';
 
 /** 省级全国哨兵：区别于市级全国（null/''）与某省地级榜（6 位 adcode）。与前端 province.ts 保持一致。 */
 export const PROVINCE_NATION_SCOPE = '__province_nation__';
+/** 世界全国哨兵：独立作用域行（区别于市级全国 null/'' 与省级全国哨兵）。与前端 province.ts 保持一致。 */
+export const WORLD_NATION_SCOPE = '__world_nation__';
 
 /** 用户名归一化：与前端 cleanUsername 一致（trim、压缩空白、截 24）。 */
 export function cleanUsername(username: unknown): string {
@@ -61,8 +63,14 @@ export function validateScore(body: unknown): ScorePayload {
   if (!validMode(row.mode)) throw new ApiError(400, 'invalid_mode', '无效的模式');
   // 类型守卫：拒绝 undefined 与非字符串，此后 TS 收窄为 string | null
   if (row.scopeProvince !== null && typeof row.scopeProvince !== 'string') throw new ApiError(400, 'invalid_scope', '无效的范围');
-  // scope 白名单：''（全国）、省级全国哨兵、6 位 adcode（单省）。拒绝任意非空字符串污染省级榜。
-  if (typeof row.scopeProvince === 'string' && row.scopeProvince !== '' && row.scopeProvince !== PROVINCE_NATION_SCOPE && !/^\d{6}$/.test(row.scopeProvince)) {
+  // scope 白名单：''（市级全国）、省级全国哨兵、世界全国哨兵、6 位 adcode（单省）。拒绝任意非空字符串污染省级榜。
+  if (
+    typeof row.scopeProvince === 'string' &&
+    row.scopeProvince !== '' &&
+    row.scopeProvince !== PROVINCE_NATION_SCOPE &&
+    row.scopeProvince !== WORLD_NATION_SCOPE &&
+    !/^\d{6}$/.test(row.scopeProvince)
+  ) {
     throw new ApiError(400, 'invalid_scope', '无效的范围');
   }
   if (typeof row.scopeLabel !== 'string' || !row.scopeLabel.trim()) throw new ApiError(400, 'invalid_scope_label', '缺少范围名称');
@@ -92,7 +100,8 @@ export function validateScore(body: unknown): ScorePayload {
     finishedAt: Math.floor(finishedAt),
   };
 
-  // 提交资格：endless 需有金币（不统计题数，totalUnits 恒 0）；全国 self/click 允许未答完（已答全对即可）；省级（含省级全国哨兵）维持全对。
+  // 提交资格：endless 需有金币（不统计题数，totalUnits 恒 0）；全国 self/click（null）与「世界全国」
+  // （__world_nation__）允许未答完（已答全对即可）；省级（含省级全国哨兵）维持全对。
   if (payload.mode === 'endless') {
     const coins = Number(row.coins);
     if (!Number.isFinite(coins) || coins <= 0) throw new ApiError(400, 'invalid_score', '尚未收集金币');
@@ -103,7 +112,7 @@ export function validateScore(body: unknown): ScorePayload {
   }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');
   if (payload.correct > payload.totalUnits) throw new ApiError(400, 'invalid_score', '无效的答对数');
-  if (payload.scopeProvince === null) {
+  if (payload.scopeProvince === null || payload.scopeProvince === WORLD_NATION_SCOPE) {
     if (!(payload.correct > 0 && payload.wrong === 0)) throw new ApiError(400, 'invalid_score', '全国榜需已答全对');
     return payload;
   }
@@ -113,6 +122,11 @@ export function validateScore(body: unknown): ScorePayload {
   return payload;
 }
 
+/** 是否“全国语义”作用域（市级全国 null 或世界全国哨兵）：答对题数优先排序；其余省级语义按时间排序。 */
+export function isNationScope(scopeProvince: string | null): boolean {
+  return scopeProvince === null || scopeProvince === WORLD_NATION_SCOPE;
+}
+
 /** 新成绩是否比已有成绩更优（与前端 isBetter 对齐）。 */
 export function isBetter(next: ScorePayload, existing: { coins: number | null; level: number | null; correct: number; elapsed_ms: number }): boolean {
   if (next.mode === 'endless') {
@@ -120,7 +134,7 @@ export function isBetter(next: ScorePayload, existing: { coins: number | null; l
     const existingCoins = existing.coins ?? 0;
     return nextCoins > existingCoins || (nextCoins === existingCoins && (next.level ?? 1) > (existing.level ?? 1));
   }
-  if (next.scopeProvince === null) {
+  if (isNationScope(next.scopeProvince)) {
     return next.correct > existing.correct || (next.correct === existing.correct && next.elapsedMs < existing.elapsed_ms);
   }
   return next.elapsedMs < existing.elapsed_ms;

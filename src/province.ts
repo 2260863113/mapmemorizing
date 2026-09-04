@@ -2,7 +2,7 @@ import type { AppData, Province, Unit } from './types';
 import { normalizeProvince } from './matcher';
 
 /**
- * 省级粒度（省级全国练习 / 省名熟练度分析）的共享数据与规则。
+ * 省级粒度（省级全国练习 / 省名熟练度分析）与粒度共用常量的共享数据与规则。
  *
  * 省级单元 = data.provinces 的 34 个省级行政单元（含港澳台；南海诸岛装饰面不属于 provinces 表）。
  * 省级答题与地级市熟练度完全隔离：对/错只计入省级熟练度（见 MemoryStore 的省记录）。
@@ -10,8 +10,11 @@ import { normalizeProvince } from './matcher';
 
 /** 排行榜/结算中“省级全国”作用域的哨兵值：区别于市级全国（scopeProvince=null）与某省地级榜（6 位 adcode）。 */
 export const PROVINCE_NATION_SCOPE = '__province_nation__';
+/** 排行榜/结算中“世界全国”作用域的哨兵值：区别于市级全国（null）与省级全国（__province_nation__）。 */
+export const WORLD_NATION_SCOPE = '__world_nation__';
 
-export type Granularity = 'province' | 'city';
+/** 测验/分析粒度：省级全国（省名）/ 市级全国或单省（地级市）/ 世界全国（国家名）。 */
+export type Granularity = 'province' | 'city' | 'world';
 
 /** 省全名 adcode 索引。 */
 export function provinceByAdcode(data: AppData, adcode: string): Province | null {

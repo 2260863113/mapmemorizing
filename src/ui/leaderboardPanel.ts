@@ -4,6 +4,7 @@ import { normalize, normalizeProvince } from '../matcher';
 import { avatarHtml } from './avatar';
 import { escapeHtml } from './html';
 import type { AppData } from '../types';
+import { WORLD_NATION_SCOPE } from '../province';
 import { t } from '../i18n';
 
 /** 侧栏：按当前测试模式和范围展示云端共享排行榜。 */
@@ -67,12 +68,12 @@ export class LeaderboardPanel {
   }
 }
 
-/** 行尾信息：endless 显示金币+关卡，全国榜显示题数+时间，省级榜仅时间。 */
+/** 行尾信息：endless 显示金币+关卡；全国语义榜（市级全国 null / 世界全国哨兵）显示题数+时间，省级榜仅时间。 */
 function metaText(entry: LeaderboardEntry, scopeProvince: string | null) {
   if (entry.mode === 'endless') {
     return t('leaderboard.endlessMeta', { coins: formatCoins(entry.coins ?? 0), level: entry.level ?? 1 });
   }
-  if (scopeProvince === null) {
+  if (scopeProvince === null || scopeProvince === WORLD_NATION_SCOPE) {
     return t('leaderboard.nationMeta', { correct: entry.correct, time: formatElapsedCentiseconds(entry.elapsedMs) });
   }
   return formatElapsedCentiseconds(entry.elapsedMs);

@@ -19,6 +19,7 @@ type LabelPoint = { name: string; value: [number, number, string, string, number
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
+const WORLD_LABEL_ZOOM = 2.2; // 世界分析档国名标签阈值（世界图 zoom 1 即全球，2.2 已较近）
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 28;
 const FOLLOW_ANIMATION_MS = 650;
@@ -92,6 +93,11 @@ export class MapRenderer {
   private provinceMode = false; // 省级模式：不画地级边界、省界加粗、不支持下钻
   private provinceModeInset = true; // 省级模式是否显示港澳放大框
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
+  private worldMode = false; // 世界模式：只渲染世界地图（答题国 + 装饰面），无放大框、无下钻
+  private worldNameToIso = new Map<string, string>(); // 世界面 name → iso_a3
+  private worldIsoToName = new Map<string, string>(); // iso_a3 → 世界面 name（答题国）
+  private worldDecorativeNames = new Set<string>(); // 装饰面 name（灰显、不响应）
+  private worldLabelAnchors = new Map<string, GeoPoint>(); // iso → 标签锚点（按主面质心）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   /** 命名 resize 监听器引用，dispose 时移除，避免匿名监听泄漏。 */
@@ -102,6 +108,7 @@ export class MapRenderer {
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
     echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：只渲染 35 个省面
+    echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     this.inset = new InsetMap({
       theme: () => this.theme(),
       state: () => this.lastState,
@@ -124,6 +131,19 @@ export class MapRenderer {
     for (const f of provGeo.features ?? []) {
       if (f.properties.name && f.properties.adcode) this.provinceNameToAdcode.set(f.properties.name, f.properties.adcode);
     }
+    // 世界面 name → iso / 装饰面判定 / 标签锚点（只取主面，标签不致落在公海）
+    const worldGeo = data.worldGeoJson as { features?: GeoFeature[] };
+    for (const f of worldGeo.features ?? []) {
+      const nm = f.properties.name ?? '';
+      const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
+      if (iso) this.worldNameToIso.set(nm, iso);
+      if (f.properties.decorative) this.worldDecorativeNames.add(nm);
+      else {
+        this.worldIsoToName.set(iso, nm);
+        const polygons = polygonsOf(f);
+        if (polygons.length) this.worldLabelAnchors.set(iso, bestLabelAnchor(polygons));
+      }
+    }
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
       const params = p as { componentType?: string; seriesType?: string; name?: string };
@@ -132,14 +152,21 @@ export class MapRenderer {
         if (this.viewProvince) this.handlers.onBlankClick();
         return;
       }
+      const hitName = params.name ?? '';
+      // 世界模式：命中答题国 → 按 iso 回传；装饰面（属地/南极等）静默忽略；空白返回不适用（世界无下钻）
+      if (this.worldMode) {
+        const iso = this.worldNameToIso.get(hitName);
+        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitClick(iso);
+        return;
+      }
       // 省级模式：命中省级面 → 按省全名查省 adcode 回传，不支持下钻
       if (this.provinceMode) {
-        const adcode = this.provinceNameToAdcode.get(params.name ?? '');
+        const adcode = this.provinceNameToAdcode.get(hitName);
         if (adcode && adcode !== '100000_JD') this.handlers.onUnitClick(adcode);
         else if (this.viewProvince) this.handlers.onBlankClick();
         return;
       }
-      const u = this.nameToUnit.get(params.name ?? '');
+      const u = this.nameToUnit.get(hitName);
       if (!u) {
         if (this.viewProvince) this.handlers.onBlankClick();
         return;
@@ -160,13 +187,19 @@ export class MapRenderer {
     this.chart.on('mouseover', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
+      const hitName = params.name ?? '';
+      if (this.worldMode) {
+        const iso = this.worldNameToIso.get(hitName);
+        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitHover?.(iso);
+        return;
+      }
       // 省级模式：命中省级面 → 按省全名查省 adcode
       if (this.provinceMode) {
-        const adcode = this.provinceNameToAdcode.get(params.name ?? '');
+        const adcode = this.provinceNameToAdcode.get(hitName);
         if (adcode) this.handlers.onUnitHover?.(adcode);
         return;
       }
-      const u = this.nameToUnit.get(params.name ?? '');
+      const u = this.nameToUnit.get(hitName);
       if (u) this.handlers.onUnitHover?.(u.adcode);
     });
     this.chart.on('mouseout', (p) => {
@@ -176,6 +209,7 @@ export class MapRenderer {
 
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
+      if (this.worldMode) return; // 世界粒度：国家为最小单元，双击不钻取
       if (this.provinceMode) {
         if (!this.provinceModeDrill) return; // 省级模式：默认不支持下钻
         // 省级浏览（熟练度分析省级档）：双击省级面 → 回传省 adcode 交给模式下钻
@@ -248,12 +282,21 @@ export class MapRenderer {
   setProvinceMode(on: boolean, opts: { inset?: boolean; allowDrill?: boolean } = {}) {
     const nextInset = opts.inset ?? true;
     const nextDrill = opts.allowDrill ?? false;
-    if (this.provinceMode === on && this.provinceModeInset === nextInset && this.provinceModeDrill === nextDrill) return;
+    if (this.provinceMode === on && this.provinceModeInset === nextInset && this.provinceModeDrill === nextDrill && !this.worldMode) return;
+    const wasWorld = this.worldMode;
+    this.worldMode = false;
     this.provinceMode = on;
     this.provinceModeInset = nextInset;
     this.provinceModeDrill = nextDrill;
     let resetFromDrill = false;
-    if (this.viewProvince) {
+    if (wasWorld) {
+      // 离开世界模式：复位到中国全国默认视野（世界无下钻状态）
+      this.savedNationView = null;
+      this.viewProvince = null;
+      this.center = [104.5, 35];
+      this.zoom = 1;
+      this.labelMode = 'none';
+    } else if (this.viewProvince) {
       // 离开钻省状态回到全国：若存在下钻前视图快照则恢复之（否则回默认全国视图）
       const saved = this.savedNationView;
       this.savedNationView = null;
@@ -263,7 +306,7 @@ export class MapRenderer {
       this.labelMode = 'none';
       resetFromDrill = true;
     }
-    if (this.provinceMode && this.provinceModeInset) this.inset.show();
+    if (!this.worldMode && this.provinceMode && this.provinceModeInset) this.inset.show();
     else this.inset.hide();
     if (this.lastState) this.render(this.lastState);
     if (resetFromDrill) {
@@ -271,6 +314,32 @@ export class MapRenderer {
       this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
       this.onZoomChange?.();
     }
+  }
+
+  /** 世界模式：只渲染世界地图（195 答题国 + 44 装饰面），无放大框、无下钻；退出时复位到全国视图。 */
+  setWorldMode(on: boolean) {
+    if (this.worldMode === on && !this.provinceMode) return;
+    const wasWorld = this.worldMode;
+    this.worldMode = on;
+    this.provinceMode = false;
+    this.provinceModeInset = false;
+    this.provinceModeDrill = false;
+    this.inset.hide();
+    // 世界无「下钻省」概念；切走省级地级视图状态时复位到世界默认视野
+    this.savedNationView = null;
+    this.viewProvince = null;
+    if (on) {
+      this.center = [10, 25];
+      this.zoom = 1;
+      this.labelMode = 'none';
+    } else if (wasWorld) {
+      this.center = [104.5, 35];
+      this.zoom = 1;
+    }
+    if (this.lastState) this.render(this.lastState);
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+    this.onZoomChange?.();
+    this.onViewChange?.();
   }
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
@@ -301,8 +370,9 @@ export class MapRenderer {
     return out;
   }
 
-  /** 当前视图下的省界线数据（下钻时只保留当前省） */
+  /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
   private buildLineData(): { coords: number[][] }[] {
+    if (this.worldMode) return [];
     return this.provinceLines
       .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
       .map((l) => ({ coords: l.coords }));
@@ -375,8 +445,7 @@ export class MapRenderer {
   }
 
   /** 省级模式的省面 region 数据：整省着色 + 整个省悬浮高亮。 */
-  private buildProvinceRegionData(state: RenderState): GeoRegion[] {
-    const theme = this.theme();
+  private buildProvinceRegionData(state: RenderState): GeoRegion[] {    const theme = this.theme();
     const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
     return (geo.features ?? []).map((f) => {
       const adcode = f.properties.adcode ?? '';
@@ -400,6 +469,7 @@ export class MapRenderer {
   }
 
   private buildLabelData(state: RenderState): LabelPoint[] {
+    if (this.worldMode) return []; // 世界国名标签走 world-labels 系列
     if (this.labelMode !== 'city') return [];
     const theme = this.theme();
     return this.units.flatMap((u) => {
@@ -444,6 +514,67 @@ export class MapRenderer {
     return out;
   }
 
+  /** 世界模式的国面数据（供 map series 的 tooltip/事件按国名匹配；装饰面不参与）。 */
+  private buildWorldEventData(): { name: string }[] {
+    const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
+    return (geo.features ?? [])
+      .filter((f) => !f.properties.decorative)
+      .map((f) => ({ name: f.properties.name ?? '' }));
+  }
+
+  /** 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。 */
+  private buildWorldRegionData(state: RenderState): GeoRegion[] {
+    const theme = this.theme();
+    const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
+    return (geo.features ?? []).map((f) => {
+      const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
+      const isDecorative = f.properties.decorative === 1 || !iso;
+      const color: UnitColor = isDecorative ? 'gray' : state.colorOf(iso);
+      return {
+        name: f.properties.name ?? '',
+        silent: isDecorative,
+        itemStyle: {
+          areaColor: theme.fill[color],
+          borderColor: theme.boundary.mid, // 国家细边界
+          borderWidth: 0.4,
+        },
+        emphasis: {
+          itemStyle: { areaColor: isDecorative ? theme.fill.gray : theme.emphasis[color] },
+          label: { show: false },
+        },
+        label: { show: false },
+      };
+    });
+  }
+
+  /** 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。 */
+  private buildWorldLabelData(state: RenderState): LabelPoint[] {
+    if (!this.worldMode) return [];
+    const theme = this.theme();
+    const out: LabelPoint[] = [];
+    // 测验档：仅已作答国显示绿/红简称
+    if (state.worldLabel) {
+      for (const c of this.data.countries) {
+        const anchor = this.worldLabelAnchors.get(c.iso);
+        if (!anchor) continue;
+        const lab = state.worldLabel(c.iso);
+        if (!lab) continue;
+        const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
+        out.push({ name: c.name, value: [...anchor, lab.text, color, 0, 0] });
+      }
+      return out;
+    }
+    // 分析档：仅在放大到国名阈值后显示（Q35：不常显）
+    if (state.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) {
+      for (const c of this.data.countries) {
+        const anchor = this.worldLabelAnchors.get(c.iso);
+        if (!anchor) continue;
+        out.push({ name: c.name, value: [...anchor, c.name, theme.labelNeutral, 0, 0] });
+      }
+    }
+    return out;
+  }
+
   private provinceFeatureName(adcode: string): string {
     const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
     const f = (geo.features ?? []).find((x) => x.properties.adcode === adcode);
@@ -451,6 +582,12 @@ export class MapRenderer {
   }
 
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
+    // 世界模式：地级市标签系列不参与；国名标签由 world-labels 系列渲染。
+    // 世界分析档国名只在放大过阈值后显示——把该开关复用到 'city' 档位以驱动缩放后刷新。
+    if (this.worldMode) {
+      if (state?.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) return 'city';
+      return 'none';
+    }
     // 省级模式：彻底禁用地级市地名标签（省名标签由 province-labels 系列单独渲染）
     if (this.provinceMode) return 'none';
     const threshold = state?.labelZoomThreshold ?? LABEL_ZOOM;
@@ -465,12 +602,13 @@ export class MapRenderer {
     this.labelMode = mode;
     this.labelScaleApplied = scale;
     if (changed && this.lastState) {
-      this.chart.setOption({
-        series: [
-          { id: 'city-labels', data: this.buildLabelData(this.lastState) },
-          { id: 'province-labels', data: this.buildProvinceLabelData(this.lastState) },
-        ],
-      } as never);
+      // 世界分析档国名标签随缩放进出显示阈值，也在缩放结束后同步
+      const patch: Record<string, unknown> = {
+        'city-labels': { data: this.buildLabelData(this.lastState) },
+        'province-labels': { data: this.buildProvinceLabelData(this.lastState) },
+        'world-labels': { data: this.buildWorldLabelData(this.lastState) },
+      };
+      this.chart.setOption({ series: Object.entries(patch).map(([id, o]) => ({ id, ...(o as object) })) } as never);
     }
   }
 
@@ -488,12 +626,17 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode(state);
     this.labelScaleApplied = labelScale(this.zoom);
 
-    // 省级模式：geo 切换为省级地图（只渲染 35 个省面，不渲染地级市行政区）
-    const mapName = this.provinceMode ? 'china-provinces' : 'china';
+    // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图
+    const mapName = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : 'china';
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
-    const eventData = this.provinceMode ? this.buildProvinceEventData() : this.units.map((u) => ({ name: u.name }));
+    const eventData = this.worldMode
+      ? this.buildWorldEventData()
+      : this.provinceMode
+        ? this.buildProvinceEventData()
+        : this.units.map((u) => ({ name: u.name }));
     const labelData = this.buildLabelData(state);
     const provinceLabelData = this.buildProvinceLabelData(state);
+    const worldLabelData = this.buildWorldLabelData(state);
     const theme = this.theme();
 
     const option: echarts.EChartsOption = {
@@ -510,8 +653,15 @@ export class MapRenderer {
             textStyle: { color: theme.tooltipText },
             formatter: (p) => {
               const params = p as { name?: string };
-              const u = this.nameToUnit.get(params.name ?? '');
-              if (!u) return String(params.name ?? '');
+              const hitName = params.name ?? '';
+              if (this.worldMode) {
+                const iso = this.worldNameToIso.get(hitName);
+                if (!iso || this.worldDecorativeNames.has(hitName)) return String(hitName);
+                const color: UnitColor = state.colorOf(iso);
+                return t('map.tooltip.worldBody', { name: hitName, status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }) });
+              }
+              const u = this.nameToUnit.get(hitName);
+              if (!u) return String(hitName);
               if (state.coin) {
                 const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
                 const coinsTxt = coins > 0 ? `${coins}￥` : t('map.tooltip.coinCollected');
@@ -523,7 +673,7 @@ export class MapRenderer {
             },
           },
       geo: {
-        map: mapName, // 省级模式用省级地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
+        map: mapName, // 世界/省级用专属地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
         roam: true,
         scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
         silent: false,
@@ -532,7 +682,7 @@ export class MapRenderer {
         label: { show: false },
         emphasis: {
           label: { show: false },
-          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个省面）
+          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个面）
         },
         select: { label: { show: false } },
         itemStyle: {
@@ -540,7 +690,11 @@ export class MapRenderer {
           borderColor: 'rgba(0,0,0,0)',
           borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
         },
-        regions: this.provinceMode ? this.buildProvinceRegionData(state) : this.buildRegionData(state),
+        regions: this.worldMode
+          ? this.buildWorldRegionData(state)
+          : this.provinceMode
+            ? this.buildProvinceRegionData(state)
+            : this.buildRegionData(state),
       },
       series: [
         {
@@ -565,6 +719,31 @@ export class MapRenderer {
           polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
           lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
           data: this.buildLineData(),
+        },
+        {
+          id: 'world-labels',
+          type: 'custom',
+          coordinateSystem: 'geo',
+          geoIndex: 0,
+          z: 10,
+          silent: true,
+          tooltip: { show: false },
+          renderItem: (_params, api) => {
+            const parsed = parseLabelValue(api);
+            if (!parsed) return { type: 'group', children: [] };
+            const scale = labelScale(this.zoom);
+            return buildLabelGraphic({
+              ...parsed,
+              scale,
+              theme,
+              fontSize: PROVINCE_LABEL_SIZE * scale,
+              padX: 7 * scale,
+              padY: 4 * scale,
+              minWidth: 30 * scale,
+              fontWeight: 600,
+            });
+          },
+          data: worldLabelData,
         },
         {
           id: 'city-labels',
@@ -636,9 +815,12 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
-  /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制）；省级模式按省面 name 匹配。 */
+  /** 标记成功时的高亮动画（临时改色后恢复，不依赖 emphasis 机制）；省级按省面 name、世界按国名匹配。 */
   flash(adcode: string) {
-    const matchName = this.provinceMode ? this.provinceFeatureName(adcode) : (this.adcodeToUnit.get(adcode)?.name ?? '');
+    let matchName = '';
+    if (this.worldMode) matchName = this.worldIsoToName.get(adcode) ?? '';
+    else if (this.provinceMode) matchName = this.provinceFeatureName(adcode);
+    else matchName = this.adcodeToUnit.get(adcode)?.name ?? '';
     if (!matchName) return;
     this.clearFlash();
     const opt = this.chart.getOption() as {
@@ -666,6 +848,7 @@ export class MapRenderer {
   }
 
   focusUnit(adcode: string, _zoom: number) {
+    if (this.worldMode) return; // 世界模式无自动聚焦（输入模式世界档不跟随）
     const u = this.units.find((item) => item.adcode === adcode);
     if (!u) return;
     if (this.viewProvince && this.viewProvince !== u.provinceAdcode) {
@@ -724,8 +907,9 @@ export class MapRenderer {
     return { center: this.center, zoom: this.zoom };
   }
 
-  /** 下钻到某省：其他区域消失，自动缩放居中。 */
+  /** 下钻到某省：其他区域消失，自动缩放居中。世界模式不支持，直接忽略。 */
   drillToProvince(adcode: string) {
+    if (this.worldMode) return; // 世界：国家为最小单元，无省级下钻概念
     if (this.viewProvince === adcode) return; // 幂等
     const units = this.units.filter((u) => u.provinceAdcode === adcode && !u.decorative);
     if (!units.length) return;
@@ -762,6 +946,19 @@ export class MapRenderer {
   }
 
   backToNation() {
+    if (this.worldMode) {
+      // 世界无下钻概念：回到默认世界视野
+      this.savedNationView = null;
+      this.viewProvince = null;
+      this.center = [10, 25];
+      this.zoom = 1;
+      this.labelMode = 'none';
+      if (this.lastState) this.render(this.lastState);
+      this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+      this.onZoomChange?.();
+      this.onViewChange?.();
+      return;
+    }
     const saved = this.savedNationView;
     this.savedNationView = null; // 快照一次性使用：返回全国后清除
     this.viewProvince = null;
@@ -779,9 +976,9 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
-  /** 当前 geo 地图名：省级模式用省级地图，否则地级地图。 */
+  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图，否则地级地图。 */
   private currentMapName(): string {
-    return this.provinceMode ? 'china-provinces' : 'china';
+    return this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : 'china';
   }
 
   currentProvince(): string | null {

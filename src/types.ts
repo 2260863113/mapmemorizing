@@ -28,6 +28,15 @@ export interface Province {
   center: [number, number];
 }
 
+/** 世界“国家”元数据（public/data/countries.json 生成；iso_a3 为答题 id）。 */
+export interface CountryMeta {
+  iso: string;
+  name: string; // 中文简称（题面与判题基准，如 中国）
+  fullName: string; // 官方全称（容错输入与展示）
+  center: [number, number];
+  neighbors: string[]; // 相邻国家 iso 列表
+}
+
 export type BoundaryTone = 'light' | 'mid' | 'dark';
 
 export interface AppData {
@@ -36,6 +45,8 @@ export interface AppData {
   provinces: Province[];
   geoJson: unknown; // 地级 + 装饰面
   provincesGeoJson: unknown; // 省界图层（粗线）
+  countries: CountryMeta[]; // 世界 195 答题国
+  worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
 }
 
 export interface PracticeRecord {
@@ -130,4 +141,6 @@ export interface RenderState {
   coin?: CoinLayer; // 无尽闯关：金币绿色深浅着色 + 中心金币/地名标签
   provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 省级练习：已作答省的省名标签（null = 不显示）
   showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）
+  worldLabel?: (iso: string) => ProvinceLabel | null; // 世界练习：已作答国家的国名标签（null = 不显示）
+  worldShowAllLabels?: boolean; // 世界地图放大后常显全部国名标签（熟练度分析世界档）
 }

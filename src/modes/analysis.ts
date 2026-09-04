@@ -4,11 +4,11 @@ import { BaseMode } from './baseMode';
 import { t, type MessagesKey } from '../i18n';
 import type { Granularity } from '../province';
 
-/** 熟练度分析：按累计答题分数只读着色（地级市名称熟练度 / 省名称熟练度），不响应输入。 */
+/** 熟练度分析：按累计答题分数只读着色（地级市/省名/国家名熟练度），不响应输入。 */
 export class AnalysisMode extends BaseMode {
   id: Mode = 'free';
   title = t('mode.free.title');
-  /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）。 */
+  /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）| 'world'（世界，国家名熟练度分析）。 */
   private granularity: Granularity = this.loadGranularity();
   /** 省级档双击下钻到某省地级视图后，返回全国时恢复省级档。 */
   private returnToProvince = false;
@@ -45,7 +45,9 @@ export class AnalysisMode extends BaseMode {
   private loadGranularity(): Granularity {
     try {
       const raw = localStorage.getItem(this.analysisGranularityStorageKey());
-      return raw === 'province' ? 'province' : 'city'; // 默认地级（现状）
+      if (raw === 'province') return 'province';
+      if (raw === 'world') return 'world';
+      return 'city'; // 默认地级（现状）
     } catch {
       return 'city';
     }
@@ -60,6 +62,7 @@ export class AnalysisMode extends BaseMode {
   }
 
   enter() {
+    this.unsubscribe?.(); // 重复 enter（如切换分析粒度）前先解绑，避免订阅累积
     this.ctx.setHint('');
     this.refresh();
     this.unsubscribe = this.ctx.store.subscribe(() => this.refresh());
@@ -71,6 +74,18 @@ export class AnalysisMode extends BaseMode {
   }
 
   refresh() {
+    if (this.granularity === 'world') {
+      // 世界熟练度分析：世界地图，七档着色（同一套 scoreColor 阈值），
+      // 不常显国名标签（放大过阈值后经渲染器显示）；悬停国家经 onUnitHover 显示卡片；双击不钻取。
+      this.ctx.renderer.setWorldMode(true);
+      this.ctx.renderer.render({
+        colorOf: (iso) => worldColor(this.ctx.store, iso),
+        disableTooltip: true,
+        worldShowAllLabels: true,
+      });
+      this.ctx.stats.refreshWorldLevel();
+      return;
+    }
     if (this.granularity === 'province') {
       // 省级熟练度分析：省级地图（无港澳放大框），七档着色（糟糕/较差/陌生/一般/初识/熟练/炉火纯青），
       // 不常显省名标签；悬停省面经 onUnitHover 显示卡片；双击省可下钻其地级
@@ -101,6 +116,8 @@ export class AnalysisMode extends BaseMode {
   }
 
   onUnitDblClick(adcode: string) {
+    // 世界档双击国家：国家为最小单元，不钻取
+    if (this.granularity === 'world') return;
     // 省级档双击省：显示该省地级熟练度（切到地级档并下钻）；返回全国后恢复省级档
     if (this.granularity === 'province') {
       this.granularity = 'city';
@@ -118,8 +135,12 @@ export class AnalysisMode extends BaseMode {
     /* 地级档保持现状：不响应双击下钻 */
   }
 
-  /** 地图空白返回全国：若从省级档下钻而来则恢复省级档。 */
+  /** 地图空白返回全国：若从省级档下钻而来则恢复省级档。世界档无需处理（无下钻）。 */
   onBackToNation() {
+    if (this.granularity === 'world') {
+      this.enter();
+      return;
+    }
     if (this.granularity === 'city' && this.returnToProvince) {
       this.returnToProvince = false;
       this.granularity = 'province';
@@ -179,4 +200,9 @@ export function provinceLevelColor(level: ProvinceLevel): UnitColor {
 /** 省级熟练度七档着色（按省 adcode 查熟练度）。 */
 export function provinceColor(store: { getProvincePractice: (adcode: string) => { score: number } }, adcode: string): UnitColor {
   return provinceLevelColor(provinceLevelOf(store.getProvincePractice(adcode).score));
+}
+
+/** 国家熟练度七档着色（按 iso 查国家熟练度；阈值与省/地级同一套）。 */
+export function worldColor(store: { getWorldPractice: (iso: string) => { score: number } }, iso: string): UnitColor {
+  return provinceLevelColor(provinceLevelOf(store.getWorldPractice(iso).score));
 }

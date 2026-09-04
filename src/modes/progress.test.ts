@@ -20,6 +20,8 @@ describe('scopedUnits', () => {
     provinces: [],
     geoJson: null,
     provincesGeoJson: null,
+    countries: [],
+    worldGeoJson: null,
   };
   it('returns all units when scope is null', () => {
     expect(scopedUnits(data, null).map((x) => x.adcode)).toEqual(['a1', 'a2', 'b1']);

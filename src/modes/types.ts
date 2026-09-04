@@ -72,6 +72,8 @@ export interface ModeController {
   getModeSettings(): ModeSettingsPanel | null;
   /** 省级全国（省级地图 + 34 省池）视图标记，供表现层决定港澳放大框/按钮布局。非测验模式返回 false。 */
   isProvinceNation?(): boolean;
+  /** 世界全国（世界地图 + 195 国池）视图标记。非测验模式返回 false。 */
+  isWorldNation?(): boolean;
   /** 当前粒度（输入/点击/熟练度分析用；其它模式返回 null）。 */
   getGranularity?(): Granularity | null;
   /** 当前出题顺序（输入/点击用；其它模式返回 null）。 */

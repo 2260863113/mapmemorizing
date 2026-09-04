@@ -3,6 +3,7 @@ import type { BoundaryTone, MemoryRecord, Settings } from './types';
 const MEM_KEY = 'china-admin-memory-v1';
 const SET_KEY = 'china-admin-settings-v1';
 const PROV_MEM_KEY = 'china-admin-province-memory-v1';
+const WORLD_MEM_KEY = 'china-admin-world-memory-v1';
 
 /** 省级熟练度：以省 adcode 为键的简单对错计数（独立于地级市熟练度）。 */
 interface ProvincePractice {
@@ -15,6 +16,7 @@ interface ProvincePractice {
 export class MemoryStore {
   private data: Record<string, MemoryRecord> = {};
   private provData: Record<string, ProvincePractice> = {};
+  private worldData: Record<string, ProvincePractice> = {};
   private listeners = new Set<() => void>();
 
   constructor() {
@@ -32,31 +34,50 @@ export class MemoryStore {
       this.data = {};
     }
     this.loadProvinceData();
+    this.loadWorldData();
   }
 
   private loadProvinceData() {
+    this.loadScoreData(PROV_MEM_KEY, (rec) => (this.provData = rec));
+  }
+
+  private loadWorldData() {
+    this.loadScoreData(WORLD_MEM_KEY, (rec) => (this.worldData = rec));
+  }
+
+  private loadScoreData(key: string, assign: (rec: Record<string, ProvincePractice>) => void) {
     try {
-      const raw = localStorage.getItem(PROV_MEM_KEY);
+      const raw = localStorage.getItem(key);
       if (!raw) return;
       const parsed = JSON.parse(raw) as Record<string, Partial<ProvincePractice>>;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      const out: Record<string, ProvincePractice> = {};
       for (const [adcode, value] of Object.entries(parsed)) {
         if (!value || typeof value !== 'object') continue;
-        this.provData[adcode] = {
+        out[adcode] = {
           correctCount: finiteCount(value.correctCount),
           wrongCount: finiteCount(value.wrongCount),
           score: 0,
         };
-        this.syncProvScore(this.provData[adcode]);
+        out[adcode].score = out[adcode].correctCount - out[adcode].wrongCount;
       }
+      assign(out);
     } catch {
-      this.provData = {};
+      assign({});
     }
   }
 
   private persistProvince() {
+    this.persistScoreData(PROV_MEM_KEY, this.provData);
+  }
+
+  private persistWorld() {
+    this.persistScoreData(WORLD_MEM_KEY, this.worldData);
+  }
+
+  private persistScoreData(key: string, data: Record<string, ProvincePractice>) {
     try {
-      localStorage.setItem(PROV_MEM_KEY, JSON.stringify(this.provData));
+      localStorage.setItem(key, JSON.stringify(data));
     } catch {
       /* 忽略存储失败 */
     }
@@ -90,6 +111,31 @@ export class MemoryStore {
       this.syncProvScore(rec);
     }
     this.persistProvince();
+  }
+
+  /** 国家熟练度查询：iso → { correctCount, wrongCount, score }（默认 0）。 */
+  getWorldPractice(iso: string): Pick<ProvincePractice, 'correctCount' | 'wrongCount' | 'score'> {
+    const rec = this.worldData[iso];
+    return rec ? { correctCount: rec.correctCount, wrongCount: rec.wrongCount, score: rec.score } : { correctCount: 0, wrongCount: 0, score: 0 };
+  }
+
+  /** 国家答题记录（与世界粒度答题隔离，独立 localStorage 键）。 */
+  recordWorldAnswer(iso: string, correct: boolean) {
+    const rec = this.worldData[iso] ?? { correctCount: 0, wrongCount: 0, score: 0 };
+    if (correct) rec.correctCount += 1;
+    else rec.wrongCount += 1;
+    this.syncProvScore(rec);
+    this.worldData[iso] = rec;
+    this.persistWorld();
+  }
+
+  resetWorldPractice() {
+    for (const rec of Object.values(this.worldData)) {
+      rec.correctCount = 0;
+      rec.wrongCount = 0;
+      this.syncProvScore(rec);
+    }
+    this.persistWorld();
   }
 
   private normalizeRecord(value: Partial<MemoryRecord>): MemoryRecord {
@@ -183,8 +229,14 @@ export class MemoryStore {
   reset() {
     this.data = {};
     this.provData = {};
+    this.worldData = {};
     try {
       localStorage.removeItem(PROV_MEM_KEY);
+    } catch {
+      /* 忽略存储失败 */
+    }
+    try {
+      localStorage.removeItem(WORLD_MEM_KEY);
     } catch {
       /* 忽略存储失败 */
     }

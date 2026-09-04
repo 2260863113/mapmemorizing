@@ -20,7 +20,7 @@ import { InputMode } from './modes/input';
 import { EndlessMode } from './modes/endless';
 import { FreeBrowseMode } from './modes/freeBrowse';
 import { ClickMode } from './modes/click';
-import { PROVINCE_NATION_SCOPE, type Granularity } from './province';
+import { PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from './province';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
@@ -287,7 +287,25 @@ export class AppController {
 
   private showHoverStats(adcode: string) {
     if (this.current?.id !== 'free') return;
-    if (this.freeMode.getAnalysisGranularity() === 'province') {
+    const granularity = this.freeMode.getAnalysisGranularity();
+    if (granularity === 'world') {
+      // 世界档：悬停国家 → 顶部卡片显示国名 + 档位词（颜色同地图档位）+ 对错次数
+      const country = this.data.countries.find((c) => c.iso === adcode);
+      if (!country) return;
+      const practice = this.store.getWorldPractice(adcode);
+      const level = provinceLevelOf(practice.score);
+      const card = $('hover-stats');
+      card.innerHTML = t('main.hoverStatsProvince', {
+        name: country.name,
+        levelClass: level,
+        levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
+        correct: practice.correctCount,
+        wrong: practice.wrongCount,
+      });
+      card.classList.remove('hidden');
+      return;
+    }
+    if (granularity === 'province') {
       // 省级档：悬停省面 → 顶部卡片显示省名 + 档位词（颜色同地图档位）+ 对错次数
       const province = this.data.provinces.find((p) => p.adcode === adcode);
       if (!province) return;
@@ -351,7 +369,9 @@ export class AppController {
 
   private refreshSidePanel(): Promise<void> {
     if (this.current?.id === 'free') {
-      if (this.freeMode.getAnalysisGranularity() === 'province') this.stats.refreshProvinceLevel();
+      const granularity = this.freeMode.getAnalysisGranularity();
+      if (granularity === 'world') this.stats.refreshWorldLevel();
+      else if (granularity === 'province') this.stats.refreshProvinceLevel();
       else this.stats.refresh(this.renderer.currentProvince());
       return Promise.resolve();
     }
@@ -362,6 +382,7 @@ export class AppController {
 
   private scopeLabel(scopeProvince: string | null) {
     if (scopeProvince === PROVINCE_NATION_SCOPE) return t('common.provinceNation');
+    if (scopeProvince === WORLD_NATION_SCOPE) return t('common.world');
     return scopeProvince ? this.data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
@@ -382,7 +403,13 @@ export class AppController {
       return;
     }
     showSettlement(
-      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${result.scopeProvince === PROVINCE_NATION_SCOPE ? t('main.settlementNoteProvince') : t('main.settlementNote')}</div></div>`,
+      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${
+        result.scopeProvince === PROVINCE_NATION_SCOPE
+          ? t('main.settlementNoteProvince')
+          : result.scopeProvince === WORLD_NATION_SCOPE
+            ? t('main.settlementNoteWorld')
+            : t('main.settlementNote')
+      }</div></div>`,
       () => this.submitSettlement(result),
       () => this.closeSettlement(),
     );
@@ -532,7 +559,11 @@ export class AppController {
       this.confirmAction(event.currentTarget as HTMLButtonElement, () => {
         if (this.current?.isPaused()) this.hidePauseOverlay();
         if (this.current?.id === 'free') {
-          if (this.freeMode.getAnalysisGranularity() === 'province') {
+          const granularity = this.freeMode.getAnalysisGranularity();
+          if (granularity === 'world') {
+            this.store.resetWorldPractice();
+            this.stats.refreshWorldLevel();
+          } else if (granularity === 'province') {
             this.store.resetProvincePractice();
             this.stats.refreshProvinceLevel();
           } else {
@@ -545,7 +576,8 @@ export class AppController {
         }
         const mode = this.current?.id;
         const scope = this.current?.getScopeProvince();
-        if ((mode === 'self' || mode === 'click') && (scope === null || scope === PROVINCE_NATION_SCOPE) && this.current?.isStarted()) {
+        const isNationScope = scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE;
+        if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
           this.showSettlementCard();
           return;
         }

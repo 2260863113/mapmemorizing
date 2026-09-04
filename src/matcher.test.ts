@@ -60,6 +60,8 @@ describe('Matcher.bestUnit', () => {
     provinces: [{ adcode: '520000', name: '贵州省', center: [0, 0] }],
     geoJson: null,
     provincesGeoJson: null,
+    countries: [],
+    worldGeoJson: null,
   };
   const m = new Matcher(data);
 

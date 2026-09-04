@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildProvinceAdjacency, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE } from './province';
+import { buildProvinceAdjacency, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE } from './province';
 import type { AppData, Unit, Province } from './types';
 
 function u(adcode: string, provinceAdcode: string, neighbors: string[] = []): Unit {
@@ -21,6 +21,8 @@ describe('buildProvinceAdjacency', () => {
       provinces: [p('p1', '省一'), p('p2', '省二')],
       geoJson: null,
       provincesGeoJson: null,
+      countries: [],
+      worldGeoJson: null,
     };
     const adj = buildProvinceAdjacency(data);
     expect([...adj.get('p1')!].sort()).toEqual(['p2']);
@@ -38,6 +40,8 @@ describe('buildProvinceAdjacency', () => {
       provinces: [p('p1', '省一'), p('p2', '省二')],
       geoJson: null,
       provincesGeoJson: null,
+      countries: [],
+      worldGeoJson: null,
     };
     expect(buildProvinceAdjacency(data).size).toBe(0);
   });
@@ -51,6 +55,8 @@ describe('provinceUnits', () => {
       provinces: [p('450000', '广西壮族自治区'), p('110000', '北京市')],
       geoJson: null,
       provincesGeoJson: null,
+      countries: [],
+      worldGeoJson: null,
     };
     const out = provinceUnits(data, new Map([['450000', []]]));
     expect(out.map((x) => [x.adcode, x.shortName])).toEqual([['450000', '广西'], ['110000', '北京']]);
@@ -64,6 +70,8 @@ describe('provinceShortName', () => {
       units: [], allUnits: [],
       provinces: [p('450000', '广西壮族自治区')],
       geoJson: null, provincesGeoJson: null,
+      countries: [],
+      worldGeoJson: null,
     };
     expect(provinceShortName(data, '450000')).toBe('广西');
     expect(provinceShortName(data, '999999')).toBe('999999');
@@ -73,5 +81,12 @@ describe('provinceShortName', () => {
 describe('PROVINCE_NATION_SCOPE', () => {
   it('is the sentinel string', () => {
     expect(PROVINCE_NATION_SCOPE).toBe('__province_nation__');
+  });
+});
+
+describe('WORLD_NATION_SCOPE', () => {
+  it('is a distinct sentinel string from province/city nation', () => {
+    expect(WORLD_NATION_SCOPE).toBe('__world_nation__');
+    expect(WORLD_NATION_SCOPE).not.toBe(PROVINCE_NATION_SCOPE);
   });
 });

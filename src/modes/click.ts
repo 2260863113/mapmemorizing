@@ -35,9 +35,14 @@ export class ClickMode extends MapQuizMode {
     return t('click.correctAnswer', { name });
   }
   protected summaryHtml(elapsedMs: number) {
-    const stat = this.isProvinceNation()
-      ? t('click.summaryProvince', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail })
-      : t('click.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    let stat: string;
+    if (this.isProvinceNation()) {
+      stat = t('click.summaryProvince', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    } else if (this.isWorldNation()) {
+      stat = t('click.summaryWorld', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    } else {
+      stat = t('click.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    }
     return t('click.complete') + '<div class="sum-stats">' + stat + '</div>';
   }
 
@@ -61,6 +66,12 @@ export class ClickMode extends MapQuizMode {
 
   onUnitClick(adcode: string) {
     if (this.paused || this.rollbacking) return true;
+    // 世界全国：未开始点击国家不下钻（国家为最小单元）；开始后直接判题
+    if (this.isWorldNation()) {
+      if (!this.started || !this.question) return true;
+      this.answer(adcode === this.question, true);
+      return true;
+    }
     // 省级全国：未开始时单击某省 → 下钻该省（变成该省地级市级练习；返回全国后回省级全国）
     if (this.isProvinceNation() && !this.started) {
       this.drillFromProvinceNation(adcode);
@@ -100,6 +111,7 @@ export class ClickMode extends MapQuizMode {
 
   refresh() {
     const provinceNation = this.isProvinceNation();
+    const worldNation = this.isWorldNation();
     this.ctx.renderer.render({
       colorOf: (adcode) => {
         if (this.green.has(adcode)) return 'green';
@@ -119,7 +131,23 @@ export class ClickMode extends MapQuizMode {
             return null;
           }
         : undefined,
+      // 世界全国：已作答国显示绿/红国名标签
+      worldLabel: worldNation
+        ? (iso) => {
+            if (this.green.has(iso)) {
+              return { text: this.countryName(iso), color: 'green' as const };
+            }
+            if (this.red.has(iso)) {
+              return { text: this.countryName(iso), color: 'red' as const };
+            }
+            return null;
+          }
+        : undefined,
     });
+  }
+
+  private countryName(iso: string): string {
+    return this.ctx.data.countries.find((c) => c.iso === iso)?.name ?? iso;
   }
 
   // ==================== 点击特有：钩子覆写 ====================
@@ -133,7 +161,7 @@ export class ClickMode extends MapQuizMode {
   protected onCorrect(_q: string) { this.ctx.toast(t('click.correctToast')); }
 
   private showQuestionHint(unit: Unit) {
-    // 省级全国测验：顶部显示省全名（点击模式不在地图上高亮目标）
+    // 省级全国测验：顶部显示省全名；世界全国测验：显示国家中文名（点击模式不在地图上高亮目标）
     this.ctx.setHint('<div class="start-panel click-question"><div class="start-title">' + unit.name + '</div></div>');
   }
 }

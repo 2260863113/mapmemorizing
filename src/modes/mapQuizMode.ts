@@ -12,8 +12,10 @@ import {
   provinceShortName,
   provinceUnits,
   PROVINCE_NATION_SCOPE,
+  WORLD_NATION_SCOPE,
   type Granularity,
 } from '../province';
+import { countryUnits } from '../world';
 
 /**
  * 地图测验模式共享基类（输入模式 / 点击模式）：
@@ -50,11 +52,13 @@ export abstract class MapQuizMode extends BaseMode {
   protected rollbackTimer: number | null = null; // 回滚延时定时器
   protected provinceAdjacency = new Map<string, string[]>();
   protected provincePool: Unit[] = [];
+  protected worldPool: Unit[] = [];
 
   protected constructor(protected ctx: ModeCtx) {
     super();
     this.provinceAdjacency = buildProvinceAdjacency(ctx.data);
     this.provincePool = provinceUnits(ctx.data, this.provinceAdjacency);
+    this.worldPool = countryUnits(ctx.data.countries);
     this.errorRollback = this.loadErrorRollback();
   }
 
@@ -132,11 +136,16 @@ export abstract class MapQuizMode extends BaseMode {
     return this.granularity === 'province' && this.scopeProvince === null;
   }
 
+  /** 世界全国（世界地图 + 195 国池）。 */
+  isWorldNation() {
+    return this.granularity === 'world' && this.scopeProvince === null;
+  }
+
   getGranularity(): Granularity {
     return this.granularity;
   }
 
-  /** 全国层切换省级/市级（仅全国视图且未开始时可调用）。 */
+  /** 全国层切换省级/市级/世界（仅全国视图且未开始时可调用）。 */
   setGranularity(g: Granularity) {
     if (this.granularity === g) return;
     this.granularity = g;
@@ -151,7 +160,9 @@ export abstract class MapQuizMode extends BaseMode {
   private loadGranularity(): Granularity {
     try {
       const raw = localStorage.getItem(this.granularityStorageKey());
-      return raw === 'city' ? 'city' : 'province'; // 首次默认省级
+      if (raw === 'city') return 'city';
+      if (raw === 'world') return 'world';
+      return 'province'; // 首次默认省级
     } catch {
       return 'province';
     }
@@ -258,6 +269,7 @@ export abstract class MapQuizMode extends BaseMode {
 
   onUnitDblClick(adcode: string) {
     if (!this.canDoubleClickDrill()) return;
+    if (this.isWorldNation()) return; // 世界粒度：国家为最小单元，永不钻取
     if (this.started) {
       this.ctx.toast(t('common.underTestNoDrill'));
       return;
@@ -321,8 +333,8 @@ export abstract class MapQuizMode extends BaseMode {
 
   private ensureScopeProvince() {
     if (this.scopeLoaded) return;
-    if (this.granularity === 'province') {
-      // 省级全国是入口：会话级钻省不跨刷新/切换恢复，总是从省级全国开始
+    if (this.granularity === 'province' || this.granularity === 'world') {
+      // 省级全国 / 世界全国是入口：会话级钻省不跨刷新/切换恢复，总是从全国粒度开始
       this.scopeProvince = null;
       this.scopeLoaded = true;
       return;
@@ -335,20 +347,22 @@ export abstract class MapQuizMode extends BaseMode {
   private setScopeProvince(scopeProvince: string | null) {
     this.scopeProvince = scopeProvince;
     this.scopeLoaded = true;
-    // 仅市级粒度持久化单省记忆；省级全国下钻的单省是会话状态（返回全国后回省级全国）
+    // 仅市级粒度持久化单省记忆；省级全国/世界全国下钻的单省是会话状态（返回全国后回原粒度）
     if (this.granularity === 'city') saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
-  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；否则地级单位）。 */
+  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 195 个虚拟国家单位；否则地级单位）。 */
   protected activePool(): Unit[] {
-    if (this.granularity === 'province' && this.scopeProvince === null) return this.provincePool;
+    if (this.isProvinceNation()) return this.provincePool;
+    if (this.isWorldNation()) return this.worldPool;
     return scopedUnits(this.ctx.data, this.scopeProvince);
   }
 
-  /** 由 adcode 反查当前池中的单位（省级全国池或地级池）。 */
+  /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池或地级池）。 */
   protected currentUnitOf(adcode: string | null): Unit | null {
     if (!adcode) return null;
     if (this.isProvinceNation()) return this.provincePool.find((u) => u.adcode === adcode) ?? null;
+    if (this.isWorldNation()) return this.worldPool.find((u) => u.adcode === adcode) ?? null;
     return this.ctx.byAdcode.get(adcode) ?? null;
   }
 
@@ -360,6 +374,11 @@ export abstract class MapQuizMode extends BaseMode {
         // 省级全国：省级地图视图，不渲染地级；含港澳放大框；不下钻
         this.ctx.renderer.setProvinceMode(true, { inset: true, allowDrill: false });
         if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
+        return;
+      }
+      if (this.isWorldNation()) {
+        // 世界全国：世界地图视图；无放大框、不下钻
+        this.ctx.renderer.setWorldMode(true);
         return;
       }
       // 市级（全国或单省）：地级地图
@@ -389,9 +408,10 @@ export abstract class MapQuizMode extends BaseMode {
 
   private storageKey() {
     if (this.scopeProvince !== null) return 'china-admin-mode-progress:' + this.storagePrefix() + ':' + this.scopeProvince;
-    return this.granularity === 'province'
-      ? 'china-admin-mode-progress:' + this.storagePrefix() + ':province-nation'
-      : 'china-admin-mode-progress:' + this.storagePrefix() + ':nation';
+    if (this.granularity === 'province')
+      return 'china-admin-mode-progress:' + this.storagePrefix() + ':province-nation';
+    if (this.granularity === 'world') return 'china-admin-mode-progress:' + this.storagePrefix() + ':world-nation';
+    return 'china-admin-mode-progress:' + this.storagePrefix() + ':nation';
   }
 
   protected restore() {
@@ -534,9 +554,10 @@ export abstract class MapQuizMode extends BaseMode {
     this.ask(this.nextUnit(pool));
   }
 
-  /** 熟练度记录：省级全国 → 省级熟练度；市级 → 地级熟练度（完全隔离）。 */
+  /** 熟练度记录：省级全国 → 省级熟练度；世界全国 → 国家熟练度；市级 → 地级熟练度（完全隔离）。 */
   protected recordPractice(adcode: string, correct: boolean) {
     if (this.isProvinceNation()) this.ctx.store.recordProvinceAnswer(adcode, correct);
+    else if (this.isWorldNation()) this.ctx.store.recordWorldAnswer(adcode, correct);
     else this.ctx.store.recordAnswer(adcode, correct);
   }
 
@@ -562,8 +583,9 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   getScopeProvince() {
-    // 排行榜/结算的省级全国范围用哨兵；市级沿用 scopeProvince
+    // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；市级沿用 scopeProvince
     if (this.scopeProvince === null && this.granularity === 'province') return PROVINCE_NATION_SCOPE;
+    if (this.scopeProvince === null && this.granularity === 'world') return WORLD_NATION_SCOPE;
     return this.scopeProvince;
   }
 
@@ -576,7 +598,12 @@ export abstract class MapQuizMode extends BaseMode {
   protected buildResult(elapsedMs: number): RoundResult {
     return {
       mode: this.id as Extract<Mode, 'self' | 'click'>,
-      scopeProvince: this.scopeProvince === null && this.granularity === 'province' ? PROVINCE_NATION_SCOPE : this.scopeProvince,
+      scopeProvince:
+        this.scopeProvince === null && this.granularity === 'province'
+          ? PROVINCE_NATION_SCOPE
+          : this.scopeProvince === null && this.granularity === 'world'
+            ? WORLD_NATION_SCOPE
+            : this.scopeProvince,
       scopeLabel: this.scopeLabel(),
       totalUnits: this.order.length,
       correct: this.ok,
@@ -588,10 +615,14 @@ export abstract class MapQuizMode extends BaseMode {
 
   protected scopeLabel() {
     if (this.scopeProvince === null && this.granularity === 'province') return t('common.provinceNation');
+    if (this.scopeProvince === null && this.granularity === 'world') return t('common.world');
     if (this.scopeProvince) return this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? t('common.currentProvince');
     return t('common.nation');
   }
 
-  protected scoreOf = (u: Unit) =>
-    this.isProvinceNation() ? this.ctx.store.getProvincePractice(u.adcode).score : this.ctx.store.getPractice(u.adcode).score;
+  protected scoreOf = (u: Unit) => {
+    if (this.isProvinceNation()) return this.ctx.store.getProvincePractice(u.adcode).score;
+    if (this.isWorldNation()) return this.ctx.store.getWorldPractice(u.adcode).score;
+    return this.ctx.store.getPractice(u.adcode).score;
+  };
 }

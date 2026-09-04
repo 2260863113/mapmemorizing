@@ -13,6 +13,7 @@ const LEVEL_ORDER: ProvinceLevel[] = ['terrible', 'poor', 'unfamiliar', 'neutral
 export class StatsPanel {
   private el: HTMLElement;
   private provinceList: { adcode: string; name: string; units: Unit[] }[];
+  private countryList: { iso: string; name: string }[];
 
   constructor(containerId: string, data: AppData, private store: MemoryStore) {
     this.el = document.getElementById(containerId) as HTMLElement;
@@ -20,6 +21,7 @@ export class StatsPanel {
     for (const p of data.provinces) map.set(p.adcode, { adcode: p.adcode, name: p.name, units: [] });
     for (const u of data.units) map.get(u.provinceAdcode)?.units.push(u);
     this.provinceList = [...map.values()].filter((p) => p.units.length > 0);
+    this.countryList = data.countries.map((c) => ({ iso: c.iso, name: c.name }));
   }
 
   /** 地级档：全国视图每省行 = 档位词（按省内分数和）+ 三态进度条；单省(drill)显示该省摘要（保留进度条）。 */
@@ -58,12 +60,26 @@ export class StatsPanel {
     this.renderLevelList(t('stats.provinceOverview'), this.provinceList.map((p) => ({
       name: normalizeProvince(p.name),
       score: this.store.getProvincePractice(p.adcode).score,
-    })));
+    })), false);
   }
 
-  /** 通用：按 score 计算七档徽标，渲染「标题 + 七档计数概览 + 每行（名称 + 档位词）」。按名称排序显示。 */
-  private renderLevelList(label: string, rows: { name: string; score: number }[]) {
-    const sorted = [...rows].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  /** 世界档：全部 195 国按国家熟练度七档统计 + 每行「国名 + 档位词」，熟练度降序（0 分/未答的国沉底）。 */
+  refreshWorldLevel() {
+    const countries = this.countryList;
+    const sorted = [...countries].sort((a, b) => {
+      const sa = this.store.getWorldPractice(a.iso).score;
+      const sb = this.store.getWorldPractice(b.iso).score;
+      return sb - sa || a.name.localeCompare(b.name, 'zh-CN');
+    });
+    this.renderLevelList(t('stats.worldOverview'), sorted.map((c) => ({
+      name: c.name,
+      score: this.store.getWorldPractice(c.iso).score,
+    })), true);
+  }
+
+  /** 通用：按 score 计算七档徽标，渲染「标题 + 七档计数概览 + 每行（名称 + 档位词）」。按名称排序显示；worldDesc=true 时按分数降序（等分再按名）。 */
+  private renderLevelList(label: string, rows: { name: string; score: number }[], worldDesc = false) {
+    const sorted = worldDesc ? rows : [...rows].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     const total: ProvinceLevelStats = { terrible: 0, poor: 0, unfamiliar: 0, neutral: 0, beginner: 0, skilled: 0, master: 0 };
     const items = sorted.map((r) => {
       const level = provinceLevelOf(r.score);

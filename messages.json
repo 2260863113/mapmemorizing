@@ -1,5 +1,6 @@
 {
   "common.nation": "全国",
+  "common.world": "世界",
   "common.currentProvince": "当前省份",
   "common.start": "开始",
   "common.confirm": "确认",
@@ -34,6 +35,7 @@
   "map.status.scoreRedDark": "重点复习",
   "map.tooltip.body": "<b>{name}</b><br/>所属：{province}<br/>金币：{coins}",
   "map.tooltip.bodyBase": "<b>{name}</b><br/>所属：{province}{status}",
+  "map.tooltip.worldBody": "<b>{name}</b>{status}",
   "map.tooltip.statusLine": "<br/>状态：{status}",
   "map.tooltip.coinCollected": "0￥（已收集）",
 
@@ -46,6 +48,8 @@
   "self.complete": "自测完成",
   "self.summary": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个地图单位",
   "self.summaryProvince": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个省级单元",
+  "self.summaryWorld": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个国家",
+  "self.worldPlaceholder": "输入国家名",
 
   "click.startTitle": "点击模式",
   "click.startSubtitle": "范围：{scope}，请按提示点击地图",
@@ -54,6 +58,7 @@
   "click.complete": "点击模式完成",
   "click.summary": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个地图单位",
   "click.summaryProvince": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个省级单元",
+  "click.summaryWorld": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个国家",
 
 
   "endless.startTitle": "无尽闯关",
@@ -209,6 +214,7 @@
 
   "stats.nationOverview": "全国概览",
   "stats.provinceOverview": "省级概览（省名熟练度）",
+  "stats.worldOverview": "世界概览（国家熟练度）",
   "stats.scoreSummary": "熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span>",
   "stats.levelTerrible": "糟糕",
   "stats.levelPoor": "较差",
@@ -302,16 +308,17 @@
   "main.settlementSummary": "正确 <b>{correct}</b> ｜ 错误 <b>{wrong}</b> ｜ 覆盖 {done}/{total} ｜ 用时 {time}",
   "main.settlementNote": "全国排行榜按答对题数排名，提交后将重置本局",
   "main.settlementNoteProvince": "省级全国排行榜按用时排名，需 34 省全部答对才可提交，提交后将重置本局",
+  "main.settlementNoteWorld": "世界排行榜按答对题数排名，同数按用时，提交后将重置本局",
   "main.bootFail": "启动失败：{message}",
 
   "help.self.title": "输入模式说明",
-  "help.self.body": "输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、暂停和重置。顶部「省级/市级」可切换练习粒度：省级粒度在全国 34 个省级单元中练习（输入省名，只计入省级熟练度）；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。",
+  "help.self.body": "输入地名进行作答。答对后题目会沿相邻地图单位继续扩张；答错保持红色并计入熟练度。可以使用跳过、暂停和重置。顶部「世界/省级/市级」可切换练习粒度：世界粒度在全球 195 个国家和地区中练习（输入国家名，只计入国家熟练度）；省级粒度在全国 34 个省级单元中练习（输入省名，只计入省级熟练度）；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。",
   "help.endless.title": "无尽闯关说明",
   "help.endless.body": "每关限时 45 秒，输入地级市名称收集金币（按 Enter 确认）。地图上的数字为该地金币数，绿色越深金币越多；达到本关目标金币立即进入下一关，超时未达标则游戏结束。累计金币跨关保留，未收集城市的金币每关会上浮。",
   "help.free.title": "熟练度分析说明",
-  "help.free.body": "地图按累计答题分数分层着色。顶部「省级/地级」可切换分析粒度：地级粒度查看各地级市熟练度；省级粒度查看 34 个省名熟练度（双击某省可查看其下地级市熟练度，返回全国后回到省级）。此模式不响应输入。",
+  "help.free.body": "地图按累计答题分数分层着色。顶部「世界/省级/地级」可切换分析粒度：地级粒度查看各地级市熟练度；省级粒度查看 34 个省名熟练度（双击某省可查看其下地级市熟练度，返回全国后回到省级）；世界粒度查看全球 195 个国家和地区的国家熟练度（悬停国家显示档位与对错次数，放大地图可显示国名）。此模式不响应输入。",
   "help.click.title": "点击模式说明",
-  "help.click.body": "按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。顶部「省级/市级」可切换练习粒度：省级粒度在全国 34 个省级单元中练习，只计入省级熟练度；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。",
+  "help.click.body": "按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。顶部「世界/省级/市级」可切换练习粒度：世界粒度在全球 195 个国家和地区中练习（点击国家，只计入国家熟练度）；省级粒度在全国 34 个省级单元中练习，只计入省级熟练度；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。",
   "help.memory.title": "自由模式说明",
   "help.memory.body": "这是自由浏览模式，可以查看全部地图单位名称并自由缩放、双击区域进入该省。",
 

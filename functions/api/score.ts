@@ -1,6 +1,6 @@
 import { json, readJson, handle } from '../_lib/http';
 import { requireSession } from '../_lib/guard';
-import { isBetter, validateScore } from '../_lib/validate';
+import { isBetter, validateScore, WORLD_NATION_SCOPE } from '../_lib/validate';
 
 type ScoreMode = 'self' | 'click' | 'endless';
 
@@ -12,16 +12,19 @@ interface ExistingRow {
   elapsed_ms: number;
 }
 
-/** upsert 并发安全：ON CONFLICT 的 WHERE 复刻 isBetter，防止更差分覆盖更优分。统一 10 个占位符。 */
-function upsertSql(mode: ScoreMode): string {
+/** upsert 并发安全：ON CONFLICT 的 WHERE 复刻 isBetter，防止更差分覆盖更优分。统一 10 个占位符。
+ *  冲突目标含 scope_province，因此冲突行 scope 恒等于本次插入 scope：全国语义（''=市级全国、
+ *  __world_nation__=世界全国）比答对题数再比用时；省级语义（省级全国哨兵/6 位省 adcode）仅比用时。 */
+function upsertSql(mode: ScoreMode, scope: string): string {
+  const nationLike = scope === '' || scope === WORLD_NATION_SCOPE;
   const conflict =
     mode === 'endless'
       ? `WHERE excluded.coins > leaderboard.coins
          OR (excluded.coins = leaderboard.coins AND COALESCE(excluded.level,1) > COALESCE(leaderboard.level,1))`
-      : `WHERE (leaderboard.scope_province = '' AND (
-            excluded.correct > leaderboard.correct
-            OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)))
-         OR (leaderboard.scope_province <> '' AND excluded.elapsed_ms < leaderboard.elapsed_ms)`;
+      : nationLike
+        ? `WHERE excluded.correct > leaderboard.correct
+           OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)`
+        : `WHERE excluded.elapsed_ms < leaderboard.elapsed_ms`;
   return `INSERT INTO leaderboard
       (user_id, mode, scope_province, scope_label, total_units, correct, elapsed_ms, coins, level, submitted_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -57,7 +60,7 @@ export const onRequestPost = handle(
       return json({ status: 'kept' });
     }
 
-    const sql = upsertSql(score.mode);
+    const sql = upsertSql(score.mode, scope);
     await env.DB.prepare(sql)
       .bind(
         userId,

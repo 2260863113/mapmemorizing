@@ -1,6 +1,6 @@
 import { $, showTimer, showStopwatch } from './dom';
 import { t } from '../i18n';
-import { PROVINCE_NATION_SCOPE, type Granularity } from '../province';
+import { PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from '../province';
 import type { ModeController, OrderMode } from '../modes/types';
 import type { SidePanelController } from './sidePanelController';
 
@@ -108,12 +108,13 @@ export class ChromeSync {
       .join('');
   }
 
-  /** 分段按钮显隐与锁定：click/self 的「省级/市级」与「顺序/随机/错题」开始后整组隐藏。 */
+  /** 分段按钮显隐与锁定：click/self 的「世界/省级/市级」与「顺序/随机/错题」开始后整组隐藏。 */
   syncSegments() {
     const current = this.s.current();
     const mode = current?.id;
     const testStarted = !!current?.isStarted();
-    const scopeIsNation = current?.getScopeProvince() === null || current?.getScopeProvince() === PROVINCE_NATION_SCOPE;
+    const scope = current?.getScopeProvince();
+    const scopeIsNation = scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE;
     const isGranularityMode = mode === 'click' || mode === 'self';
     const isTestMode = mode === 'self' || mode === 'click' || mode === 'endless';
     // 跳过/暂停/重置显隐：click/self 未开始只留「重置」，开始后显示 跳过·暂停·重置（顺序：跳过→暂停→重置）
@@ -123,17 +124,17 @@ export class ChromeSync {
     // 搜索输入框：输入/自测仅测试开始时显示；无尽闯关输入框常驻
     const searchVisible = mode === 'endless' || (mode === 'self' && testStarted);
     $('search-row').classList.toggle('hidden', !searchVisible);
-    // 「省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
+    // 「世界/省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
     const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
     if (granularityVisible) {
-      const g = (current?.getGranularity?.() ?? 'city') as Granularity;
+      const g = (current?.getGranularity?.() ?? 'province') as Granularity;
       this.syncSegmentedToggle('granularity-toggle', g);
     }
     // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self' || testStarted);
     $('click-order-toggle').classList.toggle('hidden', mode !== 'click' || testStarted);
-    // 熟练度分析：省级/地级切换（自由模式常显）
+    // 熟练度分析：世界/省级/地级切换（自由模式常显）
     $('analysis-granularity-toggle').classList.toggle('hidden', mode !== 'free');
     if (mode === 'free') {
       this.syncSegmentedToggle('analysis-granularity-toggle', (current?.getGranularity?.() ?? 'city') as Granularity);

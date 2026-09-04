@@ -1,6 +1,6 @@
 import { json, handle } from '../_lib/http';
 import { toLeaderboardEntry, type LeaderboardRow } from '../_lib/rows';
-import { validMode } from '../_lib/validate';
+import { validMode, WORLD_NATION_SCOPE } from '../_lib/validate';
 
 export const onRequestGet = handle(async (context) => {
   const env = context.env as { DB: import('@cloudflare/workers-types').D1Database };
@@ -14,7 +14,8 @@ export const onRequestGet = handle(async (context) => {
   let orderBy: string;
   if (modeParam === 'endless') {
     orderBy = 'l.coins DESC, l.level DESC, l.submitted_at ASC, u.username ASC';
-  } else if (scope === '') {
+  } else if (scope === '' || scope === WORLD_NATION_SCOPE) {
+    // 市级全国（''）与世界全国（哨兵）同语义：答对题数优先、同数比用时
     orderBy = 'l.correct DESC, l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   } else {
     orderBy = 'l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';

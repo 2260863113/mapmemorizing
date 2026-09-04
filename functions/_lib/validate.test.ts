@@ -67,6 +67,12 @@ describe('validateScore', () => {
     expect(() => validateScore({ ...base, scopeProvince: '__province_nation__', totalUnits: 34, correct: 33 })).toThrow(ApiError);
   });
 
+  it('accepts world-nation scope with correct > 0, wrong === 0 (unfinished allowed)', () => {
+    expect(validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 5, wrong: 0 })).toMatchObject({ scopeProvince: '__world_nation__' });
+    expect(() => validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 5, wrong: 1 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 0, wrong: 0 })).toThrow(ApiError);
+  });
+
   it('accepts 6-digit province scope fully correct', () => {
     expect(validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 9 })).toMatchObject({ scopeProvince: '520000' });
   });
@@ -90,6 +96,12 @@ describe('isBetter', () => {
     expect(isBetter({ mode: 'self', scopeProvince: null, correct: 6, elapsedMs: 9999 } as never, existing)).toBe(true);
     expect(isBetter({ mode: 'self', scopeProvince: null, correct: 5, elapsedMs: 999 } as never, existing)).toBe(true);
     expect(isBetter({ mode: 'self', scopeProvince: null, correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
+  });
+
+  it('world-nation: more correct wins, then faster (same as nation)', () => {
+    expect(isBetter({ mode: 'click', scopeProvince: '__world_nation__', correct: 6, elapsedMs: 9999 } as never, existing)).toBe(true);
+    expect(isBetter({ mode: 'click', scopeProvince: '__world_nation__', correct: 5, elapsedMs: 999 } as never, existing)).toBe(true);
+    expect(isBetter({ mode: 'click', scopeProvince: '__world_nation__', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
   });
 
   it('province: faster wins', () => {

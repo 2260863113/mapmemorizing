@@ -15,12 +15,14 @@ import {
   type ModeSettingsPanel,
 } from '../modeSettings';
 import { MapQuizMode } from './mapQuizMode';
+import { WorldMatcher } from '../worldNames';
 
 /**
  * 输入模式（BFS 扩张）：
  * - 市级（全国/单省）：随机起点作为当前题目（蓝色）→ 输入名称；答对变绿，下一个题目 = 与上一个绿点相邻的单位（优先同省）；
  *   无相邻候选时回退最近的未测单位（岛屿等）；答错保持红色（错误标记）并继续扩张。
  * - 省级（全国）：出题池为 34 个省级单元，BFS 在省-省邻接上扩张；省级答题只计入省级熟练度。
+ * - 世界（全国）：出题池为 195 个国家单元，BFS 在国家-国家邻接上扩张；国家答题只计入国家熟练度。
  */
 export class InputMode extends MapQuizMode {
   readonly id: Mode = 'self';
@@ -29,9 +31,11 @@ export class InputMode extends MapQuizMode {
   private activeProvince: string | null = null;
   private requireEnter = loadSelfRequireEnter(); // 按下 Enter 确认
   private autoFollow = loadSelfAutoFollow(); // 自动跟随（倍率固定默认值）
+  private worldMatcher: WorldMatcher;
 
   constructor(ctx: ModeCtx) {
     super(ctx);
+    this.worldMatcher = new WorldMatcher(ctx.data.countries);
   }
 
   // ==================== 差异点实现 ====================
@@ -47,9 +51,14 @@ export class InputMode extends MapQuizMode {
     return timedOut ? t('self.timeoutAnswer', { name }) : t('self.correctAnswer', { name });
   }
   protected summaryHtml(elapsedMs: number) {
-    const stat = this.isProvinceNation()
-      ? t('self.summaryProvince', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail })
-      : t('self.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    let stat: string;
+    if (this.isProvinceNation()) {
+      stat = t('self.summaryProvince', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    } else if (this.isWorldNation()) {
+      stat = t('self.summaryWorld', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    } else {
+      stat = t('self.summary', { ok: this.ok, fail: this.fail, time: formatElapsedSeconds(elapsedMs), total: this.ok + this.fail });
+    }
     return t('self.complete') + '<div class="sum-stats">' + stat + '</div>';
   }
 
@@ -91,7 +100,7 @@ export class InputMode extends MapQuizMode {
     if (best === this.question) this.answer(true, true);
   }
 
-  /** 输入匹配：省级全国 → 精确省名匹配；市级 → 地级单位匹配。 */
+  /** 输入匹配：省级全国 → 精确省名匹配；世界全国 → 国家名匹配；市级 → 地级单位匹配。 */
   private matchInput(v: string): string | null {
     if (this.isProvinceNation()) {
       const ni = normalizeProvince(v);
@@ -101,6 +110,7 @@ export class InputMode extends MapQuizMode {
       }
       return null;
     }
+    if (this.isWorldNation()) return this.worldMatcher.bestMatch(v);
     return this.ctx.matcher.bestUnit(v)?.adcode ?? null;
   }
 
@@ -110,6 +120,8 @@ export class InputMode extends MapQuizMode {
       this.ctx.toast(t('common.underTestNoDrill'));
       return true;
     }
+    // 世界全国：单击国家不下钻（无更细粒度），仅保持原视图
+    if (this.isWorldNation()) return true;
     // 省级全国：未开始时单击某省 → 下钻该省（变成该省地级输入练习；返回全国后回省级全国）
     if (this.isProvinceNation()) {
       this.drillFromProvinceNation(adcode);
@@ -123,8 +135,8 @@ export class InputMode extends MapQuizMode {
   ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
-    // 省级全国：保持全国视野，不自动聚焦到某省（市级才跟随聚焦）
-    if (this.autoFollow && !this.isProvinceNation()) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
+    // 省级全国/世界全国：保持全国视野，不自动聚焦到某国/某省（市级才跟随聚焦）
+    if (this.autoFollow && !this.isProvinceNation() && !this.isWorldNation()) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
@@ -149,6 +161,7 @@ export class InputMode extends MapQuizMode {
 
   refresh() {
     const provinceNation = this.isProvinceNation();
+    const worldNation = this.isWorldNation();
     this.ctx.renderer.render({
       colorOf: (adcode) => {
         if (this.green.has(adcode)) return 'green';
@@ -168,17 +181,34 @@ export class InputMode extends MapQuizMode {
             return null;
           }
         : undefined,
+      // 世界全国：已作答国显示绿/红国名标签（当前题蓝色高亮由地图着色；不外泄题面）
+      worldLabel: worldNation
+        ? (iso) => {
+            if (this.green.has(iso)) {
+              return { text: this.countryName(iso), color: 'green' as const };
+            }
+            if (this.red.has(iso)) {
+              return { text: this.countryName(iso), color: 'red' as const };
+            }
+            return null;
+          }
+        : undefined,
     });
+  }
+
+  private countryName(iso: string): string {
+    return this.ctx.data.countries.find((c) => c.iso === iso)?.name ?? iso;
   }
 
   // ==================== 输入特有：钩子覆写 ====================
 
   protected configureSearch(paused: boolean) {
-    if (paused) {
-      this.ctx.search.setPlaceholder(this.isProvinceNation() ? t('self.provincePlaceholder') : t('self.placeholderFull'));
-      return;
-    }
-    this.ctx.search.setPlaceholder(this.isProvinceNation() ? t('self.provincePlaceholder') : t('self.placeholder'));
+    let placeholder: string;
+    if (this.isProvinceNation()) placeholder = t('self.provincePlaceholder');
+    else if (this.isWorldNation()) placeholder = t('self.worldPlaceholder');
+    else placeholder = paused ? t('self.placeholderFull') : t('self.placeholder');
+    if (paused) this.ctx.search.setPlaceholder(this.isProvinceNation() || this.isWorldNation() ? placeholder : t('self.placeholderFull'));
+    else this.ctx.search.setPlaceholder(placeholder);
     this.ctx.search.setRequireEnter(this.requireEnter);
   }
 
@@ -219,6 +249,17 @@ export class InputMode extends MapQuizMode {
   }
 
   private pickNext(pool: Unit[]): Unit {
+    // 世界全国：从上一个绿国沿国家邻接随机挑未测国；耗尽则回退最近未测国
+    if (this.isWorldNation()) {
+      const last = this.lastGreen ? this.worldPool.find((u) => u.adcode === this.lastGreen) ?? null : null;
+      if (last) {
+        const neighborCandidates = last.neighbors
+          .map((a) => this.worldPool.find((u) => u.adcode === a))
+          .filter((u): u is Unit => !!u && !this.green.has(u.adcode) && !this.red.has(u.adcode));
+        if (neighborCandidates.length) return this.ctx.randomUnit(neighborCandidates);
+      }
+      return this.closestUnvisited(pool, last?.center ?? [10, 25]);
+    }
     // 省级全国：从上一个绿省沿省邻接随机挑未测省；耗尽则回退最近未测省
     if (this.isProvinceNation()) {
       const last = this.lastGreen ? this.provincePool.find((u) => u.adcode === this.lastGreen) ?? null : null;

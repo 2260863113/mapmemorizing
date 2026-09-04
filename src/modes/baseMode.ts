@@ -35,6 +35,7 @@ export abstract class BaseMode implements ModeController {
   isStarted(): boolean { return false; }
   getModeSettings(): ModeSettingsPanel | null { return null; }
   isProvinceNation(): boolean { return false; }
+  isWorldNation(): boolean { return false; }
   getGranularity(): Granularity | null { return null; }
   getOrderMode(): OrderMode | ClickOrderMode | null { return null; }
 }

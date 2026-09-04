@@ -2,7 +2,10 @@
 
 export type GeoPoint = [number, number];
 export type PolygonRings = GeoPoint[][];
-export type GeoFeature = { properties: { adcode?: string; name?: string }; geometry: { type: string; coordinates: unknown } };
+export type GeoFeature = {
+  properties: { adcode?: string; name?: string; iso_a3?: string; decorative?: number };
+  geometry: { type: string; coordinates: unknown };
+};
 
 export function bboxOf(feature: { geometry: { coordinates: unknown } }): [number, number, number, number] {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
