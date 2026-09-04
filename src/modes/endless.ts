@@ -4,8 +4,11 @@ import { BaseMode } from './baseMode';
 import { Countdown } from '../ui/countdown';
 import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
+import { clamp } from '../math';
 import { t } from '../i18n';
 import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, saveEndlessAutoFollow, type ModeSettingsPanel } from '../modeSettings';
+import { fbm, makePermutation } from './endlessNoise';
+import { FOODS, ITEM_DEFS, ITEM_KEYS, pickInitialFoods, pickTokenChar, type FoodEntry, type ItemKey, type OwnedItem } from './endlessData';
 
 /**
  * 无尽闯关：
@@ -723,101 +726,11 @@ const WRONG_INPUT_COIN_LOSS = 10; // 输错地名扣减的金币（盾牌可免�
 const HOURGLASS_USES = 5; // 时间沙漏激活后次数
 const POTION_USES = 3; // 透视药水使用次数（每购买一次）
 const POTION_REVEAL_MS = 3000; // 透视药水显示地名时长
-const TOKEN_CHARS = ['州', '阳', '山', '南', '安', '江', '宁', '城', '西', '德', '海']; // 飞花令牌候选关键字
-
-type ItemKey = 'hourglass' | 'clover' | 'shield' | 'token' | 'potion' | 'food';
-
-interface ItemDef {
-  key: ItemKey;
-  name: string;
-  char: string; // 卡片显示的首个汉字
-  min: number; // 初始价格下限
-  max: number; // 初始价格上限
-  desc: string;
-}
-
-interface OwnedItem {
-  key: ItemKey;
-  durability: number; // 剩余使用次数（沙漏5/药水3；单关道具1）
-}
-
-interface FoodEntry {
-  province: string; // 省份全名（与单位 province 一致）
-  food: string;
-}
-
-const ITEM_KEYS: ItemKey[] = ['hourglass', 'clover', 'shield', 'token', 'potion', 'food'];
-
-const ITEM_DEFS: Record<ItemKey, ItemDef> = {
-  hourglass: { key: 'hourglass', name: t('endless.item.hourglass.name'), char: t('endless.item.hourglass.char'), min: 100, max: 200, desc: t('endless.item.hourglass.desc') },
-  clover: { key: 'clover', name: t('endless.item.clover.name'), char: t('endless.item.clover.char'), min: 100, max: 400, desc: t('endless.item.clover.desc') },
-  shield: { key: 'shield', name: t('endless.item.shield.name'), char: t('endless.item.shield.char'), min: 100, max: 400, desc: t('endless.item.shield.desc') },
-  token: { key: 'token', name: t('endless.item.token.name'), char: t('endless.item.token.char'), min: 100, max: 400, desc: t('endless.item.token.desc') },
-  potion: { key: 'potion', name: t('endless.item.potion.name'), char: t('endless.item.potion.char'), min: 100, max: 400, desc: t('endless.item.potion.desc') },
-  food: { key: 'food', name: t('endless.item.food.name'), char: t('endless.item.food.char'), min: 100, max: 400, desc: t('endless.item.food.desc') },
-};
-
-const FOODS: FoodEntry[] = [
-  { province: '北京市', food: t('endless.food.北京市') },
-  { province: '天津市', food: t('endless.food.天津市') },
-  { province: '河北省', food: t('endless.food.河北省') },
-  { province: '山西省', food: t('endless.food.山西省') },
-  { province: '内蒙古自治区', food: t('endless.food.内蒙古自治区') },
-  { province: '辽宁省', food: t('endless.food.辽宁省') },
-  { province: '吉林省', food: t('endless.food.吉林省') },
-  { province: '黑龙江省', food: t('endless.food.黑龙江省') },
-  { province: '上海市', food: t('endless.food.上海市') },
-  { province: '江苏省', food: t('endless.food.江苏省') },
-  { province: '浙江省', food: t('endless.food.浙江省') },
-  { province: '安徽省', food: t('endless.food.安徽省') },
-  { province: '福建省', food: t('endless.food.福建省') },
-  { province: '江西省', food: t('endless.food.江西省') },
-  { province: '山东省', food: t('endless.food.山东省') },
-  { province: '河南省', food: t('endless.food.河南省') },
-  { province: '湖北省', food: t('endless.food.湖北省') },
-  { province: '湖南省', food: t('endless.food.湖南省') },
-  { province: '广东省', food: t('endless.food.广东省') },
-  { province: '广西壮族自治区', food: t('endless.food.广西壮族自治区') },
-  { province: '海南省', food: t('endless.food.海南省') },
-  { province: '重庆市', food: t('endless.food.重庆市') },
-  { province: '四川省', food: t('endless.food.四川省') },
-  { province: '贵州省', food: t('endless.food.贵州省') },
-  { province: '云南省', food: t('endless.food.云南省') },
-  { province: '西藏自治区', food: t('endless.food.西藏自治区') },
-  { province: '陕西省', food: t('endless.food.陕西省') },
-  { province: '甘肃省', food: t('endless.food.甘肃省') },
-  { province: '青海省', food: t('endless.food.青海省') },
-  { province: '宁夏回族自治区', food: t('endless.food.宁夏回族自治区') },
-  { province: '新疆维吾尔自治区', food: t('endless.food.新疆维吾尔自治区') },
-  { province: '香港特别行政区', food: t('endless.food.香港特别行政区') },
-  { province: '澳门特别行政区', food: t('endless.food.澳门特别行政区') },
-  { province: '台湾省', food: t('endless.food.台湾省') },
-];
-
-/** 随机抽取 5 种不重复食物。 */
-function pickInitialFoods(): FoodEntry[] {
-  const pool = [...FOODS];
-  const out: FoodEntry[] = [];
-  for (let i = 0; i < 5 && pool.length; i++) {
-    const idx = Math.floor(Math.random() * pool.length);
-    out.push(pool.splice(idx, 1)[0]);
-  }
-  return out;
-}
-
-/** 飞花令牌关键字：从固定列表随机抽取。 */
-function pickTokenChar(): string {
-  return TOKEN_CHARS[Math.floor(Math.random() * TOKEN_CHARS.length)];
-}
 
 // ---------- 工具 ----------
 function fmt(n: number) {
   if (!Number.isFinite(n)) return '0'; // NaN 防御
   return Math.round(n).toLocaleString('zh-CN');
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
 }
 
 function randInt(min: number, max: number) {
@@ -858,81 +771,4 @@ function saveHidePriceBg(hidden: boolean) {
   } catch {
     /* 忽略存储失败 */
   }
-}
-
-// ---------- 柏林噪声（种子化，确定性） ----------
-function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function makePermutation(seed: number): Uint8Array {
-  const rand = mulberry32(seed);
-  const perm = new Uint8Array(512);
-  const base = Array.from({ length: 256 }, (_, i) => i);
-  for (let i = 255; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    const tmp = base[i];
-    base[i] = base[j];
-    base[j] = tmp;
-  }
-  for (let i = 0; i < 512; i++) perm[i] = base[i & 255];
-  return perm;
-}
-
-function fade(t: number) {
-  return t * t * t * (t * (t * 6 - 15) + 10);
-}
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
-function grad2(hash: number, x: number, y: number): number {
-  switch (hash & 7) {
-    case 0: return x + y;
-    case 1: return -x + y;
-    case 2: return x - y;
-    case 3: return -x - y;
-    case 4: return x;
-    case 5: return -x;
-    case 6: return y;
-    default: return -y;
-  }
-}
-
-function perlin2(x: number, y: number, perm: Uint8Array): number {
-  const xi = Math.floor(x) & 255;
-  const yi = Math.floor(y) & 255;
-  const xf = x - Math.floor(x);
-  const yf = y - Math.floor(y);
-  const u = fade(xf);
-  const v = fade(yf);
-  const aa = perm[perm[xi] + yi];
-  const ab = perm[perm[xi] + yi + 1];
-  const ba = perm[perm[xi + 1] + yi];
-  const bb = perm[perm[xi + 1] + yi + 1];
-  const x1 = lerp(grad2(aa, xf, yf), grad2(ba, xf - 1, yf), u);
-  const x2 = lerp(grad2(ab, xf, yf - 1), grad2(bb, xf - 1, yf - 1), u);
-  return lerp(x1, x2, v);
-}
-
-function fbm(x: number, y: number, octaves: number, perm: Uint8Array): number {
-  let value = 0;
-  let amp = 0.5;
-  let freq = 1;
-  let max = 0;
-  for (let i = 0; i < octaves; i++) {
-    value += amp * perlin2(x * freq, y * freq, perm);
-    max += amp;
-    amp *= 0.5;
-    freq *= 2;
-  }
-  return value / max;
 }

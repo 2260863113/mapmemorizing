@@ -2,6 +2,8 @@ import { BoardStore } from '../boardStore';
 import type { AuthStore } from '../authStore';
 import type { AuthPanel } from './authPanel';
 import { avatarHtml } from './avatar';
+import { escapeHtml } from './html';
+import { formatRelative } from './dateFormat';
 import type { BoardPost, BoardReply } from '../api';
 import { t } from '../i18n';
 
@@ -274,18 +276,4 @@ export class BoardPanel {
       window.setTimeout(() => toast.classList.remove('show'), 2400);
     }
   }
-}
-
-function formatRelative(ms: number): string {
-  const diff = Date.now() - ms;
-  if (diff < 60_000) return t('board.timeJustNow');
-  if (diff < 3_600_000) return t('board.timeMinutes', { n: Math.floor(diff / 60_000) });
-  if (diff < 86_400_000) return t('board.timeHours', { n: Math.floor(diff / 3_600_000) });
-  if (diff < 7 * 86_400_000) return t('board.timeDays', { n: Math.floor(diff / 86_400_000) });
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

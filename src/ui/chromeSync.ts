@@ -1,18 +1,12 @@
 import { $, showTimer, showStopwatch } from './dom';
 import { t } from '../i18n';
 import { PROVINCE_NATION_SCOPE, type Granularity } from '../province';
-import type { ModeController } from '../modes/types';
+import type { ModeController, OrderMode } from '../modes/types';
 import type { SidePanelController } from './sidePanelController';
-import type { AnalysisMode } from '../modes/analysis';
-import type { InputMode } from '../modes/input';
-import type { ClickMode } from '../modes/click';
 
 /** ChromeSync 读取的「当前应用状态」快照。current 与 zoom 会随运行变化，故用函数取值。 */
 export interface ChromeState {
   current(): ModeController | null;
-  selfMode: InputMode;
-  clickMode: ClickMode;
-  freeMode: AnalysisMode;
   sidePanel: SidePanelController;
   zoom(): number;
 }
@@ -53,9 +47,7 @@ export class ChromeSync {
     }
     $('app').dataset.mode = mode ?? '';
     // 点击/输入模式处于省级全国（含港澳放大框）时，左下说明/缩放按钮上移避免被放大框遮挡
-    const provinceNationInset =
-      (mode === 'click' || mode === 'self') &&
-      (current === this.s.clickMode ? this.s.clickMode.isProvinceNation() : this.s.selfMode.isProvinceNation());
+    const provinceNationInset = (mode === 'click' || mode === 'self') && (current?.isProvinceNation?.() ?? false);
     $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
     $('map').classList.toggle('hidden', isNonMap);
     $('board').classList.toggle('hidden', mode !== 'board');
@@ -135,7 +127,7 @@ export class ChromeSync {
     const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
     if (granularityVisible) {
-      const g: Granularity = current === this.s.selfMode ? this.s.selfMode.getGranularity() : this.s.clickMode.getGranularity();
+      const g = (current?.getGranularity?.() ?? 'city') as Granularity;
       this.syncSegmentedToggle('granularity-toggle', g);
     }
     // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）
@@ -144,9 +136,9 @@ export class ChromeSync {
     // 熟练度分析：省级/地级切换（自由模式常显）
     $('analysis-granularity-toggle').classList.toggle('hidden', mode !== 'free');
     if (mode === 'free') {
-      this.syncSegmentedToggle('analysis-granularity-toggle', this.s.freeMode.getAnalysisGranularity());
+      this.syncSegmentedToggle('analysis-granularity-toggle', (current?.getGranularity?.() ?? 'city') as Granularity);
     }
-    this.syncSegmentedToggle('self-order-toggle', this.s.selfMode.getOrderMode());
-    this.syncSegmentedToggle('click-order-toggle', this.s.clickMode.getOrderMode());
+    this.syncSegmentedToggle('self-order-toggle', (current?.getOrderMode?.() ?? 'sequential') as OrderMode);
+    this.syncSegmentedToggle('click-order-toggle', (current?.getOrderMode?.() ?? 'random') as OrderMode);
   }
 }

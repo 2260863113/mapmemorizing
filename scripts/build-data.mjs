@@ -11,6 +11,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = path.join(ROOT, 'public', 'data');
 const BASE = 'https://geo.datav.aliyun.com/areas_v3/bound/';
 
+// ---------- 规范化规则（单一事实源：src/normalize-rules.json，与 src/matcher.ts 共用） ----------
+const RULES = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'normalize-rules.json'), 'utf8'));
+const ETHNIC_WORDS = RULES.ethnicWords;
+const ETHNIC_RE = new RegExp(`(?:${ETHNIC_WORDS.join('|')})(?:族)?(?=自治)`, 'g');
+const SUFFIXES = RULES.suffixes;
+
 // [adcode, 名称, 是否整体单位（京沪津渝港澳台，无地级层）]
 const PROVINCES = [
   ['110000', '北京市', 1], ['120000', '天津市', 1], ['130000', '河北省', 0], ['140000', '山西省', 0],
@@ -30,15 +36,6 @@ const SPECIAL_SHORT = {
 };
 
 // ---------- 规范化（与 src/matcher.ts 保持同步） ----------
-const ETHNIC_WORDS = [
-  '布依', '苗', '侗', '壮', '回', '藏', '蒙古', '彝', '哈尼', '傣', '傈僳', '佤', '拉祜', '水', '纳西', '景颇',
-  '达斡尔', '鄂温克', '鄂伦春', '哈萨克', '柯尔克孜', '锡伯', '塔吉克', '乌孜别克', '俄罗斯', '满', '土家',
-  '白', '瑶', '朝鲜', '黎', '畲', '高山', '赫哲', '撒拉', '东乡', '裕固', '保安', '门巴', '珞巴', '羌', '毛南',
-  '仫佬', '仡佬', '京', '独龙', '德昂', '阿昌', '普米', '怒', '基诺', '布朗', '维吾尔',
-];
-const ETHNIC_RE = new RegExp(`(?:${ETHNIC_WORDS.join('|')})(?:族)?(?=自治)`, 'g');
-const SUFFIXES = ['自治州', '自治县', '自治旗', '地区', '林区', '新区', '盟', '州', '市', '县', '旗'];
-
 function normalize(raw) {
   let s = String(raw).trim().toLowerCase();
   let prev = '';

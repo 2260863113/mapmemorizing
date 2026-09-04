@@ -1,5 +1,7 @@
 import type { Announcement } from '../api';
 import { AnnouncementStore } from '../announcementStore';
+import { escapeHtml } from './html';
+import { formatDate } from './dateFormat';
 import { t } from '../i18n';
 
 /** 公告浮层：居中展示全部历史公告（标题+正文完整显示，不折叠）。 */
@@ -48,13 +50,4 @@ export class AnnouncementPanel {
   private handleKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') this.close();
   };
-}
-
-function formatDate(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

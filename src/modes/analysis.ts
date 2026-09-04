@@ -24,6 +24,11 @@ export class AnalysisMode extends BaseMode {
     return this.granularity;
   }
 
+  /** 通用粒度读取（供表现层经 ModeController 抽象访问，等价于 getAnalysisGranularity）。 */
+  getGranularity(): Granularity {
+    return this.granularity;
+  }
+
   setAnalysisGranularity(g: Granularity) {
     if (this.granularity === g) return;
     this.granularity = g;

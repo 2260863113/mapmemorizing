@@ -5,6 +5,7 @@ import type { MemoryStore } from '../store';
 import type { SearchBox } from '../ui/searchBox';
 import type { StatsPanel } from '../ui/statsPanel';
 import type { ModeSettingsPanel } from '../modeSettings';
+import type { Granularity } from '../province';
 
 export interface ModeCtx {
   data: AppData;
@@ -69,4 +70,10 @@ export interface ModeController {
   isStarted(): boolean;
   /** 该模式的设置面板（设置按钮显示内容），返回 null 表示不显示设置按钮 */
   getModeSettings(): ModeSettingsPanel | null;
+  /** 省级全国（省级地图 + 34 省池）视图标记，供表现层决定港澳放大框/按钮布局。非测验模式返回 false。 */
+  isProvinceNation?(): boolean;
+  /** 当前粒度（输入/点击/熟练度分析用；其它模式返回 null）。 */
+  getGranularity?(): Granularity | null;
+  /** 当前出题顺序（输入/点击用；其它模式返回 null）。 */
+  getOrderMode?(): OrderMode | ClickOrderMode | null;
 }

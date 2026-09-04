@@ -31,6 +31,7 @@ import { AnnouncementPanel } from './ui/announcementPanel';
 import { IntroCard } from './ui/introCard';
 import { api } from './api';
 import { ScoreSubmitter } from './scoreSubmitter';
+import { canSubmitScore } from './scoreRules';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
@@ -159,9 +160,6 @@ export class AppController {
 
     this.chrome = new ChromeSync({
       current: () => this.current,
-      selfMode: this.selfMode,
-      clickMode: this.clickMode,
-      freeMode: this.freeMode,
       sidePanel: this.sidePanel,
       zoom: () => this.zoomDisplay,
     });
@@ -348,9 +346,7 @@ export class AppController {
 
   /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
   private canSubmit(result: RoundResult) {
-    if (result.mode === 'endless') return typeof result.coins === 'number' && result.coins > 0;
-    if (result.scopeProvince === null) return result.correct > 0 && result.wrong === 0;
-    return result.totalUnits > 0 && result.correct + result.wrong === result.totalUnits && result.correct === result.totalUnits && result.wrong === 0;
+    return canSubmitScore(result);
   }
 
   private refreshSidePanel(): Promise<void> {

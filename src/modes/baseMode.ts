@@ -1,6 +1,7 @@
 import type { Mode, RoundResult } from '../types';
-import type { ModeController, ModeProgress } from './types';
+import type { ClickOrderMode, ModeController, ModeProgress, OrderMode } from './types';
 import type { ModeSettingsPanel } from '../modeSettings';
+import type { Granularity } from '../province';
 
 /**
  * 模式基类：为 ModeController 的全部能力提供无副作用默认实现。
@@ -33,4 +34,7 @@ export abstract class BaseMode implements ModeController {
   collectResult(): RoundResult | null { return null; }
   isStarted(): boolean { return false; }
   getModeSettings(): ModeSettingsPanel | null { return null; }
+  isProvinceNation(): boolean { return false; }
+  getGranularity(): Granularity | null { return null; }
+  getOrderMode(): OrderMode | ClickOrderMode | null { return null; }
 }

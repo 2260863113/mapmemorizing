@@ -3,6 +3,8 @@ import type { AnnouncementStore } from '../announcementStore';
 import type { AdminUser, AccessLogEntry, AccessStats } from '../api';
 import { api } from '../api';
 import { avatarHtml } from './avatar';
+import { escapeAttr, escapeHtml } from './html';
+import { formatDate, formatDateTime } from './dateFormat';
 import { normalizeProvince } from '../matcher';
 import type { AppData } from '../types';
 import { t } from '../i18n';
@@ -270,22 +272,4 @@ function adminTabLabel(view: AdminView): string {
 
 function truncateUa(ua: string): string {
   return ua.length > 90 ? ua.slice(0, 90) + '…' : ua;
-}
-
-function formatDate(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function formatDateTime(ms: number): string {
-  const d = new Date(ms);
-  return `${formatDate(ms)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function escapeAttr(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

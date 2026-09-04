@@ -1,12 +1,9 @@
+import { clamp } from '../math';
+
 const KEY = 'china-admin-leaderboard-panel-v2';
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 300;
-
-function clamp(value: number, min: number, max: number) {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(max, Math.max(min, value));
-}
 
 function loadOpen() {
   try {

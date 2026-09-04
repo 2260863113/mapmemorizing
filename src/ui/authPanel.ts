@@ -3,6 +3,8 @@ import { normalize, normalizeProvince } from '../matcher';
 import type { AppData, AuthUser, UserAvatar, UserHometown } from '../types';
 import { t } from '../i18n';
 import { $, toast } from './dom';
+import { avatarColor, initialOf } from './avatar';
+import { escapeAttr } from './html';
 
 type AuthView = 'login' | 'register' | 'profile' | 'password';
 
@@ -12,7 +14,6 @@ interface LocationState {
 }
 
 const MAX_AVATAR_SIZE = 20 * 1024;
-const AVATAR_COLORS = ['#0f766e', '#2563eb', '#7c3aed', '#be123c', '#b45309', '#15803d', '#0369a1', '#9f1239'];
 
 export class AuthPanel {
   private menu: HTMLElement;
@@ -569,15 +570,8 @@ function scoreText(input: string, value: string) {
   return 0;
 }
 
-function avatarColor(username: string) {
-  let hash = 0;
-  for (const ch of username) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
-}
-
-function initialOf(username: string) {
-  const ch = username.trim().charAt(0);
-  return ch ? ch.toLocaleUpperCase() : '?';
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** 头像压缩：canvas 缩放（最长边 128px）→ 透明补白 → JPEG 质量逐档降到 ≤maxBytes。压到底仍超则抛错。 */
@@ -622,12 +616,4 @@ function loadImage(file: File): Promise<HTMLImageElement> {
     };
     img.src = url;
   });
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function escapeAttr(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

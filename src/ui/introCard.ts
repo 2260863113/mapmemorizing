@@ -1,5 +1,6 @@
 import type { Announcement } from '../api';
 import { AnnouncementStore } from '../announcementStore';
+import { escapeHtml } from './html';
 import { $ } from './dom';
 import { t } from '../i18n';
 
@@ -68,8 +69,4 @@ export class IntroCard {
   private handleKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') this.close();
   };
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

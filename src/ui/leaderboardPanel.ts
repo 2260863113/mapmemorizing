@@ -2,6 +2,7 @@ import { LeaderboardStore, type LeaderboardEntry, type LeaderboardMode } from '.
 import { formatElapsedCentiseconds } from './format';
 import { normalize, normalizeProvince } from '../matcher';
 import { avatarHtml } from './avatar';
+import { escapeHtml } from './html';
 import type { AppData } from '../types';
 import { t } from '../i18n';
 
@@ -85,8 +86,4 @@ function modeLabel(mode: LeaderboardMode) {
   if (mode === 'self') return t('leaderboard.mode.self');
   if (mode === 'click') return t('leaderboard.mode.click');
   return t('leaderboard.mode.endless');
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

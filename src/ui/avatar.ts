@@ -1,5 +1,7 @@
 /** 共享头像渲染：有头像显示图片，无头像显示用户名首字母彩色块。 */
 
+import { escapeAttr, escapeHtml } from './html';
+
 const AVATAR_COLORS = ['#0f766e', '#2563eb', '#7c3aed', '#be123c', '#b45309', '#15803d', '#0369a1', '#9f1239'];
 
 export function avatarColor(username: string): string {
@@ -26,12 +28,4 @@ export function avatarHtml(user: AvatarSource, sizeClass = ''): string {
   }
   const color = avatarColor(user.username);
   return `<span class="${cls}" style="background-color:${color}">${escapeHtml(initialOf(user.username))}</span>`;
-}
-
-function escapeAttr(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
