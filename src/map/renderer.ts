@@ -94,6 +94,8 @@ export class MapRenderer {
   private provinceModeInset = true; // 省级模式是否显示港澳放大框
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private worldMode = false; // 世界模式：只渲染世界地图（答题国 + 装饰面），无放大框、无下钻
+  /** 最近一次 render 实际应用到的 geo 地图名（用于检测地图切换，切换时强制重建 geo 组件）。 */
+  private appliedMapName = '';
   private worldNameToIso = new Map<string, string>(); // 世界面 name → iso_a3
   private worldIsoToName = new Map<string, string>(); // iso_a3 → 世界面 name（答题国）
   private worldDecorativeNames = new Set<string>(); // 装饰面 name（灰显、不响应）
@@ -799,7 +801,17 @@ export class MapRenderer {
         },
       ],
     };
-    this.chart.setOption(option);
+    // ECharts 已知问题：geo 组件的 map 在多个已注册地图间切换（省级↔市级↔世界）时，
+    // 普通 setOption 合并会让 geo 停留在上一次绘制状态 → 切回后中国地图整片空白。
+    // 检测到 geo 地图名变化时用 replaceMerge 强制重建 geo（与同级 series/map），确保重绘新地图面。
+    const mapChanged = mapName !== this.appliedMapName;
+    this.appliedMapName = mapName;
+    this.chart.setOption(option, mapChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
+    if (mapChanged) {
+      // replaceMerge 重建出的 geo 不带相机（render 不写 center/zoom 以保留 roam），
+      // 此处按渲染器当前模式视野显式复位，避免落到默认/残留视野。
+      this.chart.setOption({ geo: { map: mapName, center: [this.center[0], this.center[1]], zoom: this.zoom } });
+    }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
     if (this.provinceMode && this.provinceModeInset) this.inset.show();
   }
