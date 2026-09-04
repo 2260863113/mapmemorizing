@@ -44,28 +44,29 @@ export interface ModeController {
   exit(): void;
   refresh(): void;
   onSubmit(v: string): void;
-  onInput?(v: string): void;
+  onInput(v: string): void;
   onUnitClick(adcode: string): boolean | void;
   onUnitDblClick(adcode: string): void;
-  onUnitHover?(adcode: string): void;
-  onUnitHoverEnd?(): void;
-  onSkip?(): void;
-  onEnd?(): void;
+  onUnitHover(adcode: string): void;
+  onUnitHoverEnd(): void;
+  onSkip(): void;
+  onEnd(): void;
+  /** 重置会话（未实现 = 不支持重置）。 */
   onReset?(): void;
-  onViewChange?(): void;
-  /** 地图空白点击返回全国（从单省/省级全国下钻返回）：模式自定义返回目标粒度。 */
+  onViewChange(): void;
+  /** 地图空白点击返回全国（从单省/省级全国下钻返回）：模式自定义返回目标粒度。缺省走通用返回（exit + renderer.backToNation + enter）。 */
   onBackToNation?(): void;
-  pause?(): void;
-  resume?(): void;
-  isPaused?(): boolean;
-  getProgress?(): ModeProgress | null;
-  getScopeProvince?(): string | null;
+  pause(): void;
+  resume(): void;
+  isPaused(): boolean;
+  getProgress(): ModeProgress | null;
+  getScopeProvince(): string | null;
   /** 快照当前会话结果（结算卡片用），未开始返回 null */
-  collectResult?(): RoundResult | null;
+  collectResult(): RoundResult | null;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
   /** 模式会话是否已经开始（地图空白返回确认用） */
-  isStarted?(): boolean;
+  isStarted(): boolean;
   /** 该模式的设置面板（设置按钮显示内容），返回 null 表示不显示设置按钮 */
-  getModeSettings?(): ModeSettingsPanel | null;
+  getModeSettings(): ModeSettingsPanel | null;
 }

@@ -1,15 +1,16 @@
 import type { Mode } from '../types';
-import type { ModeCtx, ModeController } from './types';
+import type { ModeCtx } from './types';
+import { BaseMode } from './baseMode';
 import { t } from '../i18n';
 import { loadMemoryHideLabels, saveMemoryHideLabels, type ModeSettingsPanel } from '../modeSettings';
 
 /** 自由模式：全图显示所有地图单位名称（白底标签），纯浏览、不交互；可隐藏标签。 */
-export class MemoryMode implements ModeController {
+export class FreeBrowseMode extends BaseMode {
   id: Mode = 'memory';
   title = t('mode.memory.title');
   private hideLabels = loadMemoryHideLabels(); // 隐藏所有地级市标签
 
-  constructor(private ctx: ModeCtx) {}
+  constructor(private ctx: ModeCtx) { super(); }
 
   getModeSettings(): ModeSettingsPanel | null {
     return {
@@ -41,15 +42,9 @@ export class MemoryMode implements ModeController {
     });
   }
 
-  hasProgress() {
-    return false;
-  }
+  hasProgress() { return false; }
 
-  onSubmit() {}
-
-  onUnitClick() {
-    /* 纯浏览，不响应点击 */
-  }
+  onUnitClick() { /* 纯浏览，不响应点击 */ }
 
   onUnitDblClick(adcode: string) {
     const u = this.ctx.byAdcode.get(adcode);

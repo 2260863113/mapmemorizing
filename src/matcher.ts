@@ -1,5 +1,4 @@
-import type { AppData, Province, Unit } from './types';
-import { t } from './i18n';
+import type { AppData, Unit } from './types';
 
 /** 民族限定词（与 scripts/build-data.mjs 保持同步） */
 export const ETHNIC_WORDS = [
@@ -57,56 +56,11 @@ export function normalizeProvince(raw: string): string {
   return s;
 }
 
-/** 编辑距离（错别字容错） */
-export function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const m = a.length;
-  const n = b.length;
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  for (let i = 1; i <= m; i++) {
-    const cur = [i];
-    for (let j = 1; j <= n; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return prev[n];
-}
-
-export interface SuggestItem {
-  kind: 'unit' | 'province';
-  adcode: string;
-  label: string;
-  sub: string;
-}
-
-interface Ranked extends SuggestItem {
-  score: number;
-}
-
-function scoreUnit(ni: string, ns: string, nf: string): number {
-  if (ni === ns || ni === nf) return 100;
-  if (ns.startsWith(ni) || nf.startsWith(ni)) return 80;
-  if (ni.length >= 2 && (ns.includes(ni) || nf.includes(ni))) return 70;
-  if (ni.length >= 2 && (levenshtein(ni, ns) <= 2 || levenshtein(ni, nf) <= 2)) return 60;
-  return 0;
-}
-
 export class Matcher {
   private rows: { unit: Unit; ns: string; nf: string }[];
-  private provRows: { province: Province; ns: string; count: number }[];
 
   constructor(data: AppData) {
     this.rows = data.units.map((unit) => ({ unit, ns: unit.shortName, nf: normalize(unit.name) }));
-    const counts = new Map<string, number>();
-    for (const u of data.units) counts.set(u.provinceAdcode, (counts.get(u.provinceAdcode) ?? 0) + 1);
-    this.provRows = data.provinces.map((province) => ({
-      province,
-      ns: normalizeProvince(province.name),
-      count: counts.get(province.adcode) ?? 0,
-    }));
   }
 
   /** 最佳单位候选（测试模式判题、自由模式标记用）：仅接受规范化后的精确匹配，避免模糊匹配让错误答案通过 */
@@ -114,46 +68,5 @@ export class Matcher {
     const ni = normalize(input);
     if (!ni) return null;
     return this.rows.find((r) => ni === r.ns || ni === r.nf)?.unit ?? null;
-  }
-
-  /** 省份候选（输入省名时下钻用）：精确或前缀命中 */
-  bestProvince(input: string): Province | null {
-    const ni = normalizeProvince(input);
-    if (!ni) return null;
-    for (const { province, ns } of this.provRows) {
-      if (ni === ns) return province;
-    }
-    if (ni.length >= 2) {
-      for (const { province, ns } of this.provRows) {
-        if (ns.startsWith(ni)) return province;
-      }
-    }
-    return null;
-  }
-
-  /** 联想候选：地级单位 + 省级条目（自由模式用） */
-  suggest(input: string, limit = 8): SuggestItem[] {
-    const ni = normalize(input);
-    if (!ni) return [];
-    const out: Ranked[] = [];
-    const seen = new Set<string>();
-    for (const { unit, ns, nf } of this.rows) {
-      const score = scoreUnit(ni, ns, nf);
-      if (score > 0 && !seen.has(unit.adcode)) {
-        seen.add(unit.adcode);
-        out.push({ kind: 'unit', adcode: unit.adcode, label: unit.name, sub: unit.province, score });
-      }
-    }
-    for (const { province, ns, count } of this.provRows) {
-      const score = scoreUnit(ni, ns, ns);
-      if (score > 0) {
-        out.push({
-          kind: 'province', adcode: province.adcode, label: province.name,
-          sub: t('matcher.provinceHint', { count }), score: score - 1,
-        });
-      }
-    }
-    out.sort((a, b) => b.score - a.score);
-    return out.slice(0, limit).map(({ kind, adcode, label, sub }) => ({ kind, adcode, label, sub }));
   }
 }

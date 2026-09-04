@@ -66,13 +66,10 @@ export class LeaderboardPanel {
   }
 }
 
-/** 行尾信息：endless 显示金币+关卡，daily 仅用时，全国榜显示题数+时间，省级榜仅时间。 */
+/** 行尾信息：endless 显示金币+关卡，全国榜显示题数+时间，省级榜仅时间。 */
 function metaText(entry: LeaderboardEntry, scopeProvince: string | null) {
   if (entry.mode === 'endless') {
     return t('leaderboard.endlessMeta', { coins: formatCoins(entry.coins ?? 0), level: entry.level ?? 1 });
-  }
-  if (entry.mode === 'daily') {
-    return formatElapsedCentiseconds(entry.elapsedMs);
   }
   if (scopeProvince === null) {
     return t('leaderboard.nationMeta', { correct: entry.correct, time: formatElapsedCentiseconds(entry.elapsedMs) });
@@ -87,7 +84,6 @@ function formatCoins(n: number) {
 function modeLabel(mode: LeaderboardMode) {
   if (mode === 'self') return t('leaderboard.mode.self');
   if (mode === 'click') return t('leaderboard.mode.click');
-  if (mode === 'daily') return t('leaderboard.mode.daily');
   return t('leaderboard.mode.endless');
 }
 

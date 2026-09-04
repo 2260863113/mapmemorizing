@@ -14,16 +14,6 @@ export function scopedUnits(data: AppData, scopeProvince: string | null): Unit[]
   return data.units.filter((unit) => !scopeProvince || unit.provinceAdcode === scopeProvince);
 }
 
-/** 返回尚未答题的单位，保持数据文件中的原始顺序。 */
-export function unvisitedUnits(
-  data: AppData,
-  scopeProvince: string | null,
-  green: ReadonlySet<string>,
-  red: ReadonlySet<string>,
-): Unit[] {
-  return scopedUnits(data, scopeProvince).filter((unit) => !green.has(unit.adcode) && !red.has(unit.adcode));
-}
-
 /** 读取并校验模式范围；undefined 表示没有保存过范围。 */
 export function loadScopeProvince(data: AppData, storageKey: string): string | null | undefined {
   try {

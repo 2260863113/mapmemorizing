@@ -2,135 +2,12 @@ import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
 import { t } from '../i18n';
 import { normalizeProvince } from '../matcher';
+import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
+import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
+import { InsetMap } from './inset';
 
 type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
-type GeoPoint = [number, number];
-type PolygonRings = GeoPoint[][];
-type GeoFeature = { properties: { adcode?: string; name?: string }; geometry: { type: string; coordinates: unknown } };
-type ThemeName = 'light' | 'dark';
-type MapTheme = {
-  background: string;
-  fill: Record<UnitColor, string>;
-  emphasis: Record<UnitColor, string>;
-  boundary: Record<BoundaryTone, string>;
-  hoverArea: string;
-  labelBg: string;
-  labelShadow: string;
-  labelGreen: string;
-  labelRed: string;
-  labelNeutral: string;
-  tooltipBg: string;
-  tooltipText: string;
-  tooltipBorder: string;
-  flashArea: string;
-  flashBorder: string;
-  /** 无尽闯关：金币数量 → 绿色深浅（0/负值返回 null，回落原色） */
-  coinGreen: (coins: number, hover?: boolean) => string | null;
-};
-
-const MAP_THEMES: Record<ThemeName, MapTheme> = {
-  light: {
-    background: '#d1d5db',
-    fill: {
-      green: '#7fbf8b',
-      blue: '#6fa8dc', // 当前题目
-      red: '#d98989', // 答错标记
-      gray: '#e7e2d8',
-      scoreGreenLight: '#c7e8ce',
-      scoreGreenMedium: '#86c993',
-      scoreGreenDark: '#4f9d60',
-      scoreRedLight: '#f0c8c8',
-      scoreRedMedium: '#dc9292',
-      scoreRedDark: '#bd5d5d',
-    },
-    emphasis: {
-      green: '#93cfa0',
-      blue: '#83b7e3',
-      red: '#e1a0a0',
-      gray: '#eee9df',
-      scoreGreenLight: '#d7f0dc',
-      scoreGreenMedium: '#a2d8ac',
-      scoreGreenDark: '#6bb87a',
-      scoreRedLight: '#f6dada',
-      scoreRedMedium: '#e5aaaa',
-      scoreRedDark: '#cf7777',
-    },
-    boundary: {
-      light: '#b9b2a6',
-      mid: '#90969d',
-      dark: '#6b7280',
-    },
-    hoverArea: 'rgba(255,255,255,0.22)',
-    labelBg: 'rgba(255,255,255,0.94)',
-    labelShadow: 'rgba(15, 23, 42, 0.22)',
-    labelGreen: '#15803d',
-    labelRed: '#b91c1c',
-    labelNeutral: '#374151',
-    tooltipBg: 'rgba(255,255,255,0.96)',
-    tooltipText: '#111827',
-    tooltipBorder: '#d1d5db',
-    flashArea: '#e8cf78',
-    flashBorder: '#b68b2f',
-    coinGreen(coins, hover = false) {
-      if (coins <= 0) return null;
-      const t = Math.min(1, coins / 500);
-      const s = 42 + t * 14;
-      const l = Math.min(88, (hover ? 5 : 0) + (82 - t * 48));
-      return `hsl(140, ${s.toFixed(1)}%, ${Math.max(26, l).toFixed(1)}%)`;
-    },
-  },
-  dark: {
-    background: '#374151',
-    fill: {
-      green: '#166534',
-      blue: '#1d4ed8',
-      red: '#991b1b',
-      gray: '#1f2937',
-      scoreGreenLight: '#3b7a4b',
-      scoreGreenMedium: '#23703a',
-      scoreGreenDark: '#166534',
-      scoreRedLight: '#8b4b4b',
-      scoreRedMedium: '#a23737',
-      scoreRedDark: '#991b1b',
-    },
-    emphasis: {
-      green: '#15803d',
-      blue: '#2563eb',
-      red: '#b91c1c',
-      gray: '#334155',
-      scoreGreenLight: '#4f985f',
-      scoreGreenMedium: '#2d8a46',
-      scoreGreenDark: '#15803d',
-      scoreRedLight: '#a65b5b',
-      scoreRedMedium: '#b83f3f',
-      scoreRedDark: '#b91c1c',
-    },
-    boundary: {
-      light: '#475569',
-      mid: '#6b8197',
-      dark: '#94a3b8',
-    },
-    hoverArea: 'rgba(148,163,184,0.18)',
-    labelBg: 'rgba(15,23,42,0.9)',
-    labelShadow: 'rgba(0, 0, 0, 0.42)',
-    labelGreen: '#86efac',
-    labelRed: '#fca5a5',
-    labelNeutral: '#dbeafe',
-    tooltipBg: 'rgba(15,23,42,0.96)',
-    tooltipText: '#e5e7eb',
-    tooltipBorder: '#475569',
-    flashArea: '#ca8a04',
-    flashBorder: '#fde68a',
-    coinGreen(coins, hover = false) {
-      if (coins <= 0) return null;
-      const t = Math.min(1, coins / 500);
-      const s = 48 + t * 16;
-      const l = Math.min(64, (hover ? 9 : 0) + (26 + t * 22));
-      return `hsl(140, ${s.toFixed(1)}%, ${Math.max(18, l).toFixed(1)}%)`;
-    },
-  },
-};
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
@@ -219,8 +96,7 @@ export class MapRenderer {
   private labelAnchors = new Map<string, GeoPoint>();
   private provinceLabelAnchors = new Map<string, GeoPoint>();
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
-  private insetEl: HTMLElement | null = null;
-  private insetChart: echarts.ECharts | null = null;
+  private inset: InsetMap;
   private viewProvince: string | null = null;
   private center: [number, number] = [104.5, 35];
   private zoom = 1;
@@ -245,7 +121,14 @@ export class MapRenderer {
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
     echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：每日竞速只渲染 35 个省面
-    echarts.registerMap('hkmac', this.buildHkmacGeo() as never); // 港澳放大框：香港+澳门+广东沿海
+    this.inset = new InsetMap({
+      theme: () => this.theme(),
+      state: () => this.lastState,
+      boundaryTone: () => this.provinceBoundaryTone,
+      handlers: this.handlers,
+      provincesGeoJson: data.provincesGeoJson,
+    });
+    this.inset.registerMap(); // 港澳放大框：香港+澳门+广东沿海
     this.chart = echarts.init(el);
     this.units = data.allUnits;
     for (const u of this.units) {
@@ -260,8 +143,6 @@ export class MapRenderer {
     for (const f of provGeo.features ?? []) {
       if (f.properties.name && f.properties.adcode) this.provinceNameToAdcode.set(f.properties.name, f.properties.adcode);
     }
-    this.insetEl = document.getElementById('hkmac-inset');
-
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
       const params = p as { componentType?: string; seriesType?: string; name?: string };
@@ -361,14 +242,14 @@ export class MapRenderer {
 
     window.addEventListener('resize', () => {
       this.chart.resize();
-      this.insetChart?.resize();
+      this.inset.resize();
     });
   }
 
   /** 容器尺寸变化（如从留言板切回地图）时重算画布。 */
   resize() {
     this.chart.resize();
-    this.insetChart?.resize();
+    this.inset.resize();
   }
 
   setDarkMode(darkMode: boolean) {
@@ -404,8 +285,8 @@ export class MapRenderer {
       this.labelMode = 'none';
       resetFromDrill = true;
     }
-    if (this.provinceMode && this.provinceModeInset) this.showInset();
-    else this.hideInset();
+    if (this.provinceMode && this.provinceModeInset) this.inset.show();
+    else this.inset.hide();
     if (this.lastState) this.render(this.lastState);
     if (resetFromDrill) {
       // render 可能因地图切换（china ↔ china-provinces）重置相机，显式写回恢复的下钻前视图
@@ -415,25 +296,6 @@ export class MapRenderer {
   }
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
-  private showInset() {
-    if (!this.insetEl) return;
-    this.insetEl.classList.remove('hidden');
-    if (!this.insetChart) {
-      this.insetChart = echarts.init(this.insetEl);
-      this.insetChart.on('click', (p) => this.onInsetClick(p));
-      this.insetChart.on('mouseover', (p) => this.onInsetHover(p));
-      this.insetChart.on('mouseout', () => this.handlers.onUnitHoverEnd?.());
-    } else {
-      // 容器曾隐藏（display:none）时 ECharts 画布可能残留 0 尺寸/旧尺寸，恢复可见后强制重算
-      this.insetChart.resize();
-    }
-    this.renderInset();
-  }
-
-  private hideInset() {
-    if (this.insetEl) this.insetEl.classList.add('hidden');
-  }
-
   private theme(): MapTheme {
     return MAP_THEMES[this.themeName];
   }
@@ -494,16 +356,6 @@ export class MapRenderer {
       out.set(adcode, bestLabelAnchor(polygons));
     }
     return out;
-  }
-
-  /** 港澳放大框专用地图：香港 + 澳门 + 广东（周边海岸），从省界 GeoJSON 抽取。 */
-  private buildHkmacGeo(): unknown {
-    const src = this.data.provincesGeoJson as { type: string; features?: GeoFeature[] };
-    const keep = new Set(['440000', '810000', '820000']);
-    return {
-      type: src.type,
-      features: (src.features ?? []).filter((f) => keep.has(f.properties.adcode ?? '')),
-    };
   }
 
   private labelAnchorOf(u: Unit): GeoPoint {
@@ -614,70 +466,10 @@ export class MapRenderer {
     return out;
   }
 
-  /** 港澳放大框渲染：香港、澳门按主图状态着色并显示简称标签，广东为淡灰底（不可作答）。 */
-  private renderInset() {
-    const chart = this.insetChart;
-    if (!chart) return;
-    const state = this.lastState;
-    if (!state) return;
-    const theme = this.theme();
-    const regionOf = (adcode: string, short: string): GeoRegion => {
-      const color: UnitColor = state.colorOf(adcode);
-      return {
-        name: this.provinceFeatureName(adcode),
-        itemStyle: { areaColor: theme.fill[color], borderColor: theme.boundary[this.provinceBoundaryTone], borderWidth: 1 },
-        emphasis: { itemStyle: { areaColor: theme.emphasis[color] }, label: { show: false } },
-        label: { show: true, formatter: short, color: theme.labelNeutral, fontSize: 10, fontWeight: 600 },
-      };
-    };
-    const hk = regionOf('810000', '香港');
-    const mo = regionOf('820000', '澳门');
-    // 广东沿海：淡灰底，silent 不参与作答
-    const gd: GeoRegion = {
-      name: this.provinceFeatureName('440000'),
-      silent: true,
-      itemStyle: { areaColor: theme.fill.gray, borderColor: theme.boundary[this.provinceBoundaryTone], borderWidth: 1 },
-      emphasis: { itemStyle: { areaColor: theme.fill.gray }, label: { show: false } },
-      label: { show: false },
-    };
-    chart.setOption({
-      backgroundColor: 'transparent',
-      geo: {
-        map: 'hkmac',
-        roam: false,
-        silent: false,
-        zoom: 11,
-        center: [113.85, 22.3],
-        itemStyle: { borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
-        regions: [gd, hk, mo],
-      },
-    } as never);
-  }
-
   private provinceFeatureName(adcode: string): string {
     const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
     const f = (geo.features ?? []).find((x) => x.properties.adcode === adcode);
     return f?.properties.name ?? '';
-  }
-
-  /** 放大框点击：命中香港/澳门省面时回传省 adcode。 */
-  private onInsetClick(p: unknown) {
-    const params = p as { name?: string };
-    const adcode = this.insetNameToAdcode(params.name);
-    if (adcode) this.handlers.onUnitClick(adcode);
-  }
-
-  private onInsetHover(p: unknown) {
-    const params = p as { name?: string };
-    const adcode = this.insetNameToAdcode(params.name);
-    if (adcode) this.handlers.onUnitHover?.(adcode);
-  }
-
-  private insetNameToAdcode(name: string | undefined): string | null {
-    if (!name) return null;
-    if (name === this.provinceFeatureName('810000')) return '810000';
-    if (name === this.provinceFeatureName('820000')) return '820000';
-    return null;
   }
 
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
@@ -936,10 +728,7 @@ export class MapRenderer {
     };
     this.chart.setOption(option);
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
-    if (this.provinceMode) {
-      if (this.provinceModeInset) this.showInset();
-      this.renderInset();
-    }
+    if (this.provinceMode && this.provinceModeInset) this.inset.show();
   }
 
   /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
@@ -1123,179 +912,7 @@ export class MapRenderer {
       this.followRaf = null;
     }
     this.chart.dispose();
-    this.insetChart?.dispose();
-    this.insetChart = null;
+    this.inset.dispose();
   }
 }
 
-function bboxOf(feature: { geometry: { coordinates: unknown } }): [number, number, number, number] {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const walk = (coords: unknown) => {
-    if (!Array.isArray(coords)) return;
-    for (const c of coords as unknown[]) {
-      if (Array.isArray(c) && typeof c[0] === 'number') {
-        const x = c[0] as number;
-        const y = c[1] as number;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      } else {
-        walk(c);
-      }
-    }
-  };
-  walk(feature.geometry.coordinates);
-  return [minX, minY, maxX, maxY];
-}
-
-function polygonsOf(feature: GeoFeature): PolygonRings[] {
-  const geometry = feature.geometry;
-  if (geometry.type === 'Polygon') return [ringsOf(geometry.coordinates)].filter((rings) => rings.length > 0);
-  if (geometry.type !== 'MultiPolygon' || !Array.isArray(geometry.coordinates)) return [];
-  return geometry.coordinates.map((poly) => ringsOf(poly)).filter((rings) => rings.length > 0);
-}
-
-function ringsOf(raw: unknown): PolygonRings {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((ring) => {
-      if (!Array.isArray(ring)) return [];
-      return ring.filter(isGeoPoint).map((p) => [p[0], p[1]] as GeoPoint);
-    })
-    .filter((ring) => ring.length >= 3);
-}
-
-function isGeoPoint(value: unknown): value is GeoPoint {
-  return Array.isArray(value) && typeof value[0] === 'number' && typeof value[1] === 'number';
-}
-
-function bestLabelAnchor(polygons: PolygonRings[]): GeoPoint {
-  const polygon = largestPolygon(polygons);
-  const outer = polygon[0];
-  const [minX, minY, maxX, maxY] = bboxOfRings(polygon);
-  const centroid = ringCentroid(outer);
-  let best = pointInPolygon(centroid, polygon) ? centroid : firstInsidePoint(polygon) ?? [(minX + maxX) / 2, (minY + maxY) / 2];
-  let bestScore = anchorScore(best, polygon);
-
-  const search = (fromX: number, fromY: number, toX: number, toY: number, steps: number) => {
-    const dx = (toX - fromX) / steps;
-    const dy = (toY - fromY) / steps;
-    for (let ix = 0; ix <= steps; ix += 1) {
-      for (let iy = 0; iy <= steps; iy += 1) {
-        const point: GeoPoint = [fromX + dx * ix, fromY + dy * iy];
-        const score = anchorScore(point, polygon);
-        if (score > bestScore) {
-          best = point;
-          bestScore = score;
-        }
-      }
-    }
-  };
-
-  search(minX, minY, maxX, maxY, 14);
-  let spanX = (maxX - minX) / 6;
-  let spanY = (maxY - minY) / 6;
-  for (let i = 0; i < 2; i += 1) {
-    search(best[0] - spanX, best[1] - spanY, best[0] + spanX, best[1] + spanY, 10);
-    spanX /= 3;
-    spanY /= 3;
-  }
-  return best;
-}
-
-function largestPolygon(polygons: PolygonRings[]): PolygonRings {
-  return polygons.reduce((best, current) => (Math.abs(ringArea(current[0])) > Math.abs(ringArea(best[0])) ? current : best));
-}
-
-function bboxOfRings(rings: PolygonRings): [number, number, number, number] {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const ring of rings) {
-    for (const [x, y] of ring) {
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-  }
-  return [minX, minY, maxX, maxY];
-}
-
-function firstInsidePoint(polygon: PolygonRings): GeoPoint | null {
-  for (const ring of polygon) {
-    for (const point of ring) {
-      if (pointInPolygon(point, polygon)) return point;
-    }
-  }
-  return null;
-}
-
-function anchorScore(point: GeoPoint, polygon: PolygonRings): number {
-  if (!pointInPolygon(point, polygon)) return -Infinity;
-  let minDistance = Infinity;
-  for (const ring of polygon) {
-    for (let i = 0; i < ring.length; i += 1) {
-      const a = ring[i];
-      const b = ring[(i + 1) % ring.length];
-      minDistance = Math.min(minDistance, distanceToSegment(point, a, b));
-    }
-  }
-  return minDistance;
-}
-
-function ringCentroid(ring: GeoPoint[]): GeoPoint {
-  let area2 = 0;
-  let cx = 0;
-  let cy = 0;
-  for (let i = 0; i < ring.length; i += 1) {
-    const [x0, y0] = ring[i];
-    const [x1, y1] = ring[(i + 1) % ring.length];
-    const cross = x0 * y1 - x1 * y0;
-    area2 += cross;
-    cx += (x0 + x1) * cross;
-    cy += (y0 + y1) * cross;
-  }
-  if (Math.abs(area2) < 1e-9) return averagePoint(ring);
-  return [cx / (3 * area2), cy / (3 * area2)];
-}
-
-function averagePoint(points: GeoPoint[]): GeoPoint {
-  const sum = points.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y] as GeoPoint, [0, 0]);
-  return [sum[0] / points.length, sum[1] / points.length];
-}
-
-function ringArea(ring: GeoPoint[]): number {
-  let area = 0;
-  for (let i = 0; i < ring.length; i += 1) {
-    const [x0, y0] = ring[i];
-    const [x1, y1] = ring[(i + 1) % ring.length];
-    area += x0 * y1 - x1 * y0;
-  }
-  return area / 2;
-}
-
-function pointInPolygon(point: GeoPoint, polygon: PolygonRings): boolean {
-  if (!pointInRing(point, polygon[0])) return false;
-  return polygon.slice(1).every((hole) => !pointInRing(point, hole));
-}
-
-function pointInRing([x, y]: GeoPoint, ring: GeoPoint[]): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
-function distanceToSegment(point: GeoPoint, a: GeoPoint, b: GeoPoint): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  if (dx === 0 && dy === 0) return Math.hypot(point[0] - a[0], point[1] - a[1]);
-  const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy)));
-  const x = a[0] + t * dx;
-  const y = a[1] + t * dy;
-  return Math.hypot(point[0] - x, point[1] - y);
-}

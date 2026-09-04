@@ -1,7 +1,7 @@
 import type { Mode, RoundResult } from './types';
 import { api } from './api';
 
-export type LeaderboardMode = Extract<Mode, 'self' | 'click' | 'endless' | 'daily'>;
+export type LeaderboardMode = Extract<Mode, 'self' | 'click' | 'endless'>;
 
 export interface LeaderboardEntry {
   id: string;

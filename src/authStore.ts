@@ -211,10 +211,6 @@ function cleanUsername(username: unknown): string {
   return typeof username === 'string' ? username.trim().replace(/\s+/g, ' ').slice(0, 24) : '';
 }
 
-function usernameKey(username: string): string {
-  return cleanUsername(username).toLowerCase();
-}
-
 function validPassword(password: string) {
   return password.length >= 6;
 }
@@ -256,5 +252,4 @@ function base64ToBytes(value: string) {
   return out;
 }
 
-// 保留导出供潜在兼容（内部不再使用 usernameKey，但类型面保持一致）
-export { usernameKey };
+

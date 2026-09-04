@@ -1,5 +1,6 @@
 import type { Mode, RoundResult, Unit } from '../types';
-import type { ModeCtx, ModeController } from './types';
+import type { ModeCtx } from './types';
+import { BaseMode } from './baseMode';
 import { Countdown } from '../ui/countdown';
 import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
@@ -14,7 +15,7 @@ import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, saveEndlessAutoFollow, type
  * 初始金币基于柏林噪声生成（约 50-400），相邻地级市平滑过渡。
  * 道具产生的额外金币不超过该地名本身价格。
  */
-export class EndlessMode implements ModeController {
+export class EndlessMode extends BaseMode {
   id: Mode = 'endless';
   title = t('mode.endless.title');
   private coins = new Map<string, number>(); // 当前金币数（0 = 本关已收集，下一关恢复）
@@ -50,6 +51,7 @@ export class EndlessMode implements ModeController {
   private autoFollow = loadEndlessAutoFollow(); // 自动跟随（倍率固定默认值）
 
   constructor(private ctx: ModeCtx) {
+    super();
     // 透视药水：任意方向键使用
     document.addEventListener('keydown', (event) => {
       if (!this.started || this.paused || this.switching) return;
@@ -208,7 +210,7 @@ export class EndlessMode implements ModeController {
     this.collect(best, value);
   }
 
-  onInput() {
+  onInput(_v: string) {
     /* 无尽闯关必须按 Enter 确认，不做实时输入判定 */
   }
 

@@ -1,10 +1,11 @@
 import type { Mode, UnitColor } from '../types';
-import type { ModeCtx, ModeController } from './types';
+import type { ModeCtx } from './types';
+import { BaseMode } from './baseMode';
 import { t, type MessagesKey } from '../i18n';
 import type { Granularity } from '../province';
 
 /** 熟练度分析：按累计答题分数只读着色（地级市名称熟练度 / 省名称熟练度），不响应输入。 */
-export class FreeMode implements ModeController {
+export class AnalysisMode extends BaseMode {
   id: Mode = 'free';
   title = t('mode.free.title');
   /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）。 */
@@ -13,7 +14,7 @@ export class FreeMode implements ModeController {
   private returnToProvince = false;
   private unsubscribe: (() => void) | null = null;
 
-  constructor(private ctx: ModeCtx) {}
+  constructor(private ctx: ModeCtx) { super(); }
 
   getModeSettings() {
     return null;
@@ -89,10 +90,6 @@ export class FreeMode implements ModeController {
   hasProgress() {
     return false;
   }
-
-  onSubmit() {}
-
-  onInput() {}
 
   onUnitClick() {
     return true;

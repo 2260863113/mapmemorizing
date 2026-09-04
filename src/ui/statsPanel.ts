@@ -2,7 +2,7 @@ import type { AppData, Unit } from '../types';
 import type { MemoryStore } from '../store';
 import { t } from '../i18n';
 import { normalizeProvince } from '../matcher';
-import { provinceLevelOf, PROVINCE_LEVEL_WORD_KEY, type ProvinceLevel } from '../modes/free';
+import { provinceLevelOf, PROVINCE_LEVEL_WORD_KEY, type ProvinceLevel } from '../modes/analysis';
 
 type ProvinceStats = { mastered: number; unknown: number; unfamiliar: number };
 type ProvinceLevelStats = Record<ProvinceLevel, number>;
