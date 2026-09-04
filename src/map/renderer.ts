@@ -27,6 +27,20 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
+/** roam 拖拽钳制的边距（px）：地图内容至少留此边距在视口内，避免被拖出屏幕。 */
+const PAN_MARGIN = 24;
+/** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
+const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
+  china: { center: [104.3, 28.5], zoom: 1 },
+  'china-provinces': { center: [104.3, 28.5], zoom: 1 },
+  world: { center: [0, -3.2], zoom: 1 },
+};
+/** 各地图数据 bbox（lng/lat，用于拖动钳制换算屏幕范围）。 */
+const MAP_BBOX: Record<string, [number, number, number, number]> = {
+  china: [73.5, 3.4, 135.1, 53.6],
+  'china-provinces': [73.5, 3.4, 135.1, 53.6],
+  world: [-180, -90, 180, 83.6],
+};
 
 const STATUS_TXT: Record<UnitColor, string> = {
   green: t('map.status.green'),
@@ -78,7 +92,8 @@ export class MapRenderer {
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
   private inset: InsetMap;
   private viewProvince: string | null = null;
-  private center: [number, number] = [104.5, 35];
+  /** 当前相机中心（数据坐标）。地图切换/复位时按 DEFAULT_VIEWS 回该地图 bbox 中心。 */
+  private center: [number, number] = [104.3, 28.5];
   private zoom = 1;
   /** 下钻前全国视图快照：从全国下钻某省时记录 center/zoom，返回全国（backToNation）时恢复。 */
   private savedNationView: { center: [number, number]; zoom: number } | null = null;
@@ -102,6 +117,7 @@ export class MapRenderer {
   private worldLabelAnchors = new Map<string, GeoPoint>(); // iso → 标签锚点（按主面质心）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
+  private panClampRaf: number | null = null;
   /** 命名 resize 监听器引用，dispose 时移除，避免匿名监听泄漏。 */
   private handleResize = () => this.resize();
   onViewChange: (() => void) | null = null;
@@ -254,6 +270,7 @@ export class MapRenderer {
         this.zoom = clampZoom(this.zoom * params.zoom);
       }
       this.scheduleLabelModeUpdate();
+      this.schedulePanClamp(); // 拖动/缩放结束时把地图内容钳回视口内
       this.onZoomChange?.();
     });
 
@@ -264,6 +281,84 @@ export class MapRenderer {
   resize() {
     this.chart.resize();
     this.inset.resize();
+  }
+
+  /** 某地图的默认全国视图（数据 bbox 中心 + zoom 1 = ECharts 的 fit 居中视图）。 */
+  private defaultViewFor(mapName: string): { center: [number, number]; zoom: number } {
+    return DEFAULT_VIEWS[mapName] ?? { center: [104.3, 28.5], zoom: 1 };
+  }
+
+  /** 把相机复位到当前地图的默认居中完整视图（地图切换后必须调用，保证整图正中显示）。 */
+  private resetDefaultView(mapName = this.currentMapName()) {
+    const v = this.defaultViewFor(mapName);
+    this.center = [v.center[0], v.center[1]];
+    this.zoom = v.zoom;
+    this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+    this.onZoomChange?.();
+  }
+
+  /** 拖动钳制：roam 中按帧钳制，地图内容被拖出视口时立即纠正（拖到边界即停住）。 */
+  private schedulePanClamp() {
+    if (this.panClampRaf !== null) return; // 已有待执行帧
+    this.panClampRaf = requestAnimationFrame(() => {
+      this.panClampRaf = null;
+      this.clampPan();
+    });
+  }
+
+  /** 若地图内容超出视口（被拖出/残留偏移），按内容 bbox 钳制回视口内。 */
+  private clampPan() {
+    const mapName = this.currentMapName();
+    const bbox = MAP_BBOX[mapName];
+    if (!bbox) return;
+    const chartW = this.chart.getWidth();
+    const chartH = this.chart.getHeight();
+    if (chartW < 10 || chartH < 10) return;
+    // 地图内容四个角在屏幕上的像素位置（含 roam 平移/缩放）
+    const corners = [
+      [bbox[0], bbox[1]],
+      [bbox[2], bbox[1]],
+      [bbox[0], bbox[3]],
+      [bbox[2], bbox[3]],
+    ];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of corners) {
+      const px = this.chart.convertToPixel({ geoIndex: 0 }, c);
+      if (!px) return;
+      minX = Math.min(minX, px[0]);
+      maxX = Math.max(maxX, px[0]);
+      minY = Math.min(minY, px[1]);
+      maxY = Math.max(maxY, px[1]);
+    }
+    const M = PAN_MARGIN;
+    const innerW = chartW - M * 2;
+    const innerH = chartH - M * 2;
+    const cw = maxX - minX;
+    const chh = maxY - minY;
+    let dx = 0;
+    let dy = 0;
+    if (cw <= innerW) {
+      // 内容比视口窄：整体必须留在视口内
+      if (minX < M) dx = M - minX;
+      else if (maxX > chartW - M) dx = chartW - M - maxX;
+    } else {
+      // 内容比视口宽（放大浏览）：任一侧不允许露出空白（内容须盖满视口）
+      if (minX > M) dx = M - minX;
+      else if (maxX < chartW - M) dx = chartW - M - maxX;
+    }
+    if (chh <= innerH) {
+      if (minY < M) dy = M - minY;
+      else if (maxY > chartH - M) dy = chartH - M - maxY;
+    } else {
+      if (minY > M) dy = M - minY;
+      else if (maxY < chartH - M) dy = chartH - M - maxY;
+    }
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    // 内容需平移 (dx, dy) 像素：视口中心对应的数据坐标应取当前中心反向平移后的位置
+    const anchor = this.chart.convertFromPixel({ geoIndex: 0 }, [chartW / 2 - dx, chartH / 2 - dy]);
+    if (!anchor || !isFinite(anchor[0]) || !isFinite(anchor[1])) return;
+    this.center = [anchor[0], anchor[1]];
+    this.chart.setOption({ geo: { map: mapName, center: this.center } });
   }
 
   setDarkMode(darkMode: boolean) {
@@ -292,19 +387,22 @@ export class MapRenderer {
     this.provinceModeDrill = nextDrill;
     let resetFromDrill = false;
     if (wasWorld) {
-      // 离开世界模式：复位到中国全国默认视野（世界无下钻状态）
+      // 离开世界模式：复位到目标地图默认居中视野（世界无下钻状态）
       this.savedNationView = null;
       this.viewProvince = null;
-      this.center = [104.5, 35];
-      this.zoom = 1;
       this.labelMode = 'none';
+      const def = this.defaultViewFor(this.currentMapName());
+      this.center = [def.center[0], def.center[1]];
+      this.zoom = def.zoom;
+      resetFromDrill = true; // 地图名从 world → china/china-provinces，末尾显式写回复位后的相机
     } else if (this.viewProvince) {
       // 离开钻省状态回到全国：若存在下钻前视图快照则恢复之（否则回默认全国视图）
       const saved = this.savedNationView;
       this.savedNationView = null;
       this.viewProvince = null;
-      this.center = saved ? saved.center : [104.5, 35];
-      this.zoom = saved ? saved.zoom : 1;
+      const def = this.defaultViewFor(this.currentMapName());
+      this.center = saved ? saved.center : def.center;
+      this.zoom = saved ? saved.zoom : def.zoom;
       this.labelMode = 'none';
       resetFromDrill = true;
     }
@@ -327,16 +425,15 @@ export class MapRenderer {
     this.provinceModeInset = false;
     this.provinceModeDrill = false;
     this.inset.hide();
-    // 世界无「下钻省」概念；切走省级地级视图状态时复位到世界默认视野
+    // 世界无「下钻省」概念；切走省级地级视图状态时复位到对应地图默认视野
     this.savedNationView = null;
     this.viewProvince = null;
-    if (on) {
-      this.center = [10, 25];
-      this.zoom = 1;
+    if (on || wasWorld) {
+      // 进入世界或从世界切走（到省级/地级中国）：一律复位为目的地地图的默认居中视图
+      const def = this.defaultViewFor(this.currentMapName());
+      this.center = [def.center[0], def.center[1]];
+      this.zoom = def.zoom;
       this.labelMode = 'none';
-    } else if (wasWorld) {
-      this.center = [104.5, 35];
-      this.zoom = 1;
     }
     if (this.lastState) this.render(this.lastState);
     this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
@@ -808,9 +905,9 @@ export class MapRenderer {
     this.appliedMapName = mapName;
     this.chart.setOption(option, mapChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
     if (mapChanged) {
-      // replaceMerge 重建出的 geo 不带相机（render 不写 center/zoom 以保留 roam），
-      // 此处按渲染器当前模式视野显式复位，避免落到默认/残留视野。
-      this.chart.setOption({ geo: { map: mapName, center: [this.center[0], this.center[1]], zoom: this.zoom } });
+      // 地图切换（世界↔省级↔地级）时整图复位到该地图默认居中视图：
+      // replaceMerge 重建的 geo 不会继承相机，且切换绝不能沿用上一张地图的视野（会把地图带偏/带出屏幕）。
+      this.resetDefaultView(mapName);
     }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
     if (this.provinceMode && this.provinceModeInset) this.inset.show();
@@ -962,8 +1059,9 @@ export class MapRenderer {
       // 世界无下钻概念：回到默认世界视野
       this.savedNationView = null;
       this.viewProvince = null;
-      this.center = [10, 25];
-      this.zoom = 1;
+      const def = this.defaultViewFor('world');
+      this.center = [def.center[0], def.center[1]];
+      this.zoom = def.zoom;
       this.labelMode = 'none';
       if (this.lastState) this.render(this.lastState);
       this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
@@ -978,8 +1076,9 @@ export class MapRenderer {
       this.center = saved.center;
       this.zoom = saved.zoom;
     } else {
-      this.center = [104.5, 35];
-      this.zoom = 1;
+      const def = this.defaultViewFor(this.currentMapName());
+      this.center = [def.center[0], def.center[1]];
+      this.zoom = def.zoom;
     }
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
@@ -1014,6 +1113,10 @@ export class MapRenderer {
     if (this.followRaf !== null) {
       cancelAnimationFrame(this.followRaf);
       this.followRaf = null;
+    }
+    if (this.panClampRaf !== null) {
+      cancelAnimationFrame(this.panClampRaf);
+      this.panClampRaf = null;
     }
     this.chart.dispose();
     this.inset.dispose();
