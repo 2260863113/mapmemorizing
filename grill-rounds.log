@@ -35,5 +35,18 @@
 - Q25 世界榜哨兵：新常量 WORLD_NATION_SCOPE = '__world_nation__'，并列 PROVINCE_NATION_SCOPE，进 RoundResult.scopeProvince 与 DB scope_province；后端 whitelist/校验/排行语义按哨兵处理；纯增量无迁移。
 - Q26 ⚠改判 Q5：世界榜允许「已答全对即可」提交（correct>0 && wrong=0，同市级全国榜），排序按答对题数降序、同数按用时升序（同市级全国榜语义）——不是省级的「必须全对仅按用时」。前端 canSubmitScore、后端 validateScore/isBetter/upsertSql/orderBy/metaText 需把世界哨兵按「市级全国榜」口径处理（即把世界哨兵当作「可部分提交 + 按答对数优先」；后端 upsert 现按 scope 空/非空二分，世界哨兵非空会错落「仅用时」分支，需显式归类）。195 全对门槛太高是改判原因。
 - Q27 国家名：fetch 脚本内建小校正表（iso→答案中文名，只改元数据不改几何）；生成 countries.json 前先打印 195 国名单供人工抽查一轮；邻接用几何相交（turf booleanIntersects，复用 build-data.mjs 做法）。
+2026-09-04 19:00（续2）
+- Q28 分析世界档交互：缩放+悬停卡（中文名+七档词+对错次数）；双击无动作（不下钻）；重置按钮清空国家熟练度；侧栏标题「世界概览（国家熟练度）」。
+- Q29 数据管线：独立 scripts/fetch-world-data.mjs（拉 Surbowl → 裁剪 → iso_a3 白名单分答题/装饰 → turf 建邻接 → 输出 world.geojson + countries.json）；build-data.mjs（中国）不动。
+- Q30 世界榜结算文案：结算卡「世界榜按答对题数排名，同数按用时，提交后将重置本局」；栏目标题「世界榜」；行尾 metaText 同市级全国（答对 X · 用时）。
+- Q31 世界名匹配：独立 src/worldNames.ts + 小词表（后缀剥离：共和国/联邦/王国/公国/合众国/酋长国/苏丹国…；别名表：美国/英国/俄罗斯/荷兰…）；不碰现有中国 matcher/normalize-rules。
+- Q32 世界熟练度存储：store.ts 第三分区 WORLD_MEM_KEY='china-admin-world-memory-v1' + getWorldPractice/recordWorldAnswer/resetWorldPractice（镜像省级）。
+- Q33 世界进度键：mapQuizMode.storageKey() 加 :world-nation 后缀分支；会话可刷新/切模式恢复。
+- Q34 点击世界判题：命中答题国→按当前题判对错；命中装饰面→忽略无声；未开始点击国家无下钻（无动作/仅缩放）。
+- Q35 分析世界图标签：不常显全部国名；靠着色+悬停卡读档位；高倍率按需出名字（同地级档阈值行为）；侧栏逐行全列。
+- Q36 点击世界辅助：无悬停提示（tooltip 关），同省级全国；题目顶栏显国家名；已答对国家显绿名标签；答错红标+题卡显正确答案。
+已核实代码落点（补充）：analysis.ts 的 getAnalysisGranularity/setAnalysisGranularity/refresh/onUnitDblClick/onBackToNation；statsPanel refresh/refreshProvinceLevel/renderLevelList；leaderboardPanel metaText（scopeProvince===null→nationMeta「{correct} 个 · {time}」）；score.ts upsertSql 空/非空二分；leaderboard.ts orderBy（scope===''→correct desc 否则 time）；validate.ts isBetter（null→correct+time；非空→time）；rows.ts toLeaderboardEntry（''→null）；scoreRules canSubmitScore（null→correct>0&&wrong=0；非空→全对）。
+⚠ Q26 语义结论＝市级全国榜口径：世界哨兵需令 scoreRules/validate/isBetter/upsert/orderBy/metaText 全按「可部分提交+按答对数优先+同数按用时」处理；后端 upsertSql 与 leaderboard orderBy 现按 scope 空串二分，需为世界哨兵显式加正确数优先分支（省级哨兵保持仅用时）。
+⚠ 未决：无设计问题待问。收官步骤：①给用户完整 i18n 文案清单；②数据管线/实现方案全文；③让用户逐项确认后才开始写代码（用户规则）。另 GitHub push 曾网络超时失败需重试；messages.json 为 UTF-8（read 正常，PowerShell 直读乱码勿用）。
 ⚠ 未决（下轮）：Q28 分析世界档交互（双击国家/悬停/重置/标题）；Q29 数据管线脚本落位（独立 fetch-world-data.mjs 建议：中国管线不动）；Q30 世界榜完整语义与结算文案（Q26 改判后的 correct-first+time、metaText「答对·用时」、settlementNoteWorld）；Q31 题面/匹配别名来源与 normalize 边界（世界别名表位置、俄罗斯联邦→俄罗斯 等后缀剥离与中国的差异）；收官前需给用户完整 i18n 文案清单 + 实现方案全文 + 195 国名单过目。
 代码影响全景已由子代理审计（见会话记录）：Granularity 类型、storageKey 后缀、validate.ts scope 白名单、renderer 地图注册/currentMapName、store 第三分区、i18n 字符串等全链路文件:行号清单已就绪。
