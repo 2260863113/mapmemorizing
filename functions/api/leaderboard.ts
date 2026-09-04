@@ -14,9 +14,6 @@ export const onRequestGet = handle(async (context) => {
   let orderBy: string;
   if (modeParam === 'endless') {
     orderBy = 'l.coins DESC, l.level DESC, l.submitted_at ASC, u.username ASC';
-  } else if (modeParam === 'daily') {
-    // 每日竞速：全部答对才上榜，只看用时
-    orderBy = 'l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   } else if (scope === '') {
     orderBy = 'l.correct DESC, l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   } else {

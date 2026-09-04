@@ -1,5 +1,5 @@
-import { verifySession } from '../../_lib/auth';
 import { json, readJson, handle } from '../../_lib/http';
+import { requireSession } from '../../_lib/guard';
 import { MAX_POST_LEN, cleanBoardText, parseBefore, parseLimit, parsePositiveInt } from '../../_lib/board';
 import { parseJson } from '../../_lib/rows';
 
@@ -108,29 +108,30 @@ export const onRequestGet = handle(async (context) => {
   return json({ posts });
 });
 
-export const onRequestPost = handle(async (context) => {
-  const env = context.env as { DB: import('@cloudflare/workers-types').D1Database };
-  const session = await verifySession(context.request, env, Date.now());
-  if (!session) return json({ error: { code: 'unauthorized', message: '未登录' } }, 401);
+export const onRequestPost = handle(
+  requireSession(async (context) => {
+    const env = context.env;
+    const session = context.session;
 
-  const body = await readJson<{ content?: unknown }>(context.request);
-  const content = cleanBoardText(body.content, MAX_POST_LEN);
-  if (!content) return json({ error: { code: 'invalid_content', message: `内容不能为空且不超过 ${MAX_POST_LEN} 字` } }, 400);
+    const body = await readJson<{ content?: unknown }>(context.request);
+    const content = cleanBoardText(body.content, MAX_POST_LEN);
+    if (!content) return json({ error: { code: 'invalid_content', message: `内容不能为空且不超过 ${MAX_POST_LEN} 字` } }, 400);
 
-  const now = Date.now();
-  const result = await env.DB.prepare('INSERT INTO board_posts (user_id, content, created_at) VALUES (?, ?, ?)')
-    .bind(session.user.id, content, now)
-    .run();
-  const id = Number(result.meta.last_row_id);
+    const now = Date.now();
+    const result = await env.DB.prepare('INSERT INTO board_posts (user_id, content, created_at) VALUES (?, ?, ?)')
+      .bind(session.user.id, content, now)
+      .run();
+    const id = Number(result.meta.last_row_id);
 
-  const post: BoardPostDto = {
-    id,
-    content,
-    createdAt: now,
-    username: session.user.username,
-    avatar: parseJson<{ dataUrl: string }>(session.user.avatar)?.dataUrl ?? null,
-    replyCount: 0,
-    replies: [],
-  };
-  return json({ post }, 201);
-});
+    const post: BoardPostDto = {
+      id,
+      content,
+      createdAt: now,
+      username: session.user.username,
+      avatar: parseJson<{ dataUrl: string }>(session.user.avatar)?.dataUrl ?? null,
+      replyCount: 0,
+      replies: [],
+    };
+    return json({ post }, 201);
+  }),
+);

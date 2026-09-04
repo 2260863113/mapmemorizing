@@ -16,6 +16,11 @@ export function cleanBoardText(value: unknown, maxLen: number): string | null {
   return text;
 }
 
+/** 通用纯文本清洗（公告等复用），与 cleanBoardText 同语义。 */
+export function cleanPlainText(value: unknown, maxLen: number): string | null {
+  return cleanBoardText(value, maxLen);
+}
+
 /** 解析正整数 id；非法抛 ApiError 400。 */
 export function parsePositiveInt(value: string | undefined, label: string): number {
   if (!value) throw new ApiError(400, 'invalid_param', `缺少${label}`);

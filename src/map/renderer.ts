@@ -19,7 +19,7 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const CITY_LABEL_SIZE = 14;
 const PRICE_LABEL_SIZE = 18; // 价格标签字号（随缩放缩放）
-const PROVINCE_LABEL_SIZE = 15; // 省名标签字号（每日竞速作答反馈）
+const PROVINCE_LABEL_SIZE = 15; // 省名标签字号（省级练习作答反馈）
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 
@@ -120,7 +120,7 @@ export class MapRenderer {
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：每日竞速只渲染 35 个省面
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：只渲染 35 个省面
     this.inset = new InsetMap({
       theme: () => this.theme(),
       state: () => this.lastState,
@@ -344,7 +344,7 @@ export class MapRenderer {
     return out;
   }
 
-  /** 省级名字标签锚点：从省界 GeoJSON 计算（每日竞速省名标签用）。 */
+  /** 省级名字标签锚点：从省界 GeoJSON 计算（省级练习/熟练度分析的省名标签用）。 */
   private buildProvinceLabelAnchors(): Map<string, GeoPoint> {
     const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
     const out = new Map<string, GeoPoint>();
@@ -443,7 +443,7 @@ export class MapRenderer {
     });
   }
 
-  /** 省名标签：已作答省（每日竞速/省级练习，绿/红）或省级地图常显全部省名（熟练度分析省级档，中性色）。 */
+  /** 省名标签：已作答省（省级练习，绿/红）或省级地图常显全部省名（熟练度分析省级档，中性色）。 */
   private buildProvinceLabelData(state: RenderState): LabelPoint[] {
     if (!this.provinceMode) return [];
     const theme = this.theme();
@@ -670,7 +670,7 @@ export class MapRenderer {
           data: labelData,
         },
         {
-          // 每日竞速省名标签：已作答省的简称，始终显示
+          // 省级练习省名标签：已作答省的简称，始终显示
           id: 'province-labels',
           type: 'custom',
           coordinateSystem: 'geo',

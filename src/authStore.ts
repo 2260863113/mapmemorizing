@@ -114,14 +114,7 @@ export class AuthStore {
     if (wantsPassword) {
       if (!update.oldPassword) throw new Error(t('auth.error.oldPasswordRequired'));
       if (!validPassword(update.newPassword ?? '')) throw new Error(t('auth.error.newPasswordTooShort'));
-      let saltInfo: { salt: string; iterations: number };
-      try {
-        saltInfo = await api.salt(username);
-      } catch {
-        throw new Error(t('auth.error.network'));
-      }
-      oldPasswordHash = await hashWithSalt(update.oldPassword, saltInfo.salt, saltInfo.iterations);
-      newPasswordHash = await hashPassword(update.newPassword ?? '');
+      [oldPasswordHash, newPasswordHash] = await hashPair(update.oldPassword, update.newPassword ?? '', username);
     }
 
     let res;
@@ -153,14 +146,7 @@ export class AuthStore {
     const username = session.user.username;
     if (!validPassword(newPassword)) throw new Error(t('auth.error.newPasswordTooShort'));
 
-    let saltInfo: { salt: string; iterations: number };
-    try {
-      saltInfo = await api.salt(username);
-    } catch {
-      throw new Error(t('auth.error.network'));
-    }
-    const oldPasswordHash = await hashWithSalt(oldPassword, saltInfo.salt, saltInfo.iterations);
-    const newPasswordHash = await hashPassword(newPassword);
+    const [oldPasswordHash, newPasswordHash] = await hashPair(oldPassword, newPassword, username);
 
     let res;
     try {
@@ -227,6 +213,19 @@ async function hashWithSalt(password: string, saltB64: string, iterations: numbe
   const salt = base64ToBytes(saltB64);
   const hash = await derive(password, salt, iterations);
   return { algorithm: 'PBKDF2-SHA-256', salt: saltB64, hash: bytesToBase64(new Uint8Array(hash)), iterations };
+}
+
+/** 改密/改资料：取服务端 salt 一次，同时算旧哈希（验旧密码）与新哈希（新随机 salt）。 */
+async function hashPair(oldPassword: string, newPassword: string, username: string): Promise<[PasswordHashPayload, PasswordHashPayload]> {
+  let saltInfo: { salt: string; iterations: number };
+  try {
+    saltInfo = await api.salt(username);
+  } catch {
+    throw new Error(t('auth.error.network'));
+  }
+  const oldPasswordHash = await hashWithSalt(oldPassword, saltInfo.salt, saltInfo.iterations);
+  const newPasswordHash = await hashPassword(newPassword);
+  return [oldPasswordHash, newPasswordHash];
 }
 
 async function derive(password: string, salt: Uint8Array<ArrayBuffer>, iterations: number): Promise<ArrayBuffer> {

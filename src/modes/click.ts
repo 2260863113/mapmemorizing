@@ -107,7 +107,7 @@ export class ClickMode extends MapQuizMode {
         return 'gray';
       },
       disableTooltip: true,
-      // 省级全国：已作答省显示绿/红省名简称标签（与每日竞速一致）
+      // 省级全国：已作答省显示绿/红省名简称标签
       provinceLabel: provinceNation
         ? (provinceAdcode) => {
             if (this.green.has(provinceAdcode)) {

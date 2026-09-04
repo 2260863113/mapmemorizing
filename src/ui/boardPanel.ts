@@ -4,6 +4,7 @@ import type { AuthPanel } from './authPanel';
 import { avatarHtml } from './avatar';
 import { escapeHtml } from './html';
 import { formatRelative } from './dateFormat';
+import { toast } from './dom';
 import type { BoardPost, BoardReply } from '../api';
 import { t } from '../i18n';
 
@@ -268,12 +269,6 @@ export class BoardPanel {
   }
 
   private toastError() {
-    // 复用全局 toast（存在 #toast 元素）
-    const toast = document.getElementById('toast');
-    if (toast) {
-      toast.textContent = t('board.submitFailed');
-      toast.classList.add('show');
-      window.setTimeout(() => toast.classList.remove('show'), 2400);
-    }
+    toast(t('board.submitFailed'));
   }
 }

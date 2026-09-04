@@ -1,5 +1,5 @@
-import { verifySession } from '../../_lib/auth';
 import { json, readJson, handle } from '../../_lib/http';
+import { requireSession } from '../../_lib/guard';
 import { toPublicUser } from '../../_lib/rows';
 import { cleanUsername, normalizePasswordHash } from '../../_lib/validate';
 
@@ -23,14 +23,14 @@ interface ProfileBody {
 }
 
 const MAX_AVATAR_SIZE = 20 * 1024;
+/** dataUrl 字符串长度的绝对上限（>20KB 的 base64 必然超长），防止仅依赖客户端自报 size。 */
+const MAX_AVATAR_DATAURL_LEN = 40 * 1024;
 
-export const onRequestPost = handle(async (context) => {
-  const env = context.env as { DB: import('@cloudflare/workers-types').D1Database };
-  const session = await verifySession(context.request, env, Date.now());
-  if (!session) return json({ error: { code: 'unauthorized', message: '未登录' } }, 401);
-
-  const user = session.user;
-  const body = await readJson<ProfileBody>(context.request);
+export const onRequestPost = handle(
+  requireSession(async (context) => {
+    const env = context.env;
+    const user = context.session.user;
+    const body = await readJson<ProfileBody>(context.request);
 
   const username = cleanUsername(body.username);
   if (!username) return json({ error: { code: 'invalid_username', message: '请输入用户名' } }, 400);
@@ -53,6 +53,10 @@ export const onRequestPost = handle(async (context) => {
       }
       if (typeof av.size !== 'number' || av.size < 0 || av.size > MAX_AVATAR_SIZE) {
         return json({ error: { code: 'invalid_avatar', message: '头像不能超过 20KB' } }, 400);
+      }
+      // 服务端按 dataUrl 实际长度设上限，避免仅信客户端自报 size 的超大文本入库
+      if (av.dataUrl.length > MAX_AVATAR_DATAURL_LEN) {
+        return json({ error: { code: 'invalid_avatar', message: '头像体积过大' } }, 400);
       }
       avatarJson = JSON.stringify({ dataUrl: av.dataUrl, name: av.name ?? '', size: av.size, type: av.type ?? '' });
     }
@@ -112,5 +116,6 @@ export const onRequestPost = handle(async (context) => {
     .first();
   if (!row) return json({ error: { code: 'internal', message: '保存失败' } }, 500);
 
-  return json({ user: toPublicUser(row as never) });
-});
+    return json({ user: toPublicUser(row as never) });
+  }),
+);

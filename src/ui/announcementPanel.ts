@@ -16,10 +16,8 @@ export class AnnouncementPanel {
     this.el.classList.remove('hidden');
     this.el.innerHTML = `<div class="card announcement-card"><h3>${t('announcement.title')}</h3><div id="announcement-list" class="announcement-list"></div><div class="card-actions"><button id="announcement-close" class="ghost" type="button">${t('common.close')}</button></div></div>`;
     const close = document.getElementById('announcement-close');
-    if (close) close.addEventListener('click', () => this.close());
-    this.el.addEventListener('click', (event) => {
-      if (event.target === this.el) this.close();
-    });
+    if (close) close.addEventListener('click', this.handleClose);
+    this.el.addEventListener('click', this.handleOverlayClick);
     document.addEventListener('keydown', this.handleKey);
 
     const listEl = document.getElementById('announcement-list');
@@ -44,8 +42,17 @@ export class AnnouncementPanel {
 
   close() {
     this.el.classList.add('hidden');
+    this.el.removeEventListener('click', this.handleOverlayClick);
     document.removeEventListener('keydown', this.handleKey);
+    const close = document.getElementById('announcement-close');
+    if (close) close.removeEventListener('click', this.handleClose);
   }
+
+  private handleClose = () => this.close();
+
+  private handleOverlayClick = (event: Event) => {
+    if (event.target === this.el) this.close();
+  };
 
   private handleKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') this.close();

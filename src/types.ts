@@ -116,7 +116,7 @@ export interface CoinLayer {
   label: (adcode: string) => { text: string; price: boolean; noBg: boolean } | null; // 中心标签（price=价格，noBg=隐藏衬底，null = 不显示）
 }
 
-/** 每日竞速省名标签：省级 adcode → 简称文本 + 对错配色 */
+/** 省级练习省名标签：省级 adcode → 简称文本 + 对错配色 */
 export interface ProvinceLabel {
   text: string;
   color: 'green' | 'red';
@@ -128,6 +128,6 @@ export interface RenderState {
   labelZoomThreshold?: number; // 地名标签显示倍率阈值
   disableTooltip?: boolean; // 记忆模式：关闭提示
   coin?: CoinLayer; // 无尽闯关：金币绿色深浅着色 + 中心金币/地名标签
-  provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 每日竞速/省级练习：已作答省的省名标签（null = 不显示）
+  provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 省级练习：已作答省的省名标签（null = 不显示）
   showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）
 }

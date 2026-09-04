@@ -1,8 +1,8 @@
-import { verifySession } from '../_lib/auth';
 import { json, readJson, handle } from '../_lib/http';
+import { requireSession } from '../_lib/guard';
 import { isBetter, validateScore } from '../_lib/validate';
 
-type ScoreMode = 'self' | 'click' | 'endless' | 'daily';
+type ScoreMode = 'self' | 'click' | 'endless';
 
 interface ExistingRow {
   id: number;
@@ -18,9 +18,7 @@ function upsertSql(mode: ScoreMode): string {
     mode === 'endless'
       ? `WHERE excluded.coins > leaderboard.coins
          OR (excluded.coins = leaderboard.coins AND COALESCE(excluded.level,1) > COALESCE(leaderboard.level,1))`
-      : mode === 'daily'
-        ? `WHERE excluded.elapsed_ms < leaderboard.elapsed_ms` // 每日竞速全对才上榜，仅比用时
-        : `WHERE (leaderboard.scope_province = '' AND (
+      : `WHERE (leaderboard.scope_province = '' AND (
             excluded.correct > leaderboard.correct
             OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)))
          OR (leaderboard.scope_province <> '' AND excluded.elapsed_ms < leaderboard.elapsed_ms)`;
@@ -38,42 +36,43 @@ function upsertSql(mode: ScoreMode): string {
       ${conflict}`;
 }
 
-export const onRequestPost = handle(async (context) => {
-  const env = context.env as { DB: import('@cloudflare/workers-types').D1Database };
-  const session = await verifySession(context.request, env, Date.now());
-  if (!session) return json({ error: { code: 'unauthorized', message: '未登录' } }, 401);
+export const onRequestPost = handle(
+  requireSession(async (context) => {
+    const env = context.env;
+    const session = context.session;
 
-  const body = await readJson<unknown>(context.request);
-  const score = validateScore(body);
+    const body = await readJson<unknown>(context.request);
+    const score = validateScore(body);
 
-  const scope = score.scopeProvince ?? '';
-  const userId = session.user.id;
+    const scope = score.scopeProvince ?? '';
+    const userId = session.user.id;
 
-  const existing = await env.DB.prepare(
-    'SELECT id, coins, level, correct, elapsed_ms FROM leaderboard WHERE user_id = ? AND mode = ? AND scope_province = ?',
-  )
-    .bind(userId, score.mode, scope)
-    .first<ExistingRow>();
-
-  if (existing && !isBetter(score, existing)) {
-    return json({ status: 'kept' });
-  }
-
-  const sql = upsertSql(score.mode);
-  await env.DB.prepare(sql)
-    .bind(
-      userId,
-      score.mode,
-      scope,
-      score.scopeLabel,
-      score.totalUnits,
-      score.correct,
-      score.elapsedMs,
-      score.mode === 'endless' ? (score.coins ?? 0) : null,
-      score.mode === 'endless' ? (score.level ?? 1) : null,
-      score.finishedAt,
+    const existing = await env.DB.prepare(
+      'SELECT id, coins, level, correct, elapsed_ms FROM leaderboard WHERE user_id = ? AND mode = ? AND scope_province = ?',
     )
-    .run();
+      .bind(userId, score.mode, scope)
+      .first<ExistingRow>();
 
-  return json({ status: existing ? 'improved' : 'added' });
-});
+    if (existing && !isBetter(score, existing)) {
+      return json({ status: 'kept' });
+    }
+
+    const sql = upsertSql(score.mode);
+    await env.DB.prepare(sql)
+      .bind(
+        userId,
+        score.mode,
+        scope,
+        score.scopeLabel,
+        score.totalUnits,
+        score.correct,
+        score.elapsedMs,
+        score.mode === 'endless' ? (score.coins ?? 0) : null,
+        score.mode === 'endless' ? (score.level ?? 1) : null,
+        score.finishedAt,
+      )
+      .run();
+
+    return json({ status: existing ? 'improved' : 'added' });
+  }),
+);
