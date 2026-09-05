@@ -97,6 +97,10 @@ export class MapRenderer {
   private zoom = 1;
   /** 下钻前全国视图快照：从全国下钻某省时记录 center/zoom，返回全国（backToNation）时恢复。 */
   private savedNationView: { center: [number, number]; zoom: number } | null = null;
+  /** 世界视图记忆：进入世界前记录世界地图上次的全国视野（center/zoom），切回世界时恢复。 */
+  private savedWorldView: { center: [number, number]; zoom: number } | null = null;
+  /** 中国视图记忆：离开中国切世界前记录当时的全国视野，切回中国时恢复（省级/地级共用，center/zoom 互换兼容）。 */
+  private savedChinaView: { center: [number, number]; zoom: number } | null = null;
   private labelMode: 'none' | 'city' = 'none';
   private labelScaleApplied = 1; // 最近一次应用的标签缩放（缩放变化时触发重绘）
   private labelUpdateTimer: number | null = null;
@@ -288,9 +292,41 @@ export class MapRenderer {
     return DEFAULT_VIEWS[mapName] ?? { center: [104.3, 28.5], zoom: 1 };
   }
 
-  /** 把相机复位到当前地图的默认居中完整视图（地图切换后必须调用，保证整图正中显示）。 */
-  private resetDefaultView(mapName = this.currentMapName()) {
-    const v = this.defaultViewFor(mapName);
+  /** 切走某地图族前，把当前全国视野记入对应记忆槽（仅全国层：钻省状态不参与，此时以钻省前快照为准）。 */
+  private snapshotViewBeforeLeave() {
+    const mapName = this.currentMapName();
+    if (mapName === 'world') {
+      this.savedWorldView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
+    } else {
+      // 钻省中切走：记忆的是钻省前的全国视野（省画面切走不应成为「返回位置」）
+      if (this.viewProvince !== null && this.savedNationView) {
+        this.savedChinaView = {
+          center: [this.savedNationView.center[0], this.savedNationView.center[1]],
+          zoom: this.savedNationView.zoom,
+        };
+      } else {
+        // china 与 china-provinces 数据范围一致，center/zoom 可互换 → 中国单槽共享
+        this.savedChinaView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
+      }
+    }
+  }
+
+  /** 进入某地图族时应用记忆：有记忆则恢复，无则默认居中。仅设字段，不 setOption。 */
+  private pickViewFor(mapName: string): { center: [number, number]; zoom: number } {
+    if (mapName === 'world') {
+      if (this.savedWorldView) {
+        return { center: [this.savedWorldView.center[0], this.savedWorldView.center[1]], zoom: this.savedWorldView.zoom };
+      }
+    } else if (this.savedChinaView) {
+      return { center: [this.savedChinaView.center[0], this.savedChinaView.center[1]], zoom: this.savedChinaView.zoom };
+    }
+    const def = this.defaultViewFor(mapName);
+    return { center: [def.center[0], def.center[1]], zoom: def.zoom };
+  }
+
+  /** 应用地图相机（含记忆恢复），并 setOption 生效。 */
+  private applyMapCamera(mapName = this.currentMapName()) {
+    const v = this.pickViewFor(mapName);
     this.center = [v.center[0], v.center[1]];
     this.zoom = v.zoom;
     this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
@@ -381,38 +417,38 @@ export class MapRenderer {
     const nextDrill = opts.allowDrill ?? false;
     if (this.provinceMode === on && this.provinceModeInset === nextInset && this.provinceModeDrill === nextDrill && !this.worldMode) return;
     const wasWorld = this.worldMode;
+    // 离开世界（进入中国）：先把世界上次视野存入世界槽（此时仍处于世界状态，快照的是世界画面）
+    if (wasWorld) this.snapshotViewBeforeLeave();
     this.worldMode = false;
     this.provinceMode = on;
     this.provinceModeInset = nextInset;
     this.provinceModeDrill = nextDrill;
-    let resetFromDrill = false;
+    let restoreCamera = false;
     if (wasWorld) {
-      // 离开世界模式：复位到目标地图默认居中视野（世界无下钻状态）
+      // 世界 → 中国：恢复中国记忆（省级/地级共用一槽），无记忆则默认居中
       this.savedNationView = null;
       this.viewProvince = null;
       this.labelMode = 'none';
-      const def = this.defaultViewFor(this.currentMapName());
-      this.center = [def.center[0], def.center[1]];
-      this.zoom = def.zoom;
-      resetFromDrill = true; // 地图名从 world → china/china-provinces，末尾显式写回复位后的相机
+      const v = this.pickViewFor(this.currentMapName());
+      this.center = [v.center[0], v.center[1]];
+      this.zoom = v.zoom;
+      restoreCamera = true; // 地图名从 world → china/china-provinces，末尾显式写回相机
     } else if (this.viewProvince) {
       // 离开钻省状态回到全国：若存在下钻前视图快照则恢复之（否则回默认全国视图）
       const saved = this.savedNationView;
       this.savedNationView = null;
       this.viewProvince = null;
-      const def = this.defaultViewFor(this.currentMapName());
-      this.center = saved ? saved.center : def.center;
-      this.zoom = saved ? saved.zoom : def.zoom;
+      this.center = saved ? saved.center : this.defaultViewFor(this.currentMapName()).center;
+      this.zoom = saved ? saved.zoom : this.defaultViewFor(this.currentMapName()).zoom;
       this.labelMode = 'none';
-      resetFromDrill = true;
+      restoreCamera = true;
     }
     if (!this.worldMode && this.provinceMode && this.provinceModeInset) this.inset.show();
     else this.inset.hide();
     if (this.lastState) this.render(this.lastState);
-    if (resetFromDrill) {
-      // render 可能因地图切换（china ↔ china-provinces）重置相机，显式写回恢复的下钻前视图
-      this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
-      this.onZoomChange?.();
+    if (restoreCamera) {
+      // render 可能因地图切换（china ↔ china-provinces）重置相机，显式写回目标相机
+      this.applyMapCamera(this.currentMapName());
     }
   }
 
@@ -420,24 +456,24 @@ export class MapRenderer {
   setWorldMode(on: boolean) {
     if (this.worldMode === on && !this.provinceMode) return;
     const wasWorld = this.worldMode;
+    // 跨越世界/中国边界：先把当前族（离开方）的全国视野存入其记忆槽
+    if (on !== wasWorld) this.snapshotViewBeforeLeave();
     this.worldMode = on;
     this.provinceMode = false;
     this.provinceModeInset = false;
     this.provinceModeDrill = false;
     this.inset.hide();
-    // 世界无「下钻省」概念；切走省级地级视图状态时复位到对应地图默认视野
-    this.savedNationView = null;
-    this.viewProvince = null;
-    if (on || wasWorld) {
-      // 进入世界或从世界切走（到省级/地级中国）：一律复位为目的地地图的默认居中视图
-      const def = this.defaultViewFor(this.currentMapName());
-      this.center = [def.center[0], def.center[1]];
-      this.zoom = def.zoom;
+    if (on !== wasWorld) {
+      // 进入目标族：恢复其记忆（无则默认居中）
+      this.savedNationView = null;
+      this.viewProvince = null;
       this.labelMode = 'none';
+      const v = this.pickViewFor(this.currentMapName());
+      this.center = [v.center[0], v.center[1]];
+      this.zoom = v.zoom;
     }
     if (this.lastState) this.render(this.lastState);
-    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
-    this.onZoomChange?.();
+    this.applyMapCamera(this.currentMapName());
     this.onViewChange?.();
   }
 
@@ -871,7 +907,7 @@ export class MapRenderer {
           data: labelData,
         },
         {
-          // 省级练习省名标签：已作答省的简称，始终显示
+          // 省级练习省名标签：已作答省的简称，始终显示。字号固定为最大（scale=1），不随缩放缩小。
           id: 'province-labels',
           type: 'custom',
           coordinateSystem: 'geo',
@@ -882,7 +918,7 @@ export class MapRenderer {
           renderItem: (_params, api) => {
             const parsed = parseLabelValue(api);
             if (!parsed) return { type: 'group', children: [] };
-            const scale = labelScale(this.zoom);
+            const scale = 1; // 省名标签恒按放大足够时的样式渲染（字号/衬底/间距统一最大）
             return buildLabelGraphic({
               ...parsed,
               scale,
@@ -905,9 +941,12 @@ export class MapRenderer {
     this.appliedMapName = mapName;
     this.chart.setOption(option, mapChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
     if (mapChanged) {
-      // 地图切换（世界↔省级↔地级）时整图复位到该地图默认居中视图：
-      // replaceMerge 重建的 geo 不会继承相机，且切换绝不能沿用上一张地图的视野（会把地图带偏/带出屏幕）。
-      this.resetDefaultView(mapName);
+      // 地图切换（世界↔省级↔地级）：replaceMerge 重建的 geo 不继承相机，
+      // 需显式写回当前相机。this.center/zoom 由调用方（setWorldMode/setProvinceMode/backToNation/drill）
+      // 在 render 前已按「跨族记忆恢复或默认居中」设置好，此处不得再强制复位默认，
+      // 否则会覆盖刚恢复的切回位置（如世界→中国恢复上次视野）。
+      this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+      this.onZoomChange?.();
     }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
     if (this.provinceMode && this.provinceModeInset) this.inset.show();

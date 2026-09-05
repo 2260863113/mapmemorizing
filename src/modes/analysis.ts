@@ -34,7 +34,9 @@ export class AnalysisMode extends BaseMode {
     this.granularity = g;
     this.persistGranularity();
     this.returnToProvince = false;
-    this.ctx.renderer.backToNation();
+    // 仅当处于钻省视图时先返回全国（清除钻省态并恢复钻省前全国视野）；
+    // 普通全国视图的缩放/拖动位置保留，由渲染器跨世界/中国记忆槽在切回时恢复。
+    if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
     this.enter();
   }
 
