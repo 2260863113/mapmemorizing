@@ -333,7 +333,7 @@ export class MapRenderer {
     this.onZoomChange?.();
   }
 
-  /** 拖动钳制：roam 中按帧钳制，地图内容被拖出视口时立即纠正（拖到边界即停住）。 */
+  /** 拖动钳制：roam 中按帧钳制，地图被拖出允许范围时立即纠正。全国视图整图须留在视口内；放大浏览允许最多半张地图移出视口（地图中心不离开视口）。 */
   private schedulePanClamp() {
     if (this.panClampRaf !== null) return; // 已有待执行帧
     this.panClampRaf = requestAnimationFrame(() => {
@@ -342,7 +342,7 @@ export class MapRenderer {
     });
   }
 
-  /** 若地图内容超出视口（被拖出/残留偏移），按内容 bbox 钳制回视口内。 */
+  /** 若地图内容超出允许移动范围（全国视图整体出视口 / 放大时地图中心出视口），按内容 bbox 钳制回来。 */
   private clampPan() {
     const mapName = this.currentMapName();
     const bbox = MAP_BBOX[mapName];
@@ -371,6 +371,8 @@ export class MapRenderer {
     const innerH = chartH - M * 2;
     const cw = maxX - minX;
     const chh = maxY - minY;
+    const ccx = (minX + maxX) / 2; // 地图内容中心（像素）
+    const ccy = (minY + maxY) / 2;
     let dx = 0;
     let dy = 0;
     if (cw <= innerW) {
@@ -378,16 +380,18 @@ export class MapRenderer {
       if (minX < M) dx = M - minX;
       else if (maxX > chartW - M) dx = chartW - M - maxX;
     } else {
-      // 内容比视口宽（放大浏览）：任一侧不允许露出空白（内容须盖满视口）
-      if (minX > M) dx = M - minX;
-      else if (maxX < chartW - M) dx = chartW - M - maxX;
+      // 内容比视口宽（放大浏览）：允许任一侧最多半张地图移出视口（露白），
+      // 即地图中心须落在视口内（中心贴到视口边缘时恰好半张出屏）；中心移出视口则拉回。
+      if (ccx < M) dx = M - ccx;
+      else if (ccx > chartW - M) dx = chartW - M - ccx;
     }
     if (chh <= innerH) {
       if (minY < M) dy = M - minY;
       else if (maxY > chartH - M) dy = chartH - M - maxY;
     } else {
-      if (minY > M) dy = M - minY;
-      else if (maxY < chartH - M) dy = chartH - M - maxY;
+      // 放大浏览：纵向同样允许最多半张移出视口（地图中心须在视口内）
+      if (ccy < M) dy = M - ccy;
+      else if (ccy > chartH - M) dy = chartH - M - ccy;
     }
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
     // 内容需平移 (dx, dy) 像素：视口中心对应的数据坐标应取当前中心反向平移后的位置
