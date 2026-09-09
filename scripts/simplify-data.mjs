@@ -1,15 +1,18 @@
-// 离线简化中国地图成品（与 build-data.mjs 的 safeSimplify 同一套逻辑）：
-// 对 public/data/china_units.geojson 与 china_provinces.geojson 施加更大简化容差，
+// 离线简化中国地图数据（与 build-data.mjs 的 safeSimplify 同一套逻辑）：
+// 从 .backup-data/ 的高精度原始成品出发，以指定容差重建简化成品，
 // 降低运行时拖动/缩放的每帧重绘成本（地级卡顿根因 = 12.6 万点，见 probe-drag-perf 实测）。
 //
-// 决策背景（grill-rounds.log 2026-09-09）：Q2 容差 0.012（点 -58%，面积保真 ≥99.98%），
-// Q5 离线简化现有成品（不联网、不动上游 DataV）；原成品已备份到 .backup-data/，可 --restore 还原。
+// 双档策略（grill-rounds.log 2026-09-09 续）：
+//   china_units.geojson        = fine 档 tolerance 0.02（zoom ≥ 10 与宽省钻取用，点 -74%）
+//   china_units_coarse.geojson = coarse 档 tolerance 0.03（zoom < 10 大幅简化，点 -82%）
+//   china_provinces.geojson    = 省级 tolerance 0.02（省级地图已不卡，保持单档）
+// renderer 按 zoom 阈值在 'china'(fine) / 'china-coarse' 之间热切换。
 //
 // 用法：
-//   node scripts/simplify-data.mjs                 # tolerance=0.012（默认，当前口径）
-//   node scripts/simplify-data.mjs --tolerance=0.02  # 试其它档位
-//   node scripts/simplify-data.mjs --restore         # 从 .backup-data/ 还原原成品
-//   node scripts/simplify-data.mjs --check           # 只跑 check-data.mjs 校验，不简化
+//   node scripts/simplify-data.mjs                   # 按上方默认重建全部三件
+//   node scripts/simplify-data.mjs --tolerance=0.05   # 临时试其它容差（等价 --tolerance=0.05 试算不入库请直接改上表或手动）
+//   node scripts/simplify-data.mjs --restore          # 从 .backup-data/ 还原高精度原始（覆盖三件）
+//   node scripts/simplify-data.mjs --check            # 只跑 check-data.mjs 校验，不简化
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,14 +22,19 @@ import { spawnSync } from 'node:child_process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = path.join(ROOT, 'public', 'data');
 const BAK_DIR = path.join(ROOT, '.backup-data'); // 高精度成品备份（不进 public/dist，避免被部署暴露）
-const TARGETS = ['china_units.geojson', 'china_provinces.geojson'];
-const DEFAULT_TOLERANCE = 0.012;
+
+/** 目标清单：从高精度源以指定容差重建。 */
+const PLAN = [
+  { src: 'china_units.geojson', out: 'china_units.geojson', tolerance: 0.02, note: '地级 fine 档（zoom≥10 / 宽省钻取）' },
+  { src: 'china_units.geojson', out: 'china_units_coarse.geojson', tolerance: 0.03, note: '地级 coarse 档（zoom<10 大幅简化）' },
+  { src: 'china_provinces.geojson', out: 'china_provinces.geojson', tolerance: 0.02, note: '省级（单档）' },
+];
+// .backup-data 中需保留的高精度源（与 PLAN.src 对应）
+const SRC_FILES = [...new Set(PLAN.map((p) => p.src))];
 
 const args = process.argv.slice(2);
 const restore = args.includes('--restore');
 const checkOnly = args.includes('--check');
-const tolArg = args.find((a) => a.startsWith('--tolerance='));
-const tolerance = tolArg ? Number(tolArg.split('=')[1]) : DEFAULT_TOLERANCE;
 
 // ---------- 几何工具（与 build-data.mjs 保持一致） ----------
 function bboxOf(feature) {
@@ -99,15 +107,21 @@ function areaOf(gj) {
 
 // ---------- 还原 ----------
 if (restore) {
-  console.log('[还原] 从 .backup-data/ 恢复原成品...');
-  for (const name of TARGETS) {
-    const bak = path.join(BAK_DIR, name);
+  console.log('[还原] 从 .backup-data/ 恢复高精度原始成品...');
+  for (const src of SRC_FILES) {
+    const bak = path.join(BAK_DIR, src);
     if (!fs.existsSync(bak)) {
-      console.warn(`  ⚠ 缺少备份 .backup-data/${name}，跳过`);
+      console.warn(`  ⚠ 缺少备份 .backup-data/${src}，跳过`);
       continue;
     }
-    fs.copyFileSync(bak, path.join(OUT_DIR, name));
-    console.log(`  ✓ ${name} ← .backup-data/${name}`);
+    fs.copyFileSync(bak, path.join(OUT_DIR, src));
+    console.log(`  ✓ ${src} ← .backup-data/${src}`);
+  }
+  // 移除 coarse 档（高精度下无 coarse 概念；由 build/简化重新生成）
+  const coarseFile = path.join(OUT_DIR, 'china_units_coarse.geojson');
+  if (fs.existsSync(coarseFile)) {
+    fs.rmSync(coarseFile);
+    console.log(`  ✗ 删除 ${coarseFile}（coarse 档由简化脚本重建）`);
   }
   runCheck();
   process.exit(0);
@@ -118,27 +132,30 @@ if (checkOnly) {
   process.exit(0);
 }
 
-// ---------- 简化 ----------
-console.log(`[简化] tolerance=${tolerance}（跨度 < 0.2° 的面跳过；退化回退）`);
-for (const name of TARGETS) {
-  const file = path.join(OUT_DIR, name);
-  const gj = JSON.parse(fs.readFileSync(file, 'utf8'));
+// ---------- 简化（从高精度源重建） ----------
+for (const { src, out, tolerance, note } of PLAN) {
+  const bak = path.join(BAK_DIR, src);
+  if (!fs.existsSync(bak)) {
+    console.error(`  ⚠ 缺少高精度源 .backup-data/${src}，跳过（先 --restore 或重跑 build-data）`);
+    continue;
+  }
+  const gj = JSON.parse(fs.readFileSync(bak, 'utf8'));
   const before = countPoints(gj);
   const beforeArea = areaOf(gj);
-  const beforeKB = fs.statSync(file).size / 1024;
+  const beforeKB = fs.statSync(bak).size / 1024;
 
-  const out = {
+  const outGj = {
     ...gj,
     features: gj.features.map((f) => ({ ...f, geometry: safeSimplify(f, tolerance).geometry })),
   };
-  const after = countPoints(out);
-  const afterArea = areaOf(out);
-  const json = JSON.stringify(out);
+  const after = countPoints(outGj);
+  const afterArea = areaOf(outGj);
+  const json = JSON.stringify(outGj);
   const afterKB = json.length / 1024;
   const areaFidelity = (100 * afterArea) / beforeArea;
 
-  fs.writeFileSync(file, json);
-  console.log(`  ${name}`);
+  fs.writeFileSync(path.join(OUT_DIR, out), json);
+  console.log(`[简化] ${out}  ← ${src} @ tol=${tolerance}（${note}）`);
   console.log(`    点: ${before.points.toLocaleString()} → ${after.points.toLocaleString()} (${(-100 * (1 - after.points / before.points)).toFixed(0)}%) | 环: ${before.rings} → ${after.rings}`);
   console.log(`    面积保真: ${areaFidelity.toFixed(2)}% | 文件: ${beforeKB.toFixed(0)}KB → ${afterKB.toFixed(0)}KB`);
 }

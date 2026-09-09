@@ -19,6 +19,7 @@ describe('scopedUnits', () => {
     allUnits: [],
     provinces: [],
     geoJson: null,
+    coarseGeoJson: null,
     provincesGeoJson: null,
     countries: [],
     worldGeoJson: null,

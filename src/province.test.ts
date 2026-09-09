@@ -20,6 +20,7 @@ describe('buildProvinceAdjacency', () => {
       allUnits: [],
       provinces: [p('p1', '省一'), p('p2', '省二')],
       geoJson: null,
+      coarseGeoJson: null,
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
@@ -39,6 +40,7 @@ describe('buildProvinceAdjacency', () => {
       allUnits: [],
       provinces: [p('p1', '省一'), p('p2', '省二')],
       geoJson: null,
+      coarseGeoJson: null,
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
@@ -54,6 +56,7 @@ describe('provinceUnits', () => {
       allUnits: [],
       provinces: [p('450000', '广西壮族自治区'), p('110000', '北京市')],
       geoJson: null,
+      coarseGeoJson: null,
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
@@ -69,7 +72,7 @@ describe('provinceShortName', () => {
     const data: AppData = {
       units: [], allUnits: [],
       provinces: [p('450000', '广西壮族自治区')],
-      geoJson: null, provincesGeoJson: null,
+      geoJson: null, coarseGeoJson: null, provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
     };

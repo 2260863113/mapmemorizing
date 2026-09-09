@@ -233,4 +233,8 @@ interface MemoryState {
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略**：tolerance **0.012**（2026-09-09 起，自原 0.003 下调——地级 12.6 万点导致拖动逐帧重绘卡顿，0.012 下点 -58% 至约 5.3 万、面积保真 ≥99.98%），跨度 < 0.2° 的面（岛屿/小县级）跳过简化，简化结果退化时回退原始；离线简化/还原用 `scripts/simplify-data.mjs`（原高精度成品备份为 `*.precise.bak`），`scripts/check-data.mjs` 提供逐面校验。
+7. **数据简化策略（双档）**：地级地图按 zoom 分两档（2026-09-09 二次下调，替代原单档 0.012）——
+   - **fine 档** `china_units.geojson`：tolerance 0.02（点 -74% 至约 3.3 万、面积保真 99.98%），zoom ≥ 10 或已钻省（下钻聚焦看细节）时使用；
+   - **coarse 档** `china_units_coarse.geojson`：tolerance 0.03（点 -82% 至约 2.2 万、面积保真 99.91%），未钻省且 zoom < 10（全国全景 + 中度放大）时使用——该档全国缩放边界偏差 <0.6px 不可感知，换取最大拖动余量；
+   - **省级** `china_provinces.geojson`：单档 tolerance 0.02（点 -49% 至约 1.25 万）。
+   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，两档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。跨度 < 0.2° 的面（岛屿/小县级）跳过简化，简化结果退化时回退原始；离线简化/还原用 `scripts/simplify-data.mjs`（高精度原始在 `.backup-data/`），`scripts/check-data.mjs` 提供逐面校验。

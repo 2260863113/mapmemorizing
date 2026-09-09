@@ -27,17 +27,21 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
+/** 地级双档阈值：未钻省且 zoom < 此值用 coarse 大幅简化档；zoom ≥ 此值或已钻省用 fine 档。 */
+const COARSE_ZOOM_MAX = 10;
 /** roam 拖拽钳制的边距（px）：地图内容至少留此边距在视口内，避免被拖出屏幕。 */
 const PAN_MARGIN = 24;
 /** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
+  'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 档与 fine 同数据范围
   'china-provinces': { center: [104.3, 28.5], zoom: 1 },
   world: { center: [0, -3.2], zoom: 1 },
 };
 /** 各地图数据 bbox（lng/lat，用于拖动钳制换算屏幕范围）。 */
 const MAP_BBOX: Record<string, [number, number, number, number]> = {
   china: [73.5, 3.4, 135.1, 53.6],
+  'china-coarse': [73.5, 3.4, 135.1, 53.6], // coarse 档与 fine 同数据范围
   'china-provinces': [73.5, 3.4, 135.1, 53.6],
   world: [-180, -90, 180, 83.6],
 };
@@ -129,6 +133,7 @@ export class MapRenderer {
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
+    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（zoom<10 大幅简化）
     echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：只渲染 35 个省面
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     this.inset = new InsetMap({
@@ -755,6 +760,14 @@ export class MapRenderer {
     if (this.labelUpdateTimer !== null) window.clearTimeout(this.labelUpdateTimer);
     this.labelUpdateTimer = window.setTimeout(() => {
       this.labelUpdateTimer = null;
+      // zoom 停止变化后：先按 zoom 档位决定是否换地级地图档（coarse/fine），再刷标签。
+      // 换档需完整 render（replaceMerge 重建 geo），不能只 applyLabelMode。
+      const settledMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
+      const applied = this.appliedMapName;
+      if (applied && settledMap !== applied && this.lastState) {
+        this.render(this.lastState);
+        return;
+      }
       this.applyLabelMode();
     }, LABEL_UPDATE_DELAY);
   }
@@ -765,8 +778,8 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode(state);
     this.labelScaleApplied = labelScale(this.zoom);
 
-    // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图
-    const mapName = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : 'china';
+    // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图（按 zoom/钻省切 coarse/fine 档）
+    const mapName = this.currentMapName();
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
     const eventData = this.worldMode
       ? this.buildWorldEventData()
@@ -1021,6 +1034,9 @@ export class MapRenderer {
     const current = this.currentGeoView();
     const startCenter = current.center;
     const startZoom = current.zoom;
+    // 动画期间 map 固定为起点档（避免帧间合并式切换地图名触发 ECharts 空白 bug）；
+    // 动画结束后（下方）统一走档位检查，若目标 zoom 跨档则 replaceMerge 换图。
+    const animMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
     const start = performance.now();
     let lastFrame = start - FOLLOW_FRAME_INTERVAL;
     const step = (now: number) => {
@@ -1036,13 +1052,19 @@ export class MapRenderer {
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
       this.center = center;
-      this.chart.setOption({ geo: { map: this.currentMapName(), center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      this.chart.setOption({ geo: { map: animMap, center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
       lastFrame = now;
       this.onZoomChange?.();
       if (t < 1) {
         this.followRaf = requestAnimationFrame(step);
       } else {
         this.followRaf = null;
+        // 动画结束：若目标 zoom 跨档（如 zoom 1→12 应从 coarse 切 fine），走完整 render 换图
+        const targetMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
+        if (targetMap !== this.appliedMapName && this.lastState) {
+          this.render(this.lastState);
+          return;
+        }
         this.applyLabelMode();
       }
     };
@@ -1130,9 +1152,17 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
-  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图，否则地级地图。 */
+  /** 地级档应使用的地图名（未钻省按 zoom 切档，已钻省固定 fine 档保边界细节）。 */
+  private chinaTierMapName(): string {
+    if (this.viewProvince !== null) return 'china';
+    return this.zoom < COARSE_ZOOM_MAX ? 'china-coarse' : 'china';
+  }
+
+  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图，否则地级地图（未钻省按 zoom 切 coarse/fine 档，已钻省固定 fine 档保边界细节）。 */
   private currentMapName(): string {
-    return this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : 'china';
+    if (this.worldMode) return 'world';
+    if (this.provinceMode) return 'china-provinces';
+    return this.chinaTierMapName();
   }
 
   currentProvince(): string | null {

@@ -59,6 +59,7 @@ describe('Matcher.bestUnit', () => {
     allUnits: [],
     provinces: [{ adcode: '520000', name: '贵州省', center: [0, 0] }],
     geoJson: null,
+    coarseGeoJson: null,
     provincesGeoJson: null,
     countries: [],
     worldGeoJson: null,

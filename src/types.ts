@@ -43,7 +43,8 @@ export interface AppData {
   units: Unit[]; // 真实记忆单位（不含装饰）
   allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
   provinces: Province[];
-  geoJson: unknown; // 地级 + 装饰面
+  geoJson: unknown; // 地级 + 装饰面（fine 档，zoom ≥ 10 / 宽省钻取）
+  coarseGeoJson: unknown; // 地级 + 装饰面（coarse 大幅简化档，zoom < 10）
   provincesGeoJson: unknown; // 省界图层（粗线）
   countries: CountryMeta[]; // 世界 195 答题国
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
