@@ -3,3 +3,7 @@ dist
 .wrangler
 .dev.vars
 DSH-Remote-v3.1.1.apk
+.backup-data
+public/data/*.precise.bak
+
+shot-compare

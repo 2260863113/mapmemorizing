@@ -1,6 +1,9 @@
 // 数据管线：从阿里云 DataV.GeoAtlas 下载全国地级行政区边界，
 // 合并为单个 GeoJSON + 元数据表（含 BFS 邻接）+ 省界图层 + 省直辖县级填充面（补齐地图空白）。
-// 用法：node scripts/build-data.mjs [--no-simplify] [--tolerance=0.003]
+// 用法：node scripts/build-data.mjs [--no-simplify] [--tolerance=0.012]
+// 注意：默认容差 0.012 为当前性能口径（2026-09-09 起，见 grill-rounds.log）。
+//   原 0.003 高精度口径导致拖动卡顿（地级 12.6 万点，每帧全量重绘）；
+//   离线简化/还原用 scripts/simplify-data.mjs，成品已备份 *.precise.bak。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -204,7 +207,7 @@ for (let i = 0; i < units.length; i++) {
 // ---------- 几何简化（可选，小面跳过 + 退化回退） ----------
 const useSimplify = !process.argv.includes('--no-simplify');
 const toleranceArg = process.argv.find((a) => a.startsWith('--tolerance='));
-const tolerance = toleranceArg ? Number(toleranceArg.split('=')[1]) : 0.003;
+const tolerance = toleranceArg ? Number(toleranceArg.split('=')[1]) : 0.012;
 if (useSimplify) {
   console.log(`[简化] tolerance=${tolerance}（跨度 < 0.2° 的面跳过）`);
   for (const f of features) {
