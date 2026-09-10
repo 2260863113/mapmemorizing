@@ -119,7 +119,7 @@ if (provGeo) {
   console.log('（尚未生成）');
 }
 
-console.log('\n=== 地级无损档（zoom ≥ 10，100% 顶点；靠视口裁剪保证流畅） ===');
+console.log('\n=== 地级无损档（zoom ≥ 14，100% 顶点；靠视口裁剪保证流畅） ===');
 if (losslessTopo && losslessTopo.objects?.china) {
   const losslessGeo = feature(losslessTopo, losslessTopo.objects.china);
   console.log(`china_units_lossless.json: ${losslessGeo.features.length} 个 feature`);
@@ -165,126 +165,140 @@ if (hkmacGeo && hkmacGeo.features) {
 } else {
   problems.push('缺失 hkmac.geojson');
 }
-
-console.log('\n=== 相邻单位共享顶点（缝隙）检查 ===');
-// 独立于 scripts/fetch-cn-atlas.mjs 的闸门：这里直接对**已构建产物**逐档复检，
-// 防止有人手工改数据 / 跑错脚本导致缝隙回归。
+// === 相邻单位共享顶点（缝隙）检查 ===
+// 独立于 scripts/fetch-cn-atlas.mjs 的闸门：直接对**已构建产物**逐档复检，防缝隙回归。
 // 历史：装饰面曾单独成文件、不共享顶点 → 全国 42 对相邻 100% 有缝，此检查即为防其回归。
 //
-// 相邻判定必须是「沿边界相邻」，不能是「任意两顶点距离 ≤1km」：
-// 后者会把**角点相接**误判为相邻。实例：三亚市(460200) 与 五指山市(469001) 并不接壤
-// （中间隔着保亭/乐东，units.json 里二者互不为邻居），边界最小间距 1.10km，
-// 但各有一个角点相距 0.57km → 旧判据报「相邻却零共享顶点」的假缝隙。
-// 真实相邻（含数字化错开）会让**一整段**边界贴近，产生远多于 3 个近邻顶点；
-// 角点相接只产生 1~2 个。故要求 ≥3 个顶点落在对方**边界**（点到线段，非点到点）1km 内。
+// 判据只依赖 units.json 的 neighbors 字段（由管线用 fine 档几何 booleanIntersects 生成），
+// **不做任何几何距离/容差判断**。原因：任何「多近才算相邻」的阈值都必然误报 ——
+// 实测把「零共享」与「有共享」两组按近邻顶点数或贴合长度排序，两组分布都重叠，找不到干净阈值。
+// 典型误报：凉山彝族自治州(513400)↔曲靖市(530300)（几何最近 0.645km，但 cn-atlas 源拓扑里
+// 共享 0 条 arc，units.json 里也互不为邻居）、三亚市(460200)↔五指山市(469001)（同理）。
+// 而 neighbors 是**结构性**事实，无歧义。
 {
-  const CELL = 0.05;
-  const TOL_KM = 1.0;
-  const MIN_NEAR_PTS = 3;
-  const kmPerDegLat = 111.32;
-  const toPoints = (f) => {
-    const out = [];
-    const walk = (c) => {
-      if (!Array.isArray(c)) return;
-      if (Array.isArray(c[0]) && typeof c[0][0] === 'number') { for (const p of c) out.push(p); return; }
-      for (const cc of c) walk(cc);
-    };
-    walk(f.geometry.coordinates);
-    return out;
-  };
-  /** 点到线段的最近距离（km） */
-  const ptSegKm = (p, a, b) => {
-    const kx = kmPerDegLat * Math.cos((p[1] * Math.PI) / 180);
-    const px = p[0] * kx, py = p[1] * kmPerDegLat;
-    const ax = a[0] * kx, ay = a[1] * kmPerDegLat;
-    const bx = b[0] * kx, by = b[1] * kmPerDegLat;
-    const dx = bx - ax, dy = by - ay;
-    const l2 = dx * dx + dy * dy;
-    let t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
-    if (t < 0) t = 0; else if (t > 1) t = 1;
-    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-  };
-  const checkTier = (label, fc) => {
-    const items = fc.features.map((f) => {
-      const pts = toPoints(f);
-      const grid = new Map();
-      for (const p of pts) {
-        const k = `${Math.floor(p[0] / CELL)},${Math.floor(p[1] / CELL)}`;
-        let arr = grid.get(k); if (!arr) { arr = []; grid.set(k, arr); }
-        arr.push(p);
-      }
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of pts) { if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0]; if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
-      return { ad: String(f.properties.adcode), name: f.properties.name, pts, grid,
-        set: new Set(pts.map((p) => p[0].toFixed(6) + ',' + p[1].toFixed(6))), bbox: [minX, minY, maxX, maxY],
-        coords: f.geometry.coordinates, segGrid: null };
-    });
-    /** 惰性构建线段栅格 */
-    const segGridOf = (it) => {
-      if (it.segGrid) return it.segGrid;
-      const g = new Map();
-      const push = (seg, key) => { let a = g.get(key); if (!a) { a = []; g.set(key, a); } a.push(seg); };
-      const walkRings = (c) => {
+  const tierFiles = [['fine', 'china_units.json'], ['coarse', 'china_units_coarse.json'],
+    ['ultra', 'china_units_ultra.json'], ['lossless', 'china_units_lossless.json']];
+  const meta = load('units.json');
+  const byAd = new Map((meta.units ?? []).map((u) => [String(u.adcode), u]));
+
+  for (const [label, name] of tierFiles) {
+    if (!fs.existsSync(path.join(DATA, name))) { problems.push('缺失 ' + name); continue; }
+    const topo = load(name);
+    if (!topo.objects?.china) { problems.push(name + ' 缺 objects.china'); continue; }
+    const fc = feature(topo, topo.objects.china);
+    const ptSet = new Map();
+    for (const f of fc.features ?? []) {
+      const ad = String(f.properties.adcode);
+      let s = ptSet.get(ad);
+      if (!s) { s = new Set(); ptSet.set(ad, s); }
+      const walk = (c) => {
         if (!Array.isArray(c)) return;
-        if (Array.isArray(c[0]) && typeof c[0][0] === 'number') {
-          for (let i = 0; i < c.length; i++) {
-            const a = c[i], b = c[(i + 1) % c.length];
-            const x0 = Math.floor(Math.min(a[0], b[0]) / CELL), x1 = Math.floor(Math.max(a[0], b[0]) / CELL);
-            const y0 = Math.floor(Math.min(a[1], b[1]) / CELL), y1 = Math.floor(Math.max(a[1], b[1]) / CELL);
-            if ((x1 - x0 + 1) * (y1 - y0 + 1) > 20000) { push([a, b], 'ALL'); continue; }
-            for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) push([a, b], `${x},${y}`);
-          }
-          return;
-        }
-        for (const cc of c) walkRings(cc);
+        if (Array.isArray(c[0]) && typeof c[0][0] === 'number') { for (const p of c) s.add(p[0].toFixed(6) + ',' + p[1].toFixed(6)); return; }
+        for (const cc of c) walk(cc);
       };
-      walkRings(it.coords);
-      it.segGrid = g;
-      return g;
-    };
-    /** A 的顶点中落在 B 边界 TOL_KM 内的个数 */
-    const countNear = (A, B) => {
-      const g = segGridOf(B);
-      let count = 0, minKm = Infinity;
-      for (const p of A.pts) {
-        const cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL);
-        let best = Infinity;
-        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-          const arr = g.get(`${cx + dx},${cy + dy}`); if (!arr) continue;
-          for (const [a, b] of arr) { const d = ptSegKm(p, a, b); if (d < best) best = d; }
-        }
-        const all = g.get('ALL');
-        if (all) for (const [a, b] of all) { const d = ptSegKm(p, a, b); if (d < best) best = d; }
-        if (best < minKm) minKm = best;
-        if (best <= TOL_KM) count++;
-      }
-      return { count, minKm };
-    };
+      walk(f.geometry.coordinates);
+    }
     let pairs = 0, zero = 0; const list = [];
-    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
-      const A = items[i], B = items[j];
-      if (A.bbox[0] - 0.01 > B.bbox[2] || B.bbox[0] - 0.01 > A.bbox[2]) continue;
-      if (A.bbox[1] - 0.01 > B.bbox[3] || B.bbox[1] - 0.01 > A.bbox[3]) continue;
-      const fb = countNear(A, B), fa = countNear(B, A);
-      const near = Math.max(fa.count, fb.count);
-      if (near < MIN_NEAR_PTS) continue; // 不相邻（含仅角点相接）
-      pairs++;
-      let shared = 0;
-      for (const p of A.pts) if (B.set.has(p[0].toFixed(6) + ',' + p[1].toFixed(6))) { shared++; break; }
-      if (shared === 0) { zero++; list.push(`${A.name}(${A.ad}) ↔ ${B.name}(${B.ad}) ${Math.min(fa.minKm, fb.minKm).toFixed(3)}km 近邻顶点 ${near}`); }
+    for (const [ad, u] of byAd) {
+      const A = ptSet.get(ad);
+      if (!A) continue;
+      for (const nb of u.neighbors ?? []) {
+        const bd = String(nb);
+        if (ad >= bd) continue; // 每对只查一次
+        const B = ptSet.get(bd);
+        if (!B) continue;
+        pairs++;
+        let shared = false;
+        for (const p of A) if (B.has(p)) { shared = true; break; }
+        if (!shared) { zero++; list.push(u.name + '(' + ad + ') ↔ ' + (byAd.get(bd)?.name ?? bd) + '(' + bd + ')'); }
+      }
     }
     const ok = zero === 0;
-    console.log(`  ${label.padEnd(22)} 相邻 ${String(pairs).padStart(4)} 对，缝隙 ${zero} ${ok ? '✅' : '❌'}`);
-    if (!ok) { problems.push(`${label} 存在 ${zero} 处相邻缝隙（可见裂缝）`); console.log('     ' + list.slice(0, 5).join('\n     ')); }
+    console.log('  ' + label.padEnd(22) + ' 邻接对 ' + String(pairs).padStart(4) + ' 个，零共享 ' + zero + ' ' + (ok ? '✅' : '❌'));
+    if (!ok) { problems.push(label + ' 有 ' + zero + ' 对相邻单位零共享顶点（可见缝隙）'); console.log('     ' + list.slice(0, 6).join('\n     ')); }
+  }
+}
+
+console.log('\n=== 空洞检查（多边形内环是否被相邻面填满）===');
+// 背景：cn-atlas 的 prefectures 里，地级面在县级/兵团市处**留有内环**（洞），
+// 由对应的县级面填入。若我们漏掉某个县级面，洞就无人填 → 地级视图露白
+// （2026-09 实测：漏了白杨市 659012 / 新星市 659011 → 塔城西侧 1147km²、哈密 561km² 空白）。
+// 另一类洞来自 `-clean` 缝合：它把相邻面重叠部分判给一方、给对方留洞，
+// 实测一次造出 79 个新洞且全部无人填（沿海 9 市各被咬掉一块）—— 该步骤已废弃。
+// 本检查即防这两类回归：**任何一个内环，都必须被别的面盖住**。
+{
+  const CELL = 0.004; // ≈440m
+  const polysOf = (g) => (!g ? [] : g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : []);
+  const holesOfGeom = (g) => { const o = []; for (const poly of polysOf(g)) for (let i = 1; i < poly.length; i++) o.push(poly[i]); return o; };
+  const ringAreaKm2 = (c) => {
+    const R = 6378.137, rad = (d) => (d * Math.PI) / 180;
+    let t = 0;
+    for (let i = 0; i < c.length; i++) {
+      const p1 = c[i], p2 = c[(i + 1) % c.length];
+      t += rad(p2[0] - p1[0]) * (2 + Math.sin(rad(p1[1])) + Math.sin(rad(p2[1])));
+    }
+    return Math.abs((t * R * R) / 2);
   };
-  // 逐档检查全部地级产物（装饰面已在内）
-  for (const [label, name] of [['fine', 'china_units.json'], ['coarse', 'china_units_coarse.json'],
-    ['ultra', 'china_units_ultra.json'], ['lossless', 'china_units_lossless.json']]) {
-    if (!fs.existsSync(path.join(DATA, name))) { problems.push(`缺失 ${name}`); continue; }
-    const topo = load(name);
-    if (!topo.objects?.china) { problems.push(`${name} 缺 objects.china`); continue; }
-    const fc = feature(topo, topo.objects.china);
-    checkTier(label, fc);
+  /** 在给定小 bbox 内栅格化几何 */
+  const rasterIn = (g, bbox, W, H) => {
+    const m = new Uint8Array(W * H);
+    for (const poly of polysOf(g)) {
+      for (let ri = 0; ri < poly.length; ri++) {
+        const r = poly[ri];
+        let minY = Infinity, maxY = -Infinity;
+        for (const p of r) { if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
+        if (maxY < bbox[1] || minY > bbox[3]) continue;
+        const gy0 = Math.max(0, Math.floor((minY - bbox[1]) / CELL)), gy1 = Math.min(H - 1, Math.ceil((maxY - bbox[1]) / CELL));
+        for (let gy = gy0; gy <= gy1; gy++) {
+          const yc = bbox[1] + (gy + 0.5) * CELL; const xs = [];
+          for (let i = 0; i < r.length; i++) {
+            const a = r[i], b = r[(i + 1) % r.length];
+            if ((a[1] > yc) !== (b[1] > yc)) xs.push(a[0] + ((yc - a[1]) * (b[0] - a[0])) / (b[1] - a[1]));
+          }
+          if (xs.length < 2) continue; xs.sort((p, q) => p - q);
+          for (let k = 0; k + 1 < xs.length; k += 2) {
+            const gx0 = Math.max(0, Math.floor((xs[k] - bbox[0]) / CELL)), gx1 = Math.min(W - 1, Math.ceil((xs[k + 1] - bbox[0]) / CELL));
+            for (let gx = gx0; gx <= gx1; gx++) m[gy * W + gx] = 1;
+          }
+        }
+      }
+    }
+    return m;
+  };
+  for (const [label, file] of [['fine', 'china_units.json'], ['coarse', 'china_units_coarse.json'], ['ultra', 'china_units_ultra.json'], ['lossless', 'china_units_lossless.json']]) {
+    const topo = load(file);
+    const obj = topo?.objects?.china;
+    if (!obj) continue;
+    const gj = feature(topo, obj);
+    const feats = gj.features ?? [];
+    let holeCount = 0; const unfilled = [];
+    for (const f of feats) {
+      for (const h of holesOfGeom(f.geometry)) {
+        holeCount++;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const p of h) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+        const pad = 0.01;
+        const bbox = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+        const W = Math.max(2, Math.ceil((bbox[2] - bbox[0]) / CELL)), H = Math.max(2, Math.ceil((bbox[3] - bbox[1]) / CELL));
+        if (W * H > 3e7) continue; // 超大洞跳过（避免内存爆）
+        const hm = rasterIn({ type: 'Polygon', coordinates: [h] }, bbox, W, H);
+        const om = new Uint8Array(W * H);
+        for (const o of feats) {
+          if (String(o.properties.adcode) === String(f.properties.adcode)) continue;
+          const omi = rasterIn(o.geometry, bbox, W, H);
+          for (let i = 0; i < om.length; i++) if (omi[i]) om[i] = 1;
+        }
+        let hn = 0, unc = 0;
+        for (let i = 0; i < hm.length; i++) { if (!hm[i]) continue; hn++; if (!om[i]) unc++; }
+        if (hn > 0 && unc / hn > 0.05) {
+          const kk = (CELL * 111.32) * (CELL * 111.32 * Math.cos((((y0 + y1) / 2) * Math.PI) / 180));
+          unfilled.push(`${f.properties.name}(${f.properties.adcode}) 洞 ${ringAreaKm2(h).toFixed(0)}km² 中 ${(unc * kk).toFixed(0)}km² 无面覆盖 @ ${((x0 + x1) / 2).toFixed(3)},${((y0 + y1) / 2).toFixed(3)}`);
+        }
+      }
+    }
+    const ok = unfilled.length === 0;
+    console.log(`  ${label.padEnd(22)} 内环 ${String(holeCount).padStart(3)} 个，无人填 ${unfilled.length} ${ok ? '✅' : '❌'}`);
+    if (!ok) { problems.push(`${label} 有 ${unfilled.length} 个空洞无人覆盖（露白）`); console.log('     ' + unfilled.slice(0, 6).join('\n     ')); }
   }
 }
 

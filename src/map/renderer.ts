@@ -28,9 +28,9 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-/** 地级档阈值（三档：lossless 100% ≥10 / 次精细 fine 15% 2~10 / 最简略 ultra 4% <2）。 */
-const LOSSLESS_ZOOM_MIN = 10; // zoom ≥ 10 用无损档（100% 顶点，靠视口裁剪保证流畅）
-const ULTRA_ZOOM_MAX = 2; // zoom < 2 用 ultra 档（最简略）
+/** 地级档阈值（三档：lossless 100% ≥14 / 次精细 fine 15% 6~14 / 最简略 ultra 4% <6）。 */
+const LOSSLESS_ZOOM_MIN = 14; // zoom ≥ 14 用无损档（100% 顶点，靠视口裁剪保证流畅）
+const ULTRA_ZOOM_MAX = 6; // zoom < 6 用 ultra 档（最简略）
 /** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
@@ -49,7 +49,7 @@ const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> 
  * 为什么必需：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影范围，
  * 而同一地区不同简化档的 bbox 并不严格相同 —— 实测 ultra 档与省级粗档把南海诸岛
  * 最南端简化掉，纬度下界从 3.3974 变成 3.5349（高度少 0.1375°，约 15km）。
- * bbox 一变，投影比例与居中偏移就变，于是缩放跨 5x/10x 触发换档时整幅地图微移、
+ * bbox 一变，投影比例与居中偏移就变，于是缩放跨换档阈值触发换档时整幅地图微移、
  * 鼠标所指位置出现偏移。
  *
  * 用 boundingCoords 把投影范围钉成常量后，fine/coarse/ultra 与省级两档共用同一投影，
@@ -111,7 +111,7 @@ export class MapRenderer {
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
   private adcodeToUnit = new Map<string, Unit>();
-  /** 省界线两档（次精细档：zoom < 10；无损档：zoom ≥ 10）。 */
+  /** 省界线两档（次精细档：zoom < 14；无损档：zoom ≥ 14，与地级无损档阈值一致）。 */
   private provinceLinesFine: { adcode: string; coords: number[][] }[] = [];
   private provinceLinesRaw: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
@@ -162,11 +162,11 @@ export class MapRenderer {
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
     echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（保留注册，避免旧缓存引用）
-    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 2，大幅简化）
-    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // 地级无损档（zoom ≥ 10，100% 顶点）
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（次精细档，zoom < 10）
+    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 6，大幅简化）
+    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // 地级无损档（zoom ≥ 14，100% 顶点）
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（次精细档，zoom < 14）
     echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（coarse 4%，已弃用；保留注册避免旧缓存引用）
-    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // 省级地图（无损档，zoom ≥ 10）
+    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // 省级地图（无损档，zoom ≥ 14）
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     this.inset = new InsetMap({
       theme: () => this.theme(),
@@ -306,7 +306,7 @@ export class MapRenderer {
       // ECharts 滚轮/捏合缩放以鼠标为锚点，缩放时 geo 中心会**隐式移动**（锚点缩放）；
       // 但 zoom 事件的 payload 只含 zoom/totalZoom，不含 center（见 MapDraw.js 的
       // zoom dispatch：仅 {totalZoom, zoom, originX, originY}）。若只靠 payload 里的
-      // params.center 同步，this.center 会在缩放期间停留在旧值 —— 跨 5x/10x 换档时
+      // params.center 同步，this.center 会在缩放期间停留在旧值 —— 跨换档阈值时
       // render() 用这个旧 center 重建 geo，地图就会朝缩放锚点方向跳一下（十几像素）。
       // 因此这里直接从 geo 坐标系读 ECharts 已经更新好的**权威** center/zoom，而非依赖 payload。
       // 注：georoam 事件在 geoRoam action 处理完（updateCenterAndZoom 已写回 geo center）之后才触发，
@@ -557,7 +557,7 @@ export class MapRenderer {
     return out;
   }
 
-  /** 省界线当前档：zoom ≥ 10 用无损档，否则用次精细档（10x 以下始终次精细，不再降级到 coarse）。 */
+  /** 省界线当前档：zoom ≥ 14 用无损档，否则用次精细档（14x 以下始终次精细，不再降级到 coarse）。 */
   private activeProvinceLines(): { adcode: string; coords: number[][] }[] {
     return this.zoom >= LOSSLESS_ZOOM_MIN ? this.provinceLinesRaw : this.provinceLinesFine;
   }
@@ -918,7 +918,7 @@ export class MapRenderer {
             : this.buildRegionData(state),
         // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
         // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
-        // bbox 一变，投影比例与偏移就变 → 缩放跨 5x/10x 换档时整幅地图微移、鼠标所指位置偏移。
+        // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
         // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
         boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
       },
@@ -1255,7 +1255,7 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
-  /** 地级档应使用的地图名：无损 100%（≥10 或已钻省）→ 次精细 fine（2~10）→ 最简略 ultra（<2）。 */
+  /** 地级档应使用的地图名：无损 100%（≥14 或已钻省）→ 次精细 fine（6~14）→ 最简略 ultra（<6）。 */
   private chinaTierMapName(): string {
     if (this.viewProvince !== null) return 'china-lossless'; // 钻省用最精细档
     if (this.zoom >= LOSSLESS_ZOOM_MIN) return 'china-lossless';
@@ -1263,7 +1263,7 @@ export class MapRenderer {
     return 'china'; // 次精细（fine 15%）
   }
 
-  /** 省级档应使用的地图名（zoom ≥ 10 用无损档，10x 以下始终用次精细档）。 */
+  /** 省级档应使用的地图名（zoom ≥ 14 用无损档，14x 以下始终用次精细档）。 */
   private provinceTierMapName(): string {
     return this.zoom >= LOSSLESS_ZOOM_MIN ? 'china-provinces-raw' : 'china-provinces';
   }

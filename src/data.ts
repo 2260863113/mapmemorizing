@@ -51,10 +51,10 @@ export async function loadData(): Promise<AppData> {
     geoJson: topoToGeoJson(fineTopo),
     coarseGeoJson: topoToGeoJson(coarseTopo),
     ultraGeoJson: topoToGeoJson(ultraTopo),
-    losslessGeoJson: topoToGeoJson(losslessTopo), // 无损档（100% 顶点，zoom ≥ 10）
+    losslessGeoJson: topoToGeoJson(losslessTopo), // 无损档（100% 顶点，zoom ≥ 14）
     provincesGeoJson: provGeo,
     provincesCoarseGeoJson: provCoarseGeo,
-    provincesRawGeoJson: provRawTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 10）
+    provincesRawGeoJson: provRawTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 14）
     hkmacGeoJson: hkmacGeo, // 港澳放大框无压缩面（广东+香港+澳门）
     countries: worldMeta.countries,
     worldGeoJson: worldGeo,

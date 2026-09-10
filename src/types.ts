@@ -57,13 +57,13 @@ export interface AppData {
   units: Unit[]; // 真实记忆单位（不含装饰）
   allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
   provinces: Province[];
-  geoJson: unknown; // 地级 + 装饰面（fine 档，zoom ≥ 10 / 宽省钻取）
-  coarseGeoJson: unknown; // 地级 + 装饰面（coarse 档，5 ≤ zoom < 10）
-  ultraGeoJson: unknown; // 地级 + 装饰面（ultra 档，zoom < 5，大幅简化）
-  losslessGeoJson: unknown; // 地级 + 装饰面（无损档：100% 顶点，zoom ≥ 10；靠视口裁剪提速）
-  provincesGeoJson: unknown; // 省界图层（次精细档：zoom < 10）
+  geoJson: unknown; // 地级（fine 档，6 ≤ zoom < 14 / 宽省钻取）
+  coarseGeoJson: unknown; // 地级（coarse 档，已弃用；保留字段兼容旧数据）
+  ultraGeoJson: unknown; // 地级 (ultra 档，zoom < 6，大幅简化)
+  losslessGeoJson: unknown; // 地级（无损档：100% 顶点，zoom ≥ 14；靠视口裁剪提速）
+  provincesGeoJson: unknown; // 省界图层（次精细档：zoom < 14）
   provincesCoarseGeoJson: unknown; // 省界图层（coarse 4%，已弃用；保留字段兼容旧数据）
-  provincesRawGeoJson: unknown; // 省界图层（无损档：zoom ≥ 10，TopoJSON）
+  provincesRawGeoJson: unknown; // 省界图层（无损档：zoom ≥ 14，TopoJSON）
   hkmacGeoJson: unknown; // 港澳放大框无压缩面（广东+香港+澳门，始终最精细不简化）
   countries: CountryMeta[]; // 世界 195 答题国
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
