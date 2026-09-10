@@ -129,6 +129,7 @@ cn-atlas 的 `prefectures` 在新疆有两个面**不在** `units.json` 白名�
 - 地级五档与省级五档**全部以 TopoJSON 存储**，运行时 `topojson-client` 转 GeoJSON 后 `registerMap`（ECharts 不吃 TopoJSON）。**装饰面已并入拓扑，运行时不再单独请求 `china_decorative.geojson`**。
 - 运行期实际同步加载 14 个文件（`Promise.all` 并行）：地级五档（124 / 158 / 215 / 416 / 908KB）+ 省级五档（43 / 58 / 84 / 174 / 396KB）+ `hkmac.geojson` 125KB + 元数据 `units.json` 84KB / `countries.json` 30KB / `world.geojson` 298KB。合计 **3114KB**。
   - 对比：上一版（三档 + 省级两档 GeoJSON）为 3852KB —— 本轮**反而小了 738KB**，因为省级改用 TopoJSON。新增两档的净增量（地级 +574KB、省级 +232KB）远小于格式优化省下的量。
+  - **内存代价（实测，非估算）**：五档全部展开后地级 304,311 顶点 + 省级 121,729 顶点 = 426,040 顶点，`heapUsed` 增 **34.5MB**（约 85 字节/顶点）。相对上一版三档（地级 214k 顶点）多约 9.4MB。这些顶点常驻是刻意的取舍 —— 换档时不重新解析 JSON，缩放跨阈值无网络/解析抖动；单档顶点数仍由视口裁剪限制（见 4.4）。
 - 无损档 `china_units_lossless.json`（908KB）与其他档一样**同步加载**；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
 - 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面；`InsetMap` 另从 `provincesGeoJson`（fine 档）取省界。
 - **档位判定集中在 `src/map/tiers.ts`**（纯逻辑、无 ECharts/DOM 依赖，便于单测），`renderer.chinaTierMapName()` / `provinceTierMapName()` / `activeProvinceLines()` 三者都经 `tierOfZoom()` 推导，不会出现「地级改了阈值、省级忘改」的漂移。阈值：`ultra <2`、`pro 2~6`、`fine 6~10`、`plus 10~14`、`lossless ≥14`；钻省时强制 `lossless`（视口只剩一个省，顶点再多也被裁剪挡住）。
