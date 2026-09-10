@@ -15,6 +15,16 @@ export type ScoreMode = 'self' | 'click' | 'endless';
 export const PROVINCE_NATION_SCOPE = '__province_nation__';
 /** 世界全国哨兵：独立作用域行（区别于市级全国 null/'' 与省级全国哨兵）。与前端 province.ts 保持一致。 */
 export const WORLD_NATION_SCOPE = '__world_nation__';
+/** 大洲榜哨兵前缀/后缀：__continent_<AS|EU|AF|NA|SA|OC>__（各国大洲榜独立，熟练度共享）。与前端 province.ts 保持一致。 */
+export const CONTINENT_SCOPE_PREFIX = '__continent_';
+export const CONTINENT_IDS = ['AS', 'EU', 'AF', 'NA', 'SA', 'OC'] as const;
+
+/** 是否为合法的大洲榜哨兵（如 __continent_AS__）。 */
+export function isContinentScope(scope: string | null | undefined): boolean {
+  if (typeof scope !== 'string' || !scope.startsWith(CONTINENT_SCOPE_PREFIX) || !scope.endsWith('__')) return false;
+  const id = scope.slice(CONTINENT_SCOPE_PREFIX.length, -2);
+  return (CONTINENT_IDS as readonly string[]).includes(id);
+}
 
 /** 用户名归一化：与前端 cleanUsername 一致（trim、压缩空白、截 24）。 */
 export function cleanUsername(username: unknown): string {
@@ -63,12 +73,14 @@ export function validateScore(body: unknown): ScorePayload {
   if (!validMode(row.mode)) throw new ApiError(400, 'invalid_mode', '无效的模式');
   // 类型守卫：拒绝 undefined 与非字符串，此后 TS 收窄为 string | null
   if (row.scopeProvince !== null && typeof row.scopeProvince !== 'string') throw new ApiError(400, 'invalid_scope', '无效的范围');
-  // scope 白名单：''（市级全国）、省级全国哨兵、世界全国哨兵、6 位 adcode（单省）。拒绝任意非空字符串污染省级榜。
+  // scope 白名单：''（市级全国）、省级全国哨兵、世界全国哨兵、大洲榜哨兵、6 位 adcode（单省）。
+  // 拒绝任意非空字符串污染省级榜。
   if (
     typeof row.scopeProvince === 'string' &&
     row.scopeProvince !== '' &&
     row.scopeProvince !== PROVINCE_NATION_SCOPE &&
     row.scopeProvince !== WORLD_NATION_SCOPE &&
+    !isContinentScope(row.scopeProvince) &&
     !/^\d{6}$/.test(row.scopeProvince)
   ) {
     throw new ApiError(400, 'invalid_scope', '无效的范围');
@@ -112,7 +124,8 @@ export function validateScore(body: unknown): ScorePayload {
   }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');
   if (payload.correct > payload.totalUnits) throw new ApiError(400, 'invalid_score', '无效的答对数');
-  if (payload.scopeProvince === null || payload.scopeProvince === WORLD_NATION_SCOPE) {
+  if (payload.scopeProvince === null || payload.scopeProvince === WORLD_NATION_SCOPE || isContinentScope(payload.scopeProvince)) {
+    // 全国/世界/大洲榜：答过题即可（不强制全对，允许部分作答上榜）
     if (!(payload.correct > 0 && payload.wrong === 0)) throw new ApiError(400, 'invalid_score', '全国榜需已答全对');
     return payload;
   }
@@ -122,9 +135,9 @@ export function validateScore(body: unknown): ScorePayload {
   return payload;
 }
 
-/** 是否“全国语义”作用域（市级全国 null 或世界全国哨兵）：答对题数优先排序；其余省级语义按时间排序。 */
+/** 是否“全国语义”作用域（市级全国 null、世界全国哨兵或大洲榜哨兵）：答对题数优先排序；其余省级语义按时间排序。 */
 export function isNationScope(scopeProvince: string | null): boolean {
-  return scopeProvince === null || scopeProvince === WORLD_NATION_SCOPE;
+  return scopeProvince === null || scopeProvince === WORLD_NATION_SCOPE || isContinentScope(scopeProvince);
 }
 
 /** 新成绩是否比已有成绩更优（与前端 isBetter 对齐）。 */

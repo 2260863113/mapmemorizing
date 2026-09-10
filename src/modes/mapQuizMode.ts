@@ -1,4 +1,5 @@
-import type { Mode, RoundResult, Unit } from '../types';
+import type { Continent, Mode, RoundResult, Unit } from '../types';
+import { CONTINENTS } from '../types';
 import type { ModeCtx, OrderMode, ProgressSegment } from './types';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
@@ -8,6 +9,7 @@ import { t } from '../i18n';
 import type { ModeSettingsPanel } from '../modeSettings';
 import {
   buildProvinceAdjacency,
+  continentScope,
   provinceByAdcode,
   provinceShortName,
   provinceUnits,
@@ -33,6 +35,8 @@ export abstract class MapQuizMode extends BaseMode {
   protected question: string | null = null;
   /** 市级单省作用域：null=全国（可能是省级全国或市级全国），省 adcode=该省地级练习（下钻而来）。 */
   protected scopeProvince: string | null = null;
+  /** 世界粒度的大洲范围：null=全世界，非空=该洲（会话状态，不跨刷新恢复）。 */
+  protected worldContinent: Continent | null = null;
   /** 全国层粒度：'province'（省级全国，默认）| 'city'（市级全国）。下钻单省不改变它（返回全国后回到原全国粒度）。 */
   protected granularity: Granularity = this.loadGranularity();
   protected started = false;
@@ -141,6 +145,18 @@ export abstract class MapQuizMode extends BaseMode {
     return this.granularity === 'world' && this.scopeProvince === null;
   }
 
+  /** 世界粒度下的大洲范围（null = 全世界）。 */
+  getWorldContinent(): Continent | null {
+    return this.granularity === 'world' ? this.worldContinent : null;
+  }
+
+  /** 切换世界粒度下的大洲范围（仅世界粒度且未开始时生效）。 */
+  setWorldContinent(c: Continent | null) {
+    if (this.granularity !== 'world' || this.worldContinent === c) return;
+    this.worldContinent = c;
+    this.enter();
+  }
+
   getGranularity(): Granularity {
     return this.granularity;
   }
@@ -149,6 +165,8 @@ export abstract class MapQuizMode extends BaseMode {
   setGranularity(g: Granularity) {
     if (this.granularity === g) return;
     this.granularity = g;
+    // 离开世界粒度即清除大洲范围（大洲仅在世界粒度语义下有效）
+    if (g !== 'world') this.worldContinent = null;
     this.persistGranularity();
     this.enter();
   }
@@ -351,11 +369,17 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.granularity === 'city') saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
-  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 195 个虚拟国家单位；否则地级单位）。 */
+  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 195 国或某洲国家；否则地级单位）。 */
   protected activePool(): Unit[] {
     if (this.isProvinceNation()) return this.provincePool;
-    if (this.isWorldNation()) return this.worldPool;
+    if (this.isWorldNation()) return this.worldScopedPool();
     return scopedUnits(this.ctx.data, this.scopeProvince);
+  }
+
+  /** 世界池按大洲范围过滤（worldContinent=null 时返回全部 195 国）。 */
+  protected worldScopedPool(): Unit[] {
+    if (!this.worldContinent) return this.worldPool;
+    return this.worldPool.filter((u) => this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent === this.worldContinent);
   }
 
   /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池或地级池）。 */
@@ -377,8 +401,8 @@ export abstract class MapQuizMode extends BaseMode {
         return;
       }
       if (this.isWorldNation()) {
-        // 世界全国：世界地图视图；无放大框、不下钻
-        this.ctx.renderer.setWorldMode(true);
+        // 世界全国：世界地图视图；无放大框、不下钻。大洲范围非空时聚焦该洲并隐藏其他洲。
+        this.ctx.renderer.setWorldMode(true, this.worldContinent);
         return;
       }
       // 市级（全国或单省）：地级地图
@@ -387,6 +411,17 @@ export abstract class MapQuizMode extends BaseMode {
     } finally {
       this.syncingScope = false;
     }
+  }
+
+  /**
+   * 世界粒度未开始时点击某国：下钻其所属大洲（出题范围缩到该洲，地图聚焦该洲并隐藏其他洲）。
+   * 已是该洲范围内则不重复下钻（避免无谓重进会话）。
+   */
+  protected drillFromWorldNation(continent: Continent) {
+    if (this.granularity !== 'world') return;
+    if (this.worldContinent === continent) return;
+    this.worldContinent = continent;
+    this.enter();
   }
 
   /** 省级全国未开始点省：下钻该省并进入其地级练习（粒度保持省级，返回全国后恢复省级全国）。 */
@@ -410,7 +445,12 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.scopeProvince !== null) return 'china-admin-mode-progress:' + this.storagePrefix() + ':' + this.scopeProvince;
     if (this.granularity === 'province')
       return 'china-admin-mode-progress:' + this.storagePrefix() + ':province-nation';
-    if (this.granularity === 'world') return 'china-admin-mode-progress:' + this.storagePrefix() + ':world-nation';
+    if (this.granularity === 'world') {
+      // 大洲范围独立进度键（全世界 :world-nation，某洲 :world-continent-XX）
+      return this.worldContinent
+        ? 'china-admin-mode-progress:' + this.storagePrefix() + ':world-continent-' + this.worldContinent
+        : 'china-admin-mode-progress:' + this.storagePrefix() + ':world-nation';
+    }
     return 'china-admin-mode-progress:' + this.storagePrefix() + ':nation';
   }
 
@@ -583,9 +623,11 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   getScopeProvince() {
-    // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；市级沿用 scopeProvince
+    // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；大洲范围用大洲哨兵；市级沿用 scopeProvince
     if (this.scopeProvince === null && this.granularity === 'province') return PROVINCE_NATION_SCOPE;
-    if (this.scopeProvince === null && this.granularity === 'world') return WORLD_NATION_SCOPE;
+    if (this.scopeProvince === null && this.granularity === 'world') {
+      return this.worldContinent ? continentScope(this.worldContinent) : WORLD_NATION_SCOPE;
+    }
     return this.scopeProvince;
   }
 
@@ -602,7 +644,9 @@ export abstract class MapQuizMode extends BaseMode {
         this.scopeProvince === null && this.granularity === 'province'
           ? PROVINCE_NATION_SCOPE
           : this.scopeProvince === null && this.granularity === 'world'
-            ? WORLD_NATION_SCOPE
+            ? this.worldContinent
+              ? continentScope(this.worldContinent)
+              : WORLD_NATION_SCOPE
             : this.scopeProvince,
       scopeLabel: this.scopeLabel(),
       totalUnits: this.order.length,
@@ -615,11 +659,15 @@ export abstract class MapQuizMode extends BaseMode {
 
   protected scopeLabel() {
     if (this.scopeProvince === null && this.granularity === 'province') return t('common.provinceNation');
-    if (this.scopeProvince === null && this.granularity === 'world') return t('common.world');
+    if (this.scopeProvince === null && this.granularity === 'world') {
+      if (!this.worldContinent) return t('common.world');
+      return CONTINENTS.find((c) => c.id === this.worldContinent)?.name ?? t('common.world');
+    }
     if (this.scopeProvince) return this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? t('common.currentProvince');
     return t('common.nation');
   }
 
+  /** 熟练度读取：世界粒度（含大洲）共用同一套国家熟练度（Q：大洲榜独立但熟练度共享）。 */
   protected scoreOf = (u: Unit) => {
     if (this.isProvinceNation()) return this.ctx.store.getProvincePractice(u.adcode).score;
     if (this.isWorldNation()) return this.ctx.store.getWorldPractice(u.adcode).score;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildProvinceAdjacency, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE } from './province';
+import { buildProvinceAdjacency, continentFromScope, continentScope, isNationLikeScope, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE } from './province';
+import { CONTINENTS } from './types';
 import type { AppData, Unit, Province } from './types';
 
 function u(adcode: string, provinceAdcode: string, neighbors: string[] = []): Unit {
@@ -24,6 +25,8 @@ describe('buildProvinceAdjacency', () => {
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
+      ultraGeoJson: null,
+      provincesCoarseGeoJson: null,
     };
     const adj = buildProvinceAdjacency(data);
     expect([...adj.get('p1')!].sort()).toEqual(['p2']);
@@ -44,6 +47,8 @@ describe('buildProvinceAdjacency', () => {
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
+      ultraGeoJson: null,
+      provincesCoarseGeoJson: null,
     };
     expect(buildProvinceAdjacency(data).size).toBe(0);
   });
@@ -60,6 +65,8 @@ describe('provinceUnits', () => {
       provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
+      ultraGeoJson: null,
+      provincesCoarseGeoJson: null,
     };
     const out = provinceUnits(data, new Map([['450000', []]]));
     expect(out.map((x) => [x.adcode, x.shortName])).toEqual([['450000', '广西'], ['110000', '北京']]);
@@ -75,6 +82,8 @@ describe('provinceShortName', () => {
       geoJson: null, coarseGeoJson: null, provincesGeoJson: null,
       countries: [],
       worldGeoJson: null,
+      ultraGeoJson: null,
+      provincesCoarseGeoJson: null,
     };
     expect(provinceShortName(data, '450000')).toBe('广西');
     expect(provinceShortName(data, '999999')).toBe('999999');
@@ -91,5 +100,47 @@ describe('WORLD_NATION_SCOPE', () => {
   it('is a distinct sentinel string from province/city nation', () => {
     expect(WORLD_NATION_SCOPE).toBe('__world_nation__');
     expect(WORLD_NATION_SCOPE).not.toBe(PROVINCE_NATION_SCOPE);
+  });
+});
+
+describe('continentScope / continentFromScope', () => {
+  it('builds the sentinel for each continent', () => {
+    expect(continentScope('AS')).toBe('__continent_AS__');
+    expect(continentScope('OC')).toBe('__continent_OC__');
+  });
+
+  it('round-trips every continent id', () => {
+    for (const c of CONTINENTS) expect(continentFromScope(continentScope(c.id))).toBe(c.id);
+  });
+
+  it('rejects non-continent scopes without throwing', () => {
+    expect(continentFromScope(null)).toBeNull();
+    expect(continentFromScope('')).toBeNull();
+    expect(continentFromScope('__world_nation__')).toBeNull();
+    expect(continentFromScope('__province_nation__')).toBeNull();
+    expect(continentFromScope('110000')).toBeNull();
+    expect(continentFromScope('__continent_XX__')).toBeNull(); // 未知大洲 id
+    expect(continentFromScope('__continent_AS_')).toBeNull(); // 缺尾下划线
+  });
+});
+
+describe('isNationLikeScope', () => {
+  it('covers 市级全国/省级全国/世界全国/大洲榜', () => {
+    expect(isNationLikeScope(null)).toBe(true);
+    expect(isNationLikeScope(PROVINCE_NATION_SCOPE)).toBe(true);
+    expect(isNationLikeScope(WORLD_NATION_SCOPE)).toBe(true);
+    expect(isNationLikeScope(continentScope('EU'))).toBe(true);
+  });
+
+  it('excludes single-province scopes and undefined', () => {
+    expect(isNationLikeScope('110000')).toBe(false);
+    expect(isNationLikeScope(undefined)).toBe(false);
+  });
+});
+
+describe('CONTINENTS 元数据', () => {
+  it('has six continents excluding Antarctica, in stable UI order', () => {
+    expect(CONTINENTS.map((c) => c.id)).toEqual(['AS', 'EU', 'AF', 'NA', 'SA', 'OC']);
+    expect(CONTINENTS.map((c) => c.name)).toEqual(['亚洲', '欧洲', '非洲', '北美洲', '南美洲', '大洋洲']);
   });
 });

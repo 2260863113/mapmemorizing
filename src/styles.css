@@ -479,6 +479,16 @@ body.theme-dark .mode-segmented button.active {
   background: linear-gradient(180deg, rgba(71, 85, 105, 0.7), rgba(30, 41, 59, 0.55));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
 }
+/* 世界大洲范围分段按钮：7 项（全世界 + 六大洲），比粒度按钮更紧凑以免过宽。
+   基宽 100% 强制其在 #mode-actions 内独占一行（换行到粒度按钮下方）。 */
+#continent-toggle {
+  flex-basis: 100%;
+}
+#continent-toggle button {
+  min-width: 0;
+  padding: 0 9px;
+  font-size: 13px;
+}
 .mode-action.danger-hover:hover,
 #btn-end:hover,
 #btn-reset:hover,

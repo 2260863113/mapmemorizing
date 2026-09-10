@@ -1,4 +1,4 @@
-import type { AppData, Mode, RoundResult, Settings, Unit } from '../types';
+import type { AppData, Continent, Mode, RoundResult, Settings, Unit } from '../types';
 import type { MapRenderer } from '../map/renderer';
 import type { Matcher } from '../matcher';
 import type { MemoryStore } from '../store';
@@ -76,6 +76,10 @@ export interface ModeController {
   isWorldNation?(): boolean;
   /** 当前粒度（输入/点击/熟练度分析用；其它模式返回 null）。 */
   getGranularity?(): Granularity | null;
+  /** 世界粒度下的当前大洲范围（null=全世界；非世界粒度返回 null）。 */
+  getWorldContinent?(): Continent | null;
+  /** 切换世界粒度下的大洲范围（仅世界粒度且未开始测试时生效）。 */
+  setWorldContinent?(c: Continent | null): void;
   /** 当前出题顺序（输入/点击用；其它模式返回 null）。 */
   getOrderMode?(): OrderMode | ClickOrderMode | null;
 }

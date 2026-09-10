@@ -85,3 +85,27 @@
 - Q10 依赖：topojson-client 进 dependencies（运行时）；mapshaper + @types/topojson-client 进 devDependencies（仅构建期）。
 
 
+
+## 2026-09-09（地级/省级再简化 + 大洲范围：ultra 档根治缝隙 + 六洲下钻）
+
+### 任务 A：zoom < 5 再大幅简化（地级 + 省级）
+- Q1 档位划分：地级改为**三档** —— fine(15%) zoom ≥ 10 或已钻省；coarse(8%) 5 ≤ zoom < 10；**ultra(4%) zoom < 5**。省级改**两档** —— fine(15%) / **coarse(4%，zoom < 5 的省界粗线)**。阈值常量 `ULTRA_ZOOM_MAX = 5`、`COARSE_ZOOM_MAX = 10`。
+- Q2 缝隙复发与根因：coarse/ultra 档出现徐州(320300)↔淮北(340600) 缝隙 0.135°/0.139°（zoom 5 下约 12px）。定位：淮北是含 2 环的 MultiPolygon，其中环 0 仅 0.003885°²（≈39.7km²）的飞地小环在激进简化下被删除 → 淮北弧数从 6 降到 4 → 与徐州的共享弧消失。**mapshaper 的 `keep-shapes` 只保护「整个 feature 不消失」，不保护 MultiPolygon 内部的孤立小环**。
+- Q3 排除的方案：`-clean`（简化前/后）无效；`dp keep-shapes 4%` 仍缝 0.106°；单独 `-explode` 不做合并会让 326/1790 对失去共享（feature 丢了 adcode 归并）。
+- Q4 采用的方案：管线改为 **`-explode`（MultiPolygon → 独立 Polygon）→ `-simplify visvalingam keep-shapes N%` → 按 adcode 合并回 MultiPolygon**。小环成为独立 feature 后受 keep-shapes 保护。实测：8% → 17,503 顶点 0 零共享；4% → 10,925 顶点 0 零共享。
+- Q5 ECharts 侧约束：`parseGeoJson` 对每个 feature 单独建 `GeoJSONRegion` 且**不合并同名 feature**（已读 echarts/lib/coord/geo/parseGeoJson.js:113-145 确认），故 explode 后**必须**按 adcode 合并回 MultiPolygon，否则同一地级市只有一块面被着色/命中。
+- Q6 内置闸门：管线输出前把三档各自展开成 GeoJSON，校验「真实相邻单位必须共享 ≥1 顶点」，零共享即 `exit 1` 拒绝输出（防止未来回归）。
+- Q7 邻接数据副作用：explode 后几何更精确，turf 相交判定多识别出「珠海↔澳门」相邻（旧数据因几何不精确漏判）。相邻对数 1790 → 1792，无邻接单位由 7 个变为 6 个（澳门不再孤立）。判定为**修正**而非破坏，采纳。
+- 实测落点（顶点数为展开后）：fine 27,368（207KB）/ coarse 17,503（151KB）/ ultra 10,925（117KB）；省级 fine 10,548（466KB）/ coarse 4%（192KB）。三档零共享均为 **0/1792 ✅**。
+- 运行时验证（probe-tiers.mjs，headless Edge 真实渲染）：zoom 3/4.9 → china-ultra；zoom 7 → china-coarse；zoom 10/20 → china；省级 zoom 3 → china-provinces-coarse；省级 zoom 8 → china-provinces。15/15 通过。
+
+### 任务 B：世界粒度大洲范围（六洲，不含南极洲）
+- Q8 交互：世界粒度下在「世界/省级/市级」按钮**下方**再出一行分段按钮「全世界 | 亚洲 | 欧洲 | 非洲 | 北美 | 南美 | 大洋洲」（`#continent-toggle`，`flex-basis: 100%` 独占一行）。仅世界粒度、未开始测试时显示。
+- Q9 大洲归属：由 `fetch-world-data.mjs` 的静态 `CONTINENT_OF`（iso_a3 → 大洲）写入 `countries.json` 的 `continent` 字段，不引入额外几何数据。跨洲口径：俄罗斯/土耳其/塞浦路斯 → 欧洲；格鲁吉亚/亚美尼亚/阿塞拜疆/哈萨克斯坦 → 亚洲；埃及 → 非洲；巴拿马 → 北美。分布 **AF 54 / AS 46 / EU 46 / NA 23 / SA 12 / OC 14 = 195**（映射覆盖 195/195，无重复无遗漏，已脚本校验）。
+- Q10 三种进入方式：① 点洲按钮；② 未开始测试时点某国 → 下钻其所属大洲（`drillFromWorldNation`，点击/输入模式都支持）；③ 已开始测试时点国家 → 正常判题（国家是世界的原子单位，不再下钻）。
+- Q11 视图表现：选洲后**出题范围缩到该洲**（`worldScopedPool`），地图**只渲染该洲面**（其他洲隐藏，`worldFeatureVisible` 同时过滤 region / 事件数据 / 标签），并**聚焦该洲**。
+- Q12 聚焦框的取舍：**手工标定** `CONTINENT_VIEWS`，不按成员国 bbox 自动算。两轮尝试失败后确认：跨经线 180° 的海外领地（俄楚科奇、美阿留申、法属波利尼西亚、新西兰查塔姆）让自动 bbox 撑成 360°；更根本的是俄罗斯按国际惯例归欧洲但主体横跨 20°E–180°E，「包含全部成员」必然把欧洲拉宽到 200°+（实测欧洲被聚焦成 zoom 0.88 的全球视野）。相机取景属 UI 决策，标定值确定可测；框外领地仍可拖动到达（roam 已开）。标定后：AS z2.62 / EU z3.73 / AF z4.40 / NA z2.73 / SA z6.60 / OC z4.66。
+- Q13 排行榜与熟练度：大洲用**独立榜哨兵** `__continent_<ID>__`（榜名如「亚洲榜」），但**熟练度与世界数据集共享**（已答国家在全世界/大洲两种范围下都是绿色，`scoreOf` 对两者都走 `getWorldPractice`）。进度持久化也用独立键（`…:world-continent-AS`），与全世界 `…:world-nation` 互不干扰。
+- Q14 前后端一致性：`src/province.ts` 新增 `continentScope` / `continentFromScope` / `isNationLikeScope`；后端 `functions/_lib/validate.ts` 新增 `isContinentScope`，`score.ts` 的 upsert 排序分支与 `leaderboard.ts` 的 orderBy 都把大洲归入「全国语义」（答对题数优先、允许未答完但必须全对）；`scoreRules.ts`、`leaderboardPanel.ts`、`chromeSync.ts` 同步。
+- 运行时验证（probe-continent-ui.mjs，真实 UI 点击）：12/12 通过 —— 洲按钮显隐正确、7 个按钮、选中态同步、非洲 54 面 / 大洋洲 14 面 / 亚洲 46 面 / 全世界 239 面、切洲后相机聚焦。
+- 测试与构建：tsc 0 错误；vitest **14 文件 / 112 测试全通过**（新增 9 个：大洲哨兵往返与非法值、isNationLikeScope、CONTINENTS 元数据、大洲提交资格、后端白名单放行与非法值拒绝）；check-data.mjs 无问题（371/371 覆盖、0 无效几何）。

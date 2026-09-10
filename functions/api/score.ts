@@ -1,6 +1,6 @@
 import { json, readJson, handle } from '../_lib/http';
 import { requireSession } from '../_lib/guard';
-import { isBetter, validateScore, WORLD_NATION_SCOPE } from '../_lib/validate';
+import { isBetter, isContinentScope, validateScore, WORLD_NATION_SCOPE } from '../_lib/validate';
 
 type ScoreMode = 'self' | 'click' | 'endless';
 
@@ -14,9 +14,10 @@ interface ExistingRow {
 
 /** upsert 并发安全：ON CONFLICT 的 WHERE 复刻 isBetter，防止更差分覆盖更优分。统一 10 个占位符。
  *  冲突目标含 scope_province，因此冲突行 scope 恒等于本次插入 scope：全国语义（''=市级全国、
- *  __world_nation__=世界全国）比答对题数再比用时；省级语义（省级全国哨兵/6 位省 adcode）仅比用时。 */
+ *  __world_nation__=世界全国、__continent_XX__=某洲榜）比答对题数再比用时；
+ *  省级语义（省级全国哨兵/6 位省 adcode）仅比用时。 */
 function upsertSql(mode: ScoreMode, scope: string): string {
-  const nationLike = scope === '' || scope === WORLD_NATION_SCOPE;
+  const nationLike = scope === '' || scope === WORLD_NATION_SCOPE || isContinentScope(scope);
   const conflict =
     mode === 'endless'
       ? `WHERE excluded.coins > leaderboard.coins

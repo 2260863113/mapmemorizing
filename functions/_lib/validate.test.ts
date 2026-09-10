@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ApiError } from './http';
-import { cleanUsername, normalizePasswordHash, validMode, validateScore, isBetter } from './validate';
+import { cleanUsername, isContinentScope, normalizePasswordHash, validMode, validateScore, isBetter } from './validate';
 
 describe('cleanUsername', () => {
   it('trims, collapses whitespace, and truncates to 24', () => {
@@ -67,10 +67,31 @@ describe('validateScore', () => {
     expect(() => validateScore({ ...base, scopeProvince: '__province_nation__', totalUnits: 34, correct: 33 })).toThrow(ApiError);
   });
 
-  it('accepts world-nation scope with correct > 0, wrong === 0 (unfinished allowed)', () => {
-    expect(validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 5, wrong: 0 })).toMatchObject({ scopeProvince: '__world_nation__' });
-    expect(() => validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 5, wrong: 1 })).toThrow(ApiError);
-    expect(() => validateScore({ ...base, scopeProvince: '__world_nation__', totalUnits: 195, correct: 0, wrong: 0 })).toThrow(ApiError);
+  it('accepts continent scopes and treats them like world-nation', () => {
+    for (const id of ['AS', 'EU', 'AF', 'NA', 'SA', 'OC']) {
+      const scope = `__continent_${id}__`;
+      expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 46, correct: 5, wrong: 0 })).toMatchObject({ scopeProvince: scope });
+      expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 46, correct: 46, wrong: 0 })).toMatchObject({ scopeProvince: scope });
+    }
+    // 与大洲榜同语义：不要求答完，但必须全对
+    expect(() => validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 5, wrong: 1 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 0, wrong: 0 })).toThrow(ApiError);
+  });
+
+  it('rejects malformed continent-like scopes (whitelist cannot be widened)', () => {
+    expect(() => validateScore({ ...base, scopeProvince: '__continent_XX__' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__continent_AS_' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__continent___' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__continent_AS__x' })).toThrow(ApiError);
+  });
+
+  it('isContinentScope matches only the six known ids', () => {
+    expect(isContinentScope('__continent_AS__')).toBe(true);
+    expect(isContinentScope('__continent_OC__')).toBe(true);
+    expect(isContinentScope('__continent_XX__')).toBe(false);
+    expect(isContinentScope('__world_nation__')).toBe(false);
+    expect(isContinentScope(null)).toBe(false);
+    expect(isContinentScope(undefined)).toBe(false);
   });
 
   it('accepts 6-digit province scope fully correct', () => {

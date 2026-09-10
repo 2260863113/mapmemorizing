@@ -1,4 +1,5 @@
-import type { AppData, Province, Unit } from './types';
+import type { AppData, Continent, Province, Unit } from './types';
+import { CONTINENTS } from './types';
 import { normalizeProvince } from './matcher';
 
 /**
@@ -12,6 +13,23 @@ import { normalizeProvince } from './matcher';
 export const PROVINCE_NATION_SCOPE = '__province_nation__';
 /** 排行榜/结算中“世界全国”作用域的哨兵值：区别于市级全国（null）与省级全国（__province_nation__）。 */
 export const WORLD_NATION_SCOPE = '__world_nation__';
+/** 大洲榜哨兵前缀（后接大洲 id，如 __continent_AS__）：世界粒度下钻某洲时的独立榜作用域。 */
+export const CONTINENT_SCOPE_PREFIX = '__continent_';
+/** 大洲榜哨兵（如 AS → '__continent_AS__'）。 */
+export function continentScope(c: Continent): string {
+  return `${CONTINENT_SCOPE_PREFIX}${c}__`;
+}
+/** 从 scope 值解析大洲（非大洲榜返回 null）。 */
+export function continentFromScope(scope: string | null): Continent | null {
+  if (!scope || !scope.startsWith(CONTINENT_SCOPE_PREFIX) || !scope.endsWith('__')) return null;
+  const id = scope.slice(CONTINENT_SCOPE_PREFIX.length, -2);
+  return CONTINENTS.some((c) => c.id === id) ? (id as Continent) : null;
+}
+/** 是否任意「全国/大洲」级作用域（不含某省地级榜）。 */
+export function isNationLikeScope(scope: string | null | undefined): boolean {
+  if (scope === undefined) return false;
+  return scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE || continentFromScope(scope) !== null;
+}
 
 /** 测验/分析粒度：省级全国（省名）/ 市级全国或单省（地级市）/ 世界全国（国家名）。 */
 export type Granularity = 'province' | 'city' | 'world';

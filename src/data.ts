@@ -23,26 +23,28 @@ function topoToGeoJson(topo: Topology, decorative: { features?: unknown[] }): un
 /** 加载数据（public/data 下的构建产物） */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
-  const [meta, fineTopo, coarseTopo, decorativeGeo, provGeo, worldMeta, worldGeo] = await Promise.all([
+  const [meta, fineTopo, coarseTopo, ultraTopo, decorativeGeo, provGeo, provCoarseGeo, worldMeta, worldGeo] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units.json'),
     fetchJson<Topology>('data/china_units_coarse.json'),
+    fetchJson<Topology>('data/china_units_ultra.json'),
     fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
+    fetchJson<unknown>('data/china_provinces_coarse.geojson'),
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
     fetchJson<unknown>('data/world.geojson'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
-  const geoJson = topoToGeoJson(fineTopo, decorativeGeo);
-  const coarseGeoJson = topoToGeoJson(coarseTopo, decorativeGeo);
   cache = {
     units,
     allUnits,
     provinces: meta.provinces,
-    geoJson,
-    coarseGeoJson,
+    geoJson: topoToGeoJson(fineTopo, decorativeGeo),
+    coarseGeoJson: topoToGeoJson(coarseTopo, decorativeGeo),
+    ultraGeoJson: topoToGeoJson(ultraTopo, decorativeGeo),
     provincesGeoJson: provGeo,
+    provincesCoarseGeoJson: provCoarseGeo,
     countries: worldMeta.countries,
     worldGeoJson: worldGeo,
   };

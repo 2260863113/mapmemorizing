@@ -63,6 +63,8 @@ describe('Matcher.bestUnit', () => {
     provincesGeoJson: null,
     countries: [],
     worldGeoJson: null,
+    ultraGeoJson: null,
+    provincesCoarseGeoJson: null,
   };
   const m = new Matcher(data);
 

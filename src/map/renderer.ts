@@ -1,5 +1,5 @@
 import * as echarts from 'echarts';
-import type { AppData, BoundaryTone, RenderState, Unit, UnitColor } from '../types';
+import type { AppData, BoundaryTone, Continent, RenderState, Unit, UnitColor } from '../types';
 import { t } from '../i18n';
 import { normalizeProvince } from '../matcher';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
@@ -27,7 +27,8 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-/** 地级双档阈值：未钻省且 zoom < 此值用 coarse 大幅简化档；zoom ≥ 此值或已钻省用 fine 档。 */
+/** 地级档阈值：未钻省且 zoom < ULTRA 用 ultra 档；ULTRA ≤ zoom < COARSE 用 coarse 档；zoom ≥ COARSE 或已钻省用 fine 档。 */
+const ULTRA_ZOOM_MAX = 5;
 const COARSE_ZOOM_MAX = 10;
 /** roam 拖拽钳制的边距（px）：地图内容至少留此边距在视口内，避免被拖出屏幕。 */
 const PAN_MARGIN = 24;
@@ -35,14 +36,18 @@ const PAN_MARGIN = 24;
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
   'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 档与 fine 同数据范围
+  'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档与 fine 同数据范围
   'china-provinces': { center: [104.3, 28.5], zoom: 1 },
+  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级粗档同数据范围
   world: { center: [0, -3.2], zoom: 1 },
 };
 /** 各地图数据 bbox（lng/lat，用于拖动钳制换算屏幕范围）。 */
 const MAP_BBOX: Record<string, [number, number, number, number]> = {
   china: [73.5, 3.4, 135.1, 53.6],
   'china-coarse': [73.5, 3.4, 135.1, 53.6], // coarse 档与 fine 同数据范围
+  'china-ultra': [73.5, 3.4, 135.1, 53.6], // ultra 档与 fine 同数据范围
   'china-provinces': [73.5, 3.4, 135.1, 53.6],
+  'china-provinces-coarse': [73.5, 3.4, 135.1, 53.6],
   world: [-180, -90, 180, 83.6],
 };
 
@@ -90,7 +95,9 @@ export class MapRenderer {
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
   private adcodeToUnit = new Map<string, Unit>();
-  private provinceLines: { adcode: string; coords: number[][] }[] = [];
+  /** 省界线两档（细档：省级视图 / zoom ≥ 5；粗档：地级视图 zoom < 5 的省界粗线）。 */
+  private provinceLinesFine: { adcode: string; coords: number[][] }[] = [];
+  private provinceLinesCoarse: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
   private provinceLabelAnchors = new Map<string, GeoPoint>();
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
@@ -117,12 +124,16 @@ export class MapRenderer {
   private provinceModeInset = true; // 省级模式是否显示港澳放大框
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private worldMode = false; // 世界模式：只渲染世界地图（答题国 + 装饰面），无放大框、无下钻
+  private worldContinent: Continent | null = null; // 世界模式下的洲范围（null = 全世界；非空 = 只渲染该洲 + 聚焦）
   /** 最近一次 render 实际应用到的 geo 地图名（用于检测地图切换，切换时强制重建 geo 组件）。 */
   private appliedMapName = '';
+  /** 最近一次的「地图名|大洲」签名（大洲变化需 replaceMerge 重建 geo.regions）。 */
+  private appliedContinentKey = '';
   private worldNameToIso = new Map<string, string>(); // 世界面 name → iso_a3
   private worldIsoToName = new Map<string, string>(); // iso_a3 → 世界面 name（答题国）
   private worldDecorativeNames = new Set<string>(); // 装饰面 name（灰显、不响应）
   private worldLabelAnchors = new Map<string, GeoPoint>(); // iso → 标签锚点（按主面质心）
+  private isoContinent = new Map<string, Continent>(); // iso → 大洲（世界大洲视图过滤用）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   private panClampRaf: number | null = null;
@@ -133,8 +144,10 @@ export class MapRenderer {
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
     echarts.registerMap('china', data.geoJson as never);
-    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（zoom<10 大幅简化）
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图：只渲染 35 个省面
+    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（5 ≤ zoom < 10）
+    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 5，大幅简化）
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（细档）
+    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（粗档，zoom < 5）
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     this.inset = new InsetMap({
       theme: () => this.theme(),
@@ -145,12 +158,14 @@ export class MapRenderer {
     });
     this.inset.registerMap(); // 港澳放大框：香港+澳门+广东沿海
     this.chart = echarts.init(el);
+    for (const c of data.countries) this.isoContinent.set(c.iso, c.continent); // 大洲视图过滤表
     this.units = data.allUnits;
     for (const u of this.units) {
       this.nameToUnit.set(u.name, u);
       this.adcodeToUnit.set(u.adcode, u);
     }
-    this.provinceLines = this.buildProvinceLines();
+    this.provinceLinesFine = this.buildProvinceLines();
+    this.provinceLinesCoarse = this.buildProvinceLines(data.provincesCoarseGeoJson);
     this.labelAnchors = this.buildLabelAnchors();
     this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
     // 省全名 → 省 adcode（省级地图点击/悬浮命中整省时回传）
@@ -319,6 +334,8 @@ export class MapRenderer {
   /** 进入某地图族时应用记忆：有记忆则恢复，无则默认居中。仅设字段，不 setOption。 */
   private pickViewFor(mapName: string): { center: [number, number]; zoom: number } {
     if (mapName === 'world') {
+      // 大洲视图优先于世界记忆：切洲必须聚焦该洲，不能被「上次世界视野」覆盖
+      if (this.worldContinent) return this.continentView(this.worldContinent);
       if (this.savedWorldView) {
         return { center: [this.savedWorldView.center[0], this.savedWorldView.center[1]], zoom: this.savedWorldView.zoom };
       }
@@ -461,13 +478,17 @@ export class MapRenderer {
     }
   }
 
-  /** 世界模式：只渲染世界地图（195 答题国 + 44 装饰面），无放大框、无下钻；退出时复位到全国视图。 */
-  setWorldMode(on: boolean) {
-    if (this.worldMode === on && !this.provinceMode) return;
+  /**
+   * 世界模式：只渲染世界地图（195 答题国 + 44 装饰面），无放大框、无下钻；退出时复位到全国视图。
+   * continent 非空时进入「大洲视图」：聚焦该洲 bbox，且只渲染该洲国家（其他洲隐藏）。
+   */
+  setWorldMode(on: boolean, continent: Continent | null = null) {
+    if (this.worldMode === on && !this.provinceMode && this.worldContinent === continent) return;
     const wasWorld = this.worldMode;
     // 跨越世界/中国边界：先把当前族（离开方）的全国视野存入其记忆槽
     if (on !== wasWorld) this.snapshotViewBeforeLeave();
     this.worldMode = on;
+    this.worldContinent = on ? continent : null;
     this.provinceMode = false;
     this.provinceModeInset = false;
     this.provinceModeDrill = false;
@@ -477,6 +498,13 @@ export class MapRenderer {
       this.savedNationView = null;
       this.viewProvince = null;
       this.labelMode = 'none';
+    }
+    if (on && this.worldContinent) {
+      // 大洲视图：聚焦该洲 bbox
+      const v = this.continentView(this.worldContinent);
+      this.center = [v.center[0], v.center[1]];
+      this.zoom = v.zoom;
+    } else if (on !== wasWorld) {
       const v = this.pickViewFor(this.currentMapName());
       this.center = [v.center[0], v.center[1]];
       this.zoom = v.zoom;
@@ -486,14 +514,54 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
+  /** 当前大洲视图（null = 全世界）。 */
+  currentContinent(): Continent | null {
+    return this.worldContinent;
+  }
+
+  /**
+   * 大洲聚焦框（手工标定，lng0/lat0/lng1/lat1）。
+   *
+   * 为什么手工标定而不是按成员国 bbox 自动计算：
+   *   1. 跨经度 180° 的海外领地（俄楚科奇、美阿留申、法属波利尼西亚、新西兰查塔姆）
+   *      会让自动 bbox 撑成 360°；
+   *   2. 更根本的是俄罗斯：按国际惯例归欧洲，但主体横跨 20°E–180°E，
+   *      「包含全部成员国」必然把欧洲拉成 200°+ 宽 —— 而使用者要的是「欧洲大陆」的取景。
+   * 相机取景是 UI 决策，标定值确定、可复核、可测试；框外的远端领地仍可通过拖动到达（roam 已开启）。
+   */
+  private static readonly CONTINENT_VIEWS: Record<Continent, [number, number, number, number]> = {
+    // 亚洲：土耳其/高加索 → 日本，西伯利亚 → 印尼
+    AS: [26, -11, 147, 56],
+    // 欧洲：冰岛/葡萄牙 → 乌拉尔（含欧俄），北角 → 地中海
+    EU: [-25, 34, 60, 71],
+    // 非洲：佛得角 → 索马里角，好望角 → 突尼斯
+    AF: [-20, -36, 52, 38],
+    // 北美洲：阿拉斯加 → 纽芬兰，巴拿马 → 加拿大北极群岛
+    NA: [-168, 6, -52, 74],
+    // 南美洲：秘鲁西岸 → 巴西东岸，火地岛 → 委内瑞拉
+    SA: [-82, -56, -34, 13],
+    // 大洋洲：巴布亚新几内亚 → 日界线，新西兰 → 赤道（东侧岛国可平移到达）
+    OC: [112, -48, 180, 2],
+  };
+
+  /** 计算某大洲的聚焦 center/zoom（按标定框换算，见 CONTINENT_VIEWS 的说明）。 */
+  private continentView(c: Continent): { center: [number, number]; zoom: number } {
+    const [x0, y0, x1, y1] = MapRenderer.CONTINENT_VIEWS[c];
+    const center: [number, number] = [(x0 + x1) / 2, (y0 + y1) / 2];
+    // 世界图 zoom 1 时经度跨度约 360；按框经度跨度反推恰好铺满的 zoom，再留 12% 边距
+    const spanX = Math.max(x1 - x0, 1e-6);
+    const zoom = clampZoom((360 / spanX) * 0.88);
+    return { center, zoom };
+  }
+
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
   private theme(): MapTheme {
     return MAP_THEMES[this.themeName];
   }
 
   /** 省界折线：省界 GeoJSON 的每个环转为线坐标（用于 lines 系列粗线渲染） */
-  private buildProvinceLines(): { adcode: string; coords: number[][] }[] {
-    const geo = this.data.provincesGeoJson as {
+  private buildProvinceLines(src?: unknown): { adcode: string; coords: number[][] }[] {
+    const geo = (src ?? this.data.provincesGeoJson) as {
       features: { properties: { adcode: string }; geometry: { type: string; coordinates: unknown } }[];
     };
     const out: { adcode: string; coords: number[][] }[] = [];
@@ -514,10 +582,16 @@ export class MapRenderer {
     return out;
   }
 
+  /** 省界线当前档：省级视图或 zoom ≥ 5 用细档，地级视图 zoom < 5 用粗档。 */
+  private activeProvinceLines(): { adcode: string; coords: number[][] }[] {
+    if (this.provinceMode || this.zoom >= ULTRA_ZOOM_MAX) return this.provinceLinesFine;
+    return this.provinceLinesCoarse;
+  }
+
   /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
   private buildLineData(): { coords: number[][] }[] {
     if (this.worldMode) return [];
-    return this.provinceLines
+    return this.activeProvinceLines()
       .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
       .map((l) => ({ coords: l.coords }));
   }
@@ -658,23 +732,34 @@ export class MapRenderer {
     return out;
   }
 
-  /** 世界模式的国面数据（供 map series 的 tooltip/事件按国名匹配；装饰面不参与）。 */
+  /** 世界模式的国面数据（供 map series 的 tooltip/事件按国名匹配；装饰面不参与；大洲视图只含本洲）。 */
   private buildWorldEventData(): { name: string }[] {
     const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
     return (geo.features ?? [])
       .filter((f) => !f.properties.decorative)
+      .filter((f) => this.worldFeatureVisible(f.properties.iso_a3 ? String(f.properties.iso_a3) : '', false))
       .map((f) => ({ name: f.properties.name ?? '' }));
   }
 
-  /** 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。 */
+  /** 世界模式下某国家面是否属于当前洲范围（worldContinent=null 时全部可见）。 */
+  private worldFeatureVisible(iso: string, isDecorative: boolean): boolean {
+    if (!this.worldContinent) return true;
+    if (isDecorative || !iso) return false; // 大洲视图下装饰面（南极洲/属地等）一并隐藏
+    return this.isoContinent.get(iso) === this.worldContinent;
+  }
+
+  /** 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。大洲视图下非本洲面不渲染。 */
   private buildWorldRegionData(state: RenderState): GeoRegion[] {
     const theme = this.theme();
     const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
-    return (geo.features ?? []).map((f) => {
+    const out: GeoRegion[] = [];
+    for (const f of geo.features ?? []) {
       const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
       const isDecorative = f.properties.decorative === 1 || !iso;
+      // 大洲视图：只保留本洲国家，其余面（含装饰面）不渲染 → 视觉上「其他洲隐藏」
+      if (!this.worldFeatureVisible(iso, isDecorative)) continue;
       const color: UnitColor = isDecorative ? 'gray' : state.colorOf(iso);
-      return {
+      out.push({
         name: f.properties.name ?? '',
         silent: isDecorative,
         itemStyle: {
@@ -687,18 +772,21 @@ export class MapRenderer {
           label: { show: false },
         },
         label: { show: false },
-      };
-    });
+      });
+    }
+    return out;
   }
 
-  /** 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。 */
+  /** 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。大洲视图只显本洲标签。 */
   private buildWorldLabelData(state: RenderState): LabelPoint[] {
     if (!this.worldMode) return [];
     const theme = this.theme();
     const out: LabelPoint[] = [];
+    const visible = (iso: string) => !this.worldContinent || this.isoContinent.get(iso) === this.worldContinent;
     // 测验档：仅已作答国显示绿/红简称
     if (state.worldLabel) {
       for (const c of this.data.countries) {
+        if (!visible(c.iso)) continue;
         const anchor = this.worldLabelAnchors.get(c.iso);
         if (!anchor) continue;
         const lab = state.worldLabel(c.iso);
@@ -711,6 +799,7 @@ export class MapRenderer {
     // 分析档：仅在放大到国名阈值后显示（Q35：不常显）
     if (state.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) {
       for (const c of this.data.countries) {
+        if (!visible(c.iso)) continue;
         const anchor = this.worldLabelAnchors.get(c.iso);
         if (!anchor) continue;
         out.push({ name: c.name, value: [...anchor, c.name, theme.labelNeutral, 0, 0] });
@@ -762,7 +851,7 @@ export class MapRenderer {
       this.labelUpdateTimer = null;
       // zoom 停止变化后：先按 zoom 档位决定是否换地级地图档（coarse/fine），再刷标签。
       // 换档需完整 render（replaceMerge 重建 geo），不能只 applyLabelMode。
-      const settledMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
+      const settledMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
       const applied = this.appliedMapName;
       if (applied && settledMap !== applied && this.lastState) {
         this.render(this.lastState);
@@ -955,8 +1044,17 @@ export class MapRenderer {
     // 普通 setOption 合并会让 geo 停留在上一次绘制状态 → 切回后中国地图整片空白。
     // 检测到 geo 地图名变化时用 replaceMerge 强制重建 geo（与同级 series/map），确保重绘新地图面。
     const mapChanged = mapName !== this.appliedMapName;
+    // 大洲切换时地图名不变（同为 world），但 geo.regions 数组整体变化（隐藏其他洲）：
+    // 普通合并可能残留上一洲的 region 样式，故与地图切换同样走 replaceMerge。
+    const continentKey = `${mapName}|${this.worldContinent ?? ''}`;
+    const continentChanged = continentKey !== this.appliedContinentKey;
+    this.appliedContinentKey = continentKey;
     this.appliedMapName = mapName;
-    this.chart.setOption(option, mapChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
+    this.chart.setOption(option, mapChanged || continentChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
+    // 大洲切换重建 geo 后同样需要写回相机（否则 replaceMerge 丢相机 → 回到默认全球视野）
+    if (continentChanged && !mapChanged) {
+      this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+    }
     if (mapChanged) {
       // 地图切换（世界↔省级↔地级）：replaceMerge 重建的 geo 不继承相机，
       // 需显式写回当前相机。this.center/zoom 由调用方（setWorldMode/setProvinceMode/backToNation/drill）
@@ -1036,7 +1134,7 @@ export class MapRenderer {
     const startZoom = current.zoom;
     // 动画期间 map 固定为起点档（避免帧间合并式切换地图名触发 ECharts 空白 bug）；
     // 动画结束后（下方）统一走档位检查，若目标 zoom 跨档则 replaceMerge 换图。
-    const animMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
+    const animMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
     const start = performance.now();
     let lastFrame = start - FOLLOW_FRAME_INTERVAL;
     const step = (now: number) => {
@@ -1060,7 +1158,7 @@ export class MapRenderer {
       } else {
         this.followRaf = null;
         // 动画结束：若目标 zoom 跨档（如 zoom 1→12 应从 coarse 切 fine），走完整 render 换图
-        const targetMap = this.worldMode ? 'world' : this.provinceMode ? 'china-provinces' : this.chinaTierMapName();
+        const targetMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
         if (targetMap !== this.appliedMapName && this.lastState) {
           this.render(this.lastState);
           return;
@@ -1152,16 +1250,22 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
-  /** 地级档应使用的地图名（未钻省按 zoom 切档，已钻省固定 fine 档保边界细节）。 */
+  /** 地级档应使用的地图名（未钻省按 zoom 切三档，已钻省固定 fine 档保边界细节）。 */
   private chinaTierMapName(): string {
     if (this.viewProvince !== null) return 'china';
+    if (this.zoom < ULTRA_ZOOM_MAX) return 'china-ultra';
     return this.zoom < COARSE_ZOOM_MAX ? 'china-coarse' : 'china';
   }
 
-  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图，否则地级地图（未钻省按 zoom 切 coarse/fine 档，已钻省固定 fine 档保边界细节）。 */
+  /** 省级档应使用的地图名（省级视图按 zoom 切细/粗档；省级粗档 = 4% 拓扑简化）。 */
+  private provinceTierMapName(): string {
+    return this.zoom < ULTRA_ZOOM_MAX ? 'china-provinces-coarse' : 'china-provinces';
+  }
+
+  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图（按 zoom 分档），否则地级地图（按 zoom 切三档）。 */
   private currentMapName(): string {
     if (this.worldMode) return 'world';
-    if (this.provinceMode) return 'china-provinces';
+    if (this.provinceMode) return this.provinceTierMapName();
     return this.chinaTierMapName();
   }
 

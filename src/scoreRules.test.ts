@@ -35,6 +35,17 @@ describe('canSubmitScore', () => {
     expect(canSubmitScore(result({ scopeProvince: '__world_nation__', totalUnits: 195, correct: 194, wrong: 0 }))).toBe(true);
   });
 
+  it('continent scope: same as world-nation (allow unfinished, wrong must be 0)', () => {
+    expect(canSubmitScore(result({ scopeProvince: '__continent_AS__', totalUnits: 46, correct: 5, wrong: 0 }))).toBe(true);
+    expect(canSubmitScore(result({ scopeProvince: '__continent_AS__', totalUnits: 46, correct: 46, wrong: 0 }))).toBe(true);
+    expect(canSubmitScore(result({ scopeProvince: '__continent_AS__', totalUnits: 46, correct: 5, wrong: 1 }))).toBe(false);
+    expect(canSubmitScore(result({ scopeProvince: '__continent_AS__', totalUnits: 46, correct: 0, wrong: 0 }))).toBe(false);
+    // 每个大洲哨兵都适用同一规则
+    for (const id of ['AS', 'EU', 'AF', 'NA', 'SA', 'OC']) {
+      expect(canSubmitScore(result({ scopeProvince: `__continent_${id}__`, correct: 1, wrong: 0 }))).toBe(true);
+    }
+  });
+
   it('province scope: must be fully correct', () => {
     expect(canSubmitScore(result({ scopeProvince: '520000', totalUnits: 9, correct: 9, wrong: 0 }))).toBe(true);
     expect(canSubmitScore(result({ scopeProvince: '520000', totalUnits: 9, correct: 8, wrong: 1 }))).toBe(false);

@@ -1,6 +1,6 @@
 import { $, showTimer, showStopwatch } from './dom';
 import { t } from '../i18n';
-import { PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from '../province';
+import { isNationLikeScope, type Granularity } from '../province';
 import type { ModeController, OrderMode } from '../modes/types';
 import type { SidePanelController } from './sidePanelController';
 
@@ -84,7 +84,7 @@ export class ChromeSync {
 
   syncSegmentedToggle(containerId: string, current: string) {
     document.querySelectorAll<HTMLButtonElement>('#' + containerId + ' button').forEach((btn) => {
-      const value = btn.dataset.order ?? btn.dataset.granularity ?? btn.dataset.analysisGranularity ?? btn.dataset.mode;
+      const value = btn.dataset.order ?? btn.dataset.granularity ?? btn.dataset.analysisGranularity ?? btn.dataset.continent ?? btn.dataset.mode;
       const active = value === current;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-checked', String(active));
@@ -114,7 +114,7 @@ export class ChromeSync {
     const mode = current?.id;
     const testStarted = !!current?.isStarted();
     const scope = current?.getScopeProvince();
-    const scopeIsNation = scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE;
+    const scopeIsNation = isNationLikeScope(scope);
     const isGranularityMode = mode === 'click' || mode === 'self';
     const isTestMode = mode === 'self' || mode === 'click' || mode === 'endless';
     // 跳过/暂停/重置显隐：click/self 未开始只留「重置」，开始后显示 跳过·暂停·重置（顺序：跳过→暂停→重置）
@@ -130,6 +130,13 @@ export class ChromeSync {
     if (granularityVisible) {
       const g = (current?.getGranularity?.() ?? 'province') as Granularity;
       this.syncSegmentedToggle('granularity-toggle', g);
+    }
+    // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
+    const isWorldGranularity = granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world';
+    $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
+    if (isWorldGranularity) {
+      const c = (current?.getWorldContinent?.() ?? null) as string | null;
+      this.syncSegmentedToggle('continent-toggle', c ?? '');
     }
     // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self' || testStarted);

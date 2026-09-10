@@ -20,7 +20,8 @@ import { InputMode } from './modes/input';
 import { EndlessMode } from './modes/endless';
 import { FreeBrowseMode } from './modes/freeBrowse';
 import { ClickMode } from './modes/click';
-import { PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from './province';
+import { continentFromScope, isNationLikeScope, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from './province';
+import { CONTINENTS, type Continent } from './types';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
@@ -383,6 +384,8 @@ export class AppController {
   private scopeLabel(scopeProvince: string | null) {
     if (scopeProvince === PROVINCE_NATION_SCOPE) return t('common.provinceNation');
     if (scopeProvince === WORLD_NATION_SCOPE) return t('common.world');
+    const cont = continentFromScope(scopeProvince);
+    if (cont) return CONTINENTS.find((c) => c.id === cont)?.name ?? t('common.world');
     return scopeProvince ? this.data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
@@ -406,7 +409,7 @@ export class AppController {
       `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${
         result.scopeProvince === PROVINCE_NATION_SCOPE
           ? t('main.settlementNoteProvince')
-          : result.scopeProvince === WORLD_NATION_SCOPE
+          : result.scopeProvince === WORLD_NATION_SCOPE || continentFromScope(result.scopeProvince) !== null
             ? t('main.settlementNoteWorld')
             : t('main.settlementNote')
       }</div></div>`,
@@ -512,6 +515,20 @@ export class AppController {
       });
     });
 
+    // 世界粒度下的「全世界/各大洲」范围切换（仅世界粒度、全国视图、未开始测试时可操作）
+    document.querySelectorAll<HTMLButtonElement>('#continent-toggle button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const raw = btn.dataset.continent ?? '';
+        const c = raw ? (raw as Continent) : null;
+        const target = this.current === this.selfMode ? this.selfMode : this.clickMode;
+        if (target.setWorldContinent) target.setWorldContinent(c);
+        this.syncSegments();
+        this.syncModeChrome();
+        this.updateProgress();
+        void this.refreshSidePanel();
+      });
+    });
+
     // 熟练度分析的省级/地级切换
     document.querySelectorAll<HTMLButtonElement>('#analysis-granularity-toggle button').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -576,7 +593,7 @@ export class AppController {
         }
         const mode = this.current?.id;
         const scope = this.current?.getScopeProvince();
-        const isNationScope = scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE;
+        const isNationScope = isNationLikeScope(scope); // 含 null（市级全国）、省级/世界全国与大洲范围
         if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
           this.showSettlementCard();
           return;

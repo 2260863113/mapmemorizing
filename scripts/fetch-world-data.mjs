@@ -68,6 +68,54 @@ const NAME_OVERRIDE = {
   // 源名已尽量用简称；以下为常见口径微调（若有）
 };
 
+/**
+ * 大洲归属表（iso_a3 → six-continent 口径：AS 亚洲 / EU 欧洲 / AF 非洲 / NA 北美洲 / SA 南美洲 / OC 大洋洲）。
+ * 不含南极洲（无答题国）。口径按地理教科书写法：
+ *   - 俄罗斯/土耳其/塞浦路斯/格鲁吉亚/亚美尼亚/阿塞拜疆 → 欧洲（俄土跨洲，按国际惯例归欧洲）；
+ *   - 埃及 → 非洲（跨亚非，主体在非洲）；哈萨克斯坦 → 亚洲；
+ *   - 巴拿马 → 北美洲（跨南北美，按地峡主流归北美）；
+ *   - 特立尼达和多巴哥/加勒比诸岛 → 北美洲；
+ *   - 巴勒斯坦/以色列/约旦等中东 → 亚洲；印度尼西亚/东帝汶 → 亚洲；巴布亚新几内亚 → 大洋洲。
+ * 统计：AF 54 + AS 46 + EU 46 + NA 23 + SA 12 + OC 14 = 195。
+ */
+const CONTINENT_OF = {
+  // ===== 亚洲（46）=====
+  AFG: 'AS', BHR: 'AS', BGD: 'AS', BTN: 'AS', BRN: 'AS', KHM: 'AS', CHN: 'AS', IND: 'AS',
+  IDN: 'AS', IRN: 'AS', IRQ: 'AS', ISR: 'AS', JPN: 'AS', JOR: 'AS', KAZ: 'AS', KWT: 'AS',
+  KGZ: 'AS', LAO: 'AS', LBN: 'AS', MYS: 'AS', MDV: 'AS', MNG: 'AS', MMR: 'AS', NPL: 'AS',
+  PRK: 'AS', OMN: 'AS', PAK: 'AS', PSE: 'AS', PHL: 'AS', QAT: 'AS', SAU: 'AS', SGP: 'AS',
+  KOR: 'AS', LKA: 'AS', SYR: 'AS', TJK: 'AS', THA: 'AS', TLS: 'AS', TKM: 'AS', ARE: 'AS',
+  UZB: 'AS', VNM: 'AS', YEM: 'AS', ARM: 'AS', AZE: 'AS', GEO: 'AS',
+  // ===== 欧洲（46）=====
+  ALB: 'EU', AND: 'EU', AUT: 'EU', BLR: 'EU', BEL: 'EU', BIH: 'EU', BGR: 'EU', HRV: 'EU',
+  CYP: 'EU', CZE: 'EU', DNK: 'EU', EST: 'EU', FIN: 'EU', FRA: 'EU', DEU: 'EU', GRC: 'EU',
+  HUN: 'EU', ISL: 'EU', IRL: 'EU', ITA: 'EU', LVA: 'EU', LIE: 'EU', LTU: 'EU', LUX: 'EU',
+  MLT: 'EU', MDA: 'EU', MCO: 'EU', MNE: 'EU', NLD: 'EU', MKD: 'EU', NOR: 'EU', POL: 'EU',
+  PRT: 'EU', ROU: 'EU', RUS: 'EU', SMR: 'EU', SRB: 'EU', SVK: 'EU', SVN: 'EU', ESP: 'EU',
+  SWE: 'EU', CHE: 'EU', TUR: 'EU', UKR: 'EU', GBR: 'EU', VAT: 'EU',
+  // ===== 非洲（54）=====
+  DZA: 'AF', AGO: 'AF', BEN: 'AF', BWA: 'AF', BFA: 'AF', BDI: 'AF', CPV: 'AF', CMR: 'AF',
+  CAF: 'AF', TCD: 'AF', COM: 'AF', COG: 'AF', COD: 'AF', CIV: 'AF', DJI: 'AF', EGY: 'AF',
+  GNQ: 'AF', ERI: 'AF', SWZ: 'AF', ETH: 'AF', GAB: 'AF', GMB: 'AF', GHA: 'AF', GIN: 'AF',
+  GNB: 'AF', KEN: 'AF', LSO: 'AF', LBR: 'AF', LBY: 'AF', MDG: 'AF', MWI: 'AF', MLI: 'AF',
+  MRT: 'AF', MUS: 'AF', MAR: 'AF', MOZ: 'AF', NAM: 'AF', NER: 'AF', NGA: 'AF', RWA: 'AF',
+  STP: 'AF', SEN: 'AF', SYC: 'AF', SLE: 'AF', SOM: 'AF', ZAF: 'AF', SSD: 'AF', SDN: 'AF',
+  TZA: 'AF', TGO: 'AF', TUN: 'AF', UGA: 'AF', ZMB: 'AF', ZWE: 'AF',
+  // ===== 北美洲（23）=====
+  ATG: 'NA', BHS: 'NA', BRB: 'NA', BLZ: 'NA', CAN: 'NA', CRI: 'NA', CUB: 'NA', DMA: 'NA',
+  DOM: 'NA', SLV: 'NA', GRD: 'NA', GTM: 'NA', HTI: 'NA', HND: 'NA', JAM: 'NA', MEX: 'NA',
+  NIC: 'NA', PAN: 'NA', KNA: 'NA', LCA: 'NA', VCT: 'NA', TTO: 'NA', USA: 'NA',
+  // ===== 南美洲（12）=====
+  ARG: 'SA', BOL: 'SA', BRA: 'SA', CHL: 'SA', COL: 'SA', ECU: 'SA', GUY: 'SA', PRY: 'SA',
+  PER: 'SA', SUR: 'SA', URY: 'SA', VEN: 'SA',
+  // ===== 大洋洲（14）=====
+  AUS: 'OC', FJI: 'OC', KIR: 'OC', MHL: 'OC', FSM: 'OC', NRU: 'OC', NZL: 'OC', PLW: 'OC',
+  PNG: 'OC', WSM: 'OC', SLB: 'OC', TON: 'OC', TUV: 'OC', VUT: 'OC',
+};
+
+/** 大洲中文名（校验报告用）。 */
+const CONTINENT_LABEL = { AS: '亚洲', EU: '欧洲', AF: '非洲', NA: '北美洲', SA: '南美洲', OC: '大洋洲' };
+
 console.log('[1/4] 下载 Surbowl 世界 GeoJSON ...');
 const world = await fetchJson(SRC_URL);
 console.log(`  源 feature 数: ${world.features?.length ?? 0}`);
@@ -93,12 +141,23 @@ for (const f of world.features) {
       fullName,
       center: featureCenter(f),
       neighbors: [],
+      continent: CONTINENT_OF[iso] ?? 'AS',
     });
+    if (!CONTINENT_OF[iso]) console.warn(`  ⚠ 缺大洲归属: ${name} (${iso})，已回退亚洲`);
     if (isoName.has(name)) console.warn(`  ⚠ 源名重复: ${name}（${isoName.get(name)} 与 ${iso}）`);
     else isoName.set(name, iso);
   }
 }
 console.log(`  答题国: ${countries.length} | 装饰面: ${outFeatures.length - countries.length}`);
+// 大洲分布校验（口径：AF 54 + AS 48 + EU 44 + NA 23 + SA 12 + OC 14 = 195）
+{
+  const dist = {};
+  for (const c of countries) dist[c.continent] = (dist[c.continent] ?? 0) + 1;
+  const parts = Object.entries(dist).map(([k, v]) => `${CONTINENT_LABEL[k] ?? k} ${v}`);
+  console.log(`  大洲分布: ${parts.join(' | ')}`);
+  const total = Object.values(dist).reduce((a, b) => a + b, 0);
+  if (total !== countries.length) console.warn(`  ⚠ 大洲分布合计 ${total} ≠ 答题国 ${countries.length}`);
+}
 
 // ---------- 邻接关系（bbox 预过滤 + turf 相交；答题国之间） ----------
 console.log('[3/4] 计算国家邻接（顺序/BFS 扩张用）...');

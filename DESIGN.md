@@ -53,17 +53,23 @@
 ### 4.2 数据管线（scripts/fetch-cn-atlas.mjs，Node 脚本，一次性运行）
 1. 下载 cn-atlas TopoJSON，用 topojson-client 展开 prefectures/provinces。
 2. 按现有 `units.json` 白名单对齐 adcode（340 真实地级 + 南海诸岛），字段映射为 `adcode`/`name`。
-3. mapshaper 拓扑保持简化（`visvalingam keep-shapes`，共享弧只简化一次 → 永不产生缝隙）出两档：
+3. **先 `-explode` 拆 MultiPolygon，再拓扑保持简化，最后按 adcode 合并回 MultiPolygon**，出三档：
    - `china_units.json`（fine 15%，展开约 2.7 万顶点）——zoom ≥ 10 或钻省
-   - `china_units_coarse.json`（coarse 8%，展开约 1.6 万顶点）——zoom < 10
-4. 省级 `china_provinces.geojson` 同法单档简化（15%）。
+   - `china_units_coarse.json`（coarse 8%，展开约 1.8 万顶点）——5 ≤ zoom < 10
+   - `china_units_ultra.json`（ultra 4%，展开约 1.1 万顶点）——zoom < 5（全国全景，大幅简化）
+4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者供 zoom < 5 的省界粗线）。
 5. 装饰面 `china_decorative.geojson` 单独保留（DataV 源，不进拓扑简化）。
 6. 用 fine 档几何重建 `units.json` 的 center/neighbors。
-- 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用（仅保留 units.json 元数据的初始生成参考）。
+7. **缝隙闸门**：输出前三档各自展开成 GeoJSON，校验「真实相邻单位必须共享 ≥1 顶点」，零共享即 `exit 1` 拒绝输出。
+
+**为什么必须 explode**：mapshaper 的 `keep-shapes` 只保证「整个 feature 不消失」，**不保护 MultiPolygon 内部的孤立小环**。实测淮北（340600）含一个约 39.7km² 的飞地小环，在 8%/4% 简化下该环被删除 → 其弧拓扑被改写 → 与徐州（320300）的共享弧消失 → 0.135° 可见缝隙。explode 后每个小环成为独立 feature，受 `keep-shapes` 保护，实测三档零共享均为 0。
+
+- 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用/删除（逐面 Douglas-Peucker 会破坏共享边，是缝隙的另一成因）。
 
 ### 4.3 运行时加载
-- 地级双档以 TopoJSON 存储（`china_units.json`/`china_units_coarse.json`，各 130~190KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
-- 省级 `china_provinces.geojson`（约 400KB）直接 GeoJSON 加载。
+- 地级三档以 TopoJSON 存储（`china_units.json` 207KB / `china_units_coarse.json` 151KB / `china_units_ultra.json` 117KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
+- 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB / `china_provinces_coarse.geojson` 192KB）。
+- 档位切换由 `renderer.chinaTierMapName()`（地级）与 `provinceTierMapName()`（省级）按 zoom 决定；切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
 
 ## 5. 地名匹配引擎
 
@@ -146,15 +152,19 @@ interface MemoryState {
   vite.config.ts
   index.html
   scripts/
-    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → 拓扑保持简化双档 + 重建元数据（一次性）
+    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化三档 + 重建元数据 + 零共享闸门（一次性）
+    fetch-world-data.mjs  # 世界数据（含 CONTINENT_OF 大洲归属表 → countries.json 的 continent）
     check-data.mjs        # 数据校验（逐面几何 + 单位覆盖）
     build-data.mjs        # ⚠️ 已弃用（DataV 源，逐面有缝隙；仅作元数据生成历史参考）
   public/
     data/
-      china_units.json         # 地级 fine 档（TopoJSON）
-      china_units_coarse.json  # 地级 coarse 档（TopoJSON）
-      china_decorative.geojson # 县级装饰面 + 南海诸岛（DataV 源，补白）
-      china_provinces.geojson  # 省级面（省界粗线 + 省级地图）
+      china_units.json              # 地级 fine 档（TopoJSON，zoom ≥ 10）
+      china_units_coarse.json       # 地级 coarse 档（TopoJSON，5 ≤ zoom < 10）
+      china_units_ultra.json        # 地级 ultra 档（TopoJSON，zoom < 5）
+      china_decorative.geojson      # 县级装饰面 + 南海诸岛（DataV 源，补白）
+      china_provinces.geojson       # 省级面 细档（省界粗线 + 省级地图）
+      china_provinces_coarse.geojson# 省级面 粗档（zoom < 5 的省界粗线）
+      countries.json                # 195 国元数据（含 continent 大洲字段）
       units.json
   src/
     matcher/
@@ -241,8 +251,18 @@ interface MemoryState {
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略（双档，拓扑保持）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分两档，均由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，永不产生缝隙）——
+7. **数据简化策略（三档，拓扑保持 + explode）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分三档，均由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙）——
    - **fine 档** `china_units.json`：keep 15%（展开约 2.7 万顶点），zoom ≥ 10 或已钻省（下钻聚焦看细节）时使用；
-   - **coarse 档** `china_units_coarse.json`：keep 8%（展开约 1.6 万顶点），未钻省且 zoom < 10（全国全景 + 中度放大）时使用；
-   - **省级** `china_provinces.geojson`：单档 keep 15%（约 1 万顶点）。
-   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，两档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`；校验：`scripts/check-data.mjs`。
+   - **coarse 档** `china_units_coarse.json`：keep 8%（展开约 1.8 万顶点），未钻省且 5 ≤ zoom < 10 时使用；
+   - **ultra 档** `china_units_ultra.json`：keep 4%（展开约 1.1 万顶点），未钻省且 zoom < 5（全国全景）时使用；
+   - **省级** `china_provinces.geojson` / `china_provinces_coarse.geojson`：keep 15% / 4%，后者供 zoom < 5 的省界粗线。
+   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，三档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。
+   - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，三档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。
+
+8. **世界粒度的大洲范围（六洲，不含南极洲）**：世界粒度下在「世界/省级/市级」按钮**下方**再出一行分段按钮「全世界 | 亚洲 | 欧洲 | 非洲 | 北美 | 南美 | 大洋洲」。
+   - 大洲归属由 `fetch-world-data.mjs` 的静态 `CONTINENT_OF` 表（iso_a3 → AS/EU/AF/NA/SA/OC）写入 `countries.json` 的 `continent` 字段，不引入额外几何数据。跨洲国家按地理教科书口径：俄罗斯/土耳其/塞浦路斯 → 欧洲，高加索三国/哈萨克斯坦 → 亚洲，埃及 → 非洲，巴拿马 → 北美。分布 AF 54 / AS 46 / EU 46 / NA 23 / SA 12 / OC 14 = 195。
+   - 选某洲后：出题池缩到该洲国家（`worldScopedPool`），地图只渲染该洲面（其他洲隐藏，`worldFeatureVisible` 同时过滤 region/事件/标签），并聚焦该洲。
+   - **聚焦框为手工标定**（`CONTINENT_VIEWS`），不按成员国 bbox 自动计算：跨经线 180° 的海外领地（俄楚科奇、美阿留申、法属波利尼西亚）会让 bbox 撑成 360°，且俄罗斯按惯例归欧洲而主体横跨 20°E–180°E，「包含全部成员」必然把欧洲拉宽到 200°+。标定值确定可测；框外领地仍可拖动到达（roam 已开）。
+   - 大洲用**独立排行榜哨兵** `__continent_<ID>__`（如 `__continent_AS__`，榜名「亚洲榜」），但**熟练度与世界数据集共享**（已答国家在大洲/全世界两种范围下都是绿色）。进度持久化也用独立键（`…:world-continent-AS`）。
+   - 未开始测试时点击某国 → 下钻其所属大洲；已开始 → 正常判题（国家是世界的原子单位）。
+   - 后端白名单同步放行该哨兵（`functions/_lib/validate.ts` 的 `isContinentScope`），排序与提交规则同「全国语义」（答对题数优先、允许未答完但必须全对）。

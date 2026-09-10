@@ -28,6 +28,19 @@ export interface Province {
   center: [number, number];
 }
 
+/** 大洲 id（世界粒度下钻范围；countries.json 的 continent 字段）。 */
+export type Continent = 'AS' | 'EU' | 'AF' | 'NA' | 'SA' | 'OC';
+
+/** 大洲元数据（顺序即 UI 展示顺序）。 */
+export const CONTINENTS: readonly { id: Continent; name: string; short: string }[] = [
+  { id: 'AS', name: '亚洲', short: '亚洲' },
+  { id: 'EU', name: '欧洲', short: '欧洲' },
+  { id: 'AF', name: '非洲', short: '非洲' },
+  { id: 'NA', name: '北美洲', short: '北美' },
+  { id: 'SA', name: '南美洲', short: '南美' },
+  { id: 'OC', name: '大洋洲', short: '大洋洲' },
+] as const;
+
 /** 世界“国家”元数据（public/data/countries.json 生成；iso_a3 为答题 id）。 */
 export interface CountryMeta {
   iso: string;
@@ -35,6 +48,7 @@ export interface CountryMeta {
   fullName: string; // 官方全称（容错输入与展示）
   center: [number, number];
   neighbors: string[]; // 相邻国家 iso 列表
+  continent: Continent; // 所属大洲（世界粒度下钻范围）
 }
 
 export type BoundaryTone = 'light' | 'mid' | 'dark';
@@ -44,8 +58,10 @@ export interface AppData {
   allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
   provinces: Province[];
   geoJson: unknown; // 地级 + 装饰面（fine 档，zoom ≥ 10 / 宽省钻取）
-  coarseGeoJson: unknown; // 地级 + 装饰面（coarse 大幅简化档，zoom < 10）
-  provincesGeoJson: unknown; // 省界图层（粗线）
+  coarseGeoJson: unknown; // 地级 + 装饰面（coarse 档，5 ≤ zoom < 10）
+  ultraGeoJson: unknown; // 地级 + 装饰面（ultra 档，zoom < 5，大幅简化）
+  provincesGeoJson: unknown; // 省界图层（细档：省级视图 / zoom ≥ 5）
+  provincesCoarseGeoJson: unknown; // 省界图层（粗档：地级视图 zoom < 5 的省界粗线）
   countries: CountryMeta[]; // 世界 195 答题国
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
 }

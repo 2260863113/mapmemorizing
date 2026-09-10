@@ -3,7 +3,7 @@ import { normalizeCountryName, stripStateSuffix, WorldMatcher } from './worldNam
 import type { CountryMeta } from './types';
 
 function c(iso: string, name: string, fullName: string): CountryMeta {
-  return { iso, name, fullName, center: [0, 0], neighbors: [] };
+  return { iso, name, fullName, center: [0, 0], neighbors: [], continent: 'AS' };
 }
 
 const FIXTURES: CountryMeta[] = [
