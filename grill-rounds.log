@@ -123,3 +123,34 @@
 - 修法：把洲按钮移到 `#mode-actions` **末尾**，并新增零高度换行占位 `#continent-break`（`flex-basis:100%; width:100%; height:0`）负责折行。洲按钮本身宽度回归内容宽度，顺序/重置回到第一行与「世界/省级/市级」同行。占位元素随洲按钮一同显隐，否则非世界粒度时会凭空多一个空行。
 - 实测（1280×900，probe-layout 11/11 通过）：粒度行 x=16 y=76 w=173；随机/错题 x=199 y=76；重置 x=325 y≈78；洲按钮 x=16 y=133 **w=336**（远小于视口 1280，不再占满屏）。
 - 判定同一 flex 行需用「垂直中心接近（≤3px）+ 垂直区间重叠」，不能用 y 严格相等：分段按钮与 `.mode-action` 的边框/padding 不同会带来约 2px 垂直居中差异（那是基线差异，换行间距是行高量级约 57px）。
+
+## 2026-09-09（修复：缩放跨 5x/10x 仍有左右偏移 —— 换档 center 滞后）
+
+### 现象
+上一轮 boundingCoords 修掉了「上下（纬度）」方向的 bbox 差异偏移（13.8px → 0.003px），但用户反馈跨 5x/10x 时**左右**方向仍小幅异动十几像素。
+
+### 根因（第二个独立 bug）
+- ECharts 滚轮/捏合缩放以**鼠标为锚点**（originX/originY），缩放时 geo 中心会**隐式移动**（锚点缩放）。
+- 但 zoom 事件的 payload 只含 `zoom`/`totalZoom`，**不含 center**（`MapDraw.js` 的 zoom dispatch：仅 `{totalZoom, zoom, originX, originY}`；pan 才是 `{dx, dy}`）。
+- 我们的 georoam 处理器只靠 `params.center` 同步，而 zoom 事件没这字段 → `this.center` 在缩放期间**停留在旧值**。
+- 跨 5x/10x 换档时 `render()` 用这个旧 center 重建 geo（`replaceMerge`）→ 地图跳到旧中心，朝缩放锚点方向偏移十几像素。
+
+### 定位过程（方法论）
+- 第一版探针直接比较不同 zoom 的像素 → 假信号（zoom 变了像素本就该变）。
+- 第二版探针（probe-wheel-shift）用 `dispatchAction geoRoam` 跨档，测「render 前后北京像素漂移」→ 0px，**未复现**，因为手动设 center 绕过了真实缩放路径。
+- 第三版探针（probe-wheel2）用 CDP 真实 mouseWheel，逐帧对比 `renderer.center(rc)` 与 `geo.getCenter()(gc)` → 发现 **rc 落后 gc，mismatch 最高 7.5**（t2-t4 rc 卡在旧值）→ 锁定根因。
+- 换档跳变的正判据：锚点缩放保证「锚点下的地理点钉在锚点」，换档后测该点像素必须仍≈锚点（probe-anchor2 / probe-anchor 锚点误差 0px）。之前用「北京像素步进」判据是错的（北京远离锚点，锚点缩放时本来就会大步移动，几百 px 是正常行为非换档跳变）。
+
+### 修法
+georoam 处理器不再依赖 payload 里的 center，改为从 geo 坐标系读 ECharts 已更新好的**权威** `getCenter()`/`getZoom()`。georoam 事件在 `geoRoam` action 处理完（`updateCenterAndZoom` 已写回 geo center）之后才触发，故此刻读到的必为最新值。
+
+### 关键坑
+- `chart.getCoordinateSystems()[0]` 返回的 geo 对象**可能滞后**（实测 mismatch 非零回潮），必须用 `getModel().getComponent('geo').coordinateSystem`。
+- TS 下 `getModel` 是 private（echarts.js 注释明确「We don't want developers to use getModel directly」，但运行时公开），需 `as unknown as { getModel: ... }` 强转。
+- `getCenter()` 无 projection 时返回的就是 lng/lat 数据坐标，与 `this.center` 语义一致。
+
+### 验证
+- probe-pan（pan 50/30、-80/45、zoom 1.3@800,300、混合）：mismatch 恒 0.0000。
+- probe-wheel2（真实滚轮逐帧）：修复前 mismatch 最高 7.5，修复后恒 0。
+- probe-anchor2（直接跨 5x/10x 边界）：锚点误差 0px。
+- tsc 0、vitest 112、build 通过、check-data 无问题。

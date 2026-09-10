@@ -308,14 +308,35 @@ export class MapRenderer {
         cancelAnimationFrame(this.followRaf);
         this.followRaf = null;
       }
-      const params = p as { zoom?: number; totalZoom?: number; center?: number[] };
-      if (Array.isArray(params.center) && typeof params.center[0] === 'number' && typeof params.center[1] === 'number') {
-        this.center = [params.center[0], params.center[1]];
-      }
-      if (typeof params.totalZoom === 'number') {
-        this.zoom = clampZoom(params.totalZoom);
-      } else if (typeof params.zoom === 'number') {
-        this.zoom = clampZoom(this.zoom * params.zoom);
+      // ECharts 滚轮/捏合缩放以鼠标为锚点，缩放时 geo 中心会**隐式移动**（锚点缩放）；
+      // 但 zoom 事件的 payload 只含 zoom/totalZoom，不含 center（见 MapDraw.js 的
+      // zoom dispatch：仅 {totalZoom, zoom, originX, originY}）。若只靠 payload 里的
+      // params.center 同步，this.center 会在缩放期间停留在旧值 —— 跨 5x/10x 换档时
+      // render() 用这个旧 center 重建 geo，地图就会朝缩放锚点方向跳一下（十几像素）。
+      // 因此这里直接从 geo 坐标系读 ECharts 已经更新好的**权威** center/zoom，而非依赖 payload。
+      // 注：georoam 事件在 geoRoam action 处理完（updateCenterAndZoom 已写回 geo center）之后才触发，
+      // 故此刻读到的 getCenter() 是缩放后的最新值（实测 rc 与 geo 中心恒一致）。
+      const geoModel = (this.chart as unknown as {
+        getModel: () => { getComponent: (t: string) => { coordinateSystem?: { getCenter?: () => number[]; getZoom?: () => number } } | null };
+      }).getModel().getComponent('geo');
+      const geo = geoModel?.coordinateSystem;
+      if (geo?.getCenter && geo?.getZoom) {
+        const c = geo.getCenter();
+        if (c && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+          this.center = [c[0], c[1]];
+        }
+        this.zoom = clampZoom(geo.getZoom() || 1);
+      } else {
+        // 兜底：geo 组件不可得时退回 payload 解析（旧路径，理论不可达）
+        const params = p as { zoom?: number; totalZoom?: number; center?: number[] };
+        if (Array.isArray(params.center) && typeof params.center[0] === 'number' && typeof params.center[1] === 'number') {
+          this.center = [params.center[0], params.center[1]];
+        }
+        if (typeof params.totalZoom === 'number') {
+          this.zoom = clampZoom(params.totalZoom);
+        } else if (typeof params.zoom === 'number') {
+          this.zoom = clampZoom(this.zoom * params.zoom);
+        }
       }
       this.scheduleLabelModeUpdate();
       this.schedulePanClamp(); // 拖动/缩放结束时把地图内容钳回视口内
