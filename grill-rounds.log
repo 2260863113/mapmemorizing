@@ -63,3 +63,25 @@
 - Q8 回退：原成品备份 .precise.bak，可一键还原；check-data.mjs 校验通过才提交。
 离线容差扫描（对现有成品，safeSimplify 同款逻辑）：地级 tol0.008=73,832点(-42%) / tol0.012=53,075点(-58%,1.22MB) / tol0.02=33,145点(-74%,0.78MB)；省级 tol0.012=18,619点(-23%)。面积保真均≥99.98%。
 
+2026-09-09（换源根治地图缝隙：DataV → cn-atlas）
+问题：用户发现相邻地级市之间有缝隙 → 相邻两面边界不是同一条线。量化根因（共享顶点分析，1794 对相邻边）：DataV 原始 586/1794 零共享（32.7%，平均共享 42）；逐面容差简化后 654/1794 零共享（36.5%，平均共享降到 5.7）——源数据本身逐面数字化不共享边，逐面 Douglas-Peucker 又把残余共享顶点拆开，双重恶化。
+候选源实测：cn-atlas（github.com/BarbarossaWang/cn-atlas，shengshixian.com 2023 shp → mapshaper 简化 → TopoJSON，共享弧模型）：prefectures 372 面 / provinces 34 面；adcode 命中现有口径 370/371（仅缺南海装饰面 100000_JD，多出 659011 新星市/659012 白杨市）；相邻边 2/1794 零共享（0.1%，仅上海↔舟山海上飞地），平均共享 83.7。
+已定决策（逐项确认）：
+- Q1 换源方向：用 cn-atlas 替换现有 DataV 几何（省级 + 地级都换，避免省界粗线与地级面错位）。
+- Q2 存储格式：TopoJSON 源 + 运行时 topojson-client 转换（ECharts 不吃 TopoJSON，已核实 echarts/lib/coord/geo 无 arcs 解析）。
+- Q3 简化方式：mapshaper 拓扑保持简化（`-simplify visvalingam keep-shapes`），共享弧只简化一次 → 永不产生缝隙；**禁止**再用 @turf/simplify 逐面简化（正是缝隙加重原因）。
+- Q4 双档保留：fine `keep-shapes 15%`（zoom ≥ 10 / 钻省）+ coarse `keep-shapes 8%`（zoom < 10），档位机制与上轮一致。
+- Q5 港澳台口径：保持现有整体单位（cn-atlas 天然就是 710000/810000/820000 整体，无需归并）。
+- Q6 南海诸岛：保留现有 DataV 装饰面（cn-atlas 无此面），进核心拓扑组一并简化。
+- Q7 县级装饰面（30 个：海南/湖北/新疆省直辖县级与兵团城市、济源等）：cn-atlas 只有地级粒度，从 DataV 单独保留为 `china_decorative.geojson`，运行时拼接、不参与拓扑简化与邻接（其周边可能有局部缝，可接受）。
+- Q8 邻接/中心点：用新几何重建（turf booleanIntersects + bbox 预过滤；中心点取最大面质心，质心出界则回退 bbox 中心/环上点）。
+实测结果：
+- 简化落点（相对 cn-atlas 原始展开 173,282 顶点）：fine 15% → 27,368 顶点（≈15.8%）；coarse 8% → 15,725 顶点（≈9.1%）；省级 15% → 10,548 顶点。文件：china_units.json 188KB / china_units_coarse.json 129KB / china_provinces.geojson 406KB / china_decorative.geojson 21KB。
+- 缝隙闭环验证（运行时转换后的 GeoJSON，1790 对相邻边）：**0 零共享（0%）**，平均共享 14.2；feature 数 371 与 units.json 完全匹配。
+- 拖动帧率（headless Edge，probe-tier）：coarse p95=16.7ms 掉帧 0；fine p95=16.7ms 掉帧 0；zoom 1→25.5→0.8 双档切换正确（较上轮 DataV 双档 p95=33ms 再降一半）。
+- 数据校验（check-data.mjs）：371/371 覆盖、0 无效几何、无问题。
+- 无邻接单位 7 个（舟山/海口/三亚/三沙/儋州/台湾/澳门）与旧数据完全一致（地理事实：被省直辖县级面隔开或为岛屿）。
+- Q9 管线落位：新增 `scripts/fetch-cn-atlas.mjs`（`npm run build:data` 指向它）；删除 `scripts/simplify-data.mjs`（逐面简化＝缝隙根因，且产物已无消费方）；`scripts/build-data.mjs` 保留但标注弃用（units.json 元数据的历史生成参考）。
+- Q10 依赖：topojson-client 进 dependencies（运行时）；mapshaper + @types/topojson-client 进 devDependencies（仅构建期）。
+
+

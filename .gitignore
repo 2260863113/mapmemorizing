@@ -8,3 +8,6 @@ public/data/*.precise.bak
 
 shot-compare
 shot-tier
+shot-seam
+.cnatlas-probe
+.cnatlas-tmp

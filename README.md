@@ -50,8 +50,9 @@ npm run build:data
 ## 项目结构
 
 ```
-scripts/build-data.mjs   # 数据管线：下载 → 合并 → 邻接 → 简化 → 输出
-public/data/             # 构建产物：china_units.geojson + units.json
+scripts/fetch-cn-atlas.mjs # 数据管线：下载 cn-atlas TopoJSON → 拓扑保持简化（双档）→ 输出
+scripts/check-data.mjs     # 数据校验：逐面几何有效性 + 单位覆盖
+public/data/             # 构建产物：china_units.json / china_units_coarse.json（TopoJSON 双档）+ units.json
 src/
   matcher.ts             # 地名规范化 + 模糊匹配 + 消歧
   map/renderer.ts        # ECharts 渲染：着色/标签/下钻/高亮动画

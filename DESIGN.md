@@ -44,23 +44,26 @@
 ## 4. 数据层
 
 ### 4.1 数据源（一次性下载，打包进项目，运行时零网络依赖）
-- [阿里云 DataV.GeoAtlas](https://geodataviewer.com/datasets/boundaries/chinese-admin-boundaries/)：
-  - 34 个省/区/特区文件 `https://geo.datav.aliyun.com/areas_v3/bound/{省adcode}_full.json`（含其下属地级边界，含台湾、南海诸岛）
-  - 省本级面：`https://geo.datav.aliyun.com/areas_v3/bound/{adcode}.json`（用于北京/上海/天津/重庆/香港/澳门/台湾整体单位）
-- 下载后本地打包，避免运行时 403/referrer 限制与接口失效风险。
+- [cn-atlas](https://github.com/BarbarossaWang/cn-atlas)（`shengshixian.com` 2023 行政区划 shp → mapshaper 简化 → TopoJSON，共享弧拓扑，相邻边无缝隙）：
+  - `prefectures` 372 面（地级市/自治州/地区/盟 + 港澳台整体单位）
+  - `provinces` 34 面（省/自治区/直辖市/特别行政区/台湾）
+- 30 个省直辖县级/兵团城市装饰面 + 南海诸岛装饰面来自阿里 DataV（cn-atlas 无县级粒度，仅用于补白，不参与答题/邻接）。
+- 换源原因（2026-09）：DataV 逐面数字化导致相邻边 32.7% 零共享 → 地图缝隙；cn-atlas 共享弧 0% 零共享。
 
-### 4.2 数据管线（scripts/build-data.mjs，Node 脚本，一次性运行）
-1. 按 [民政部区划代码](https://baike.baidu.com/item/%E4%B8%AD%E5%8D%8E%E4%BA%BA%E6%B0%91%E5%85%B1%E5%92%8C%E5%9B%BD%E5%9C%B0%E7%BA%A7%E8%A1%8C%E6%94%BF%E5%8C%BA/62589530) 列表抓取 34 个省级 `_full.json` + 7 个省本级面（京沪津渝港澳台）。
-2. 合并为单个 `china_units.geojson`：
-   - 地级面：从各省 `_full.json` 中取"地级"层级 feature（adcode 末两位为 00 且非省级）
-   - 整体面：京沪津渝港澳台 7 个省本级 feature（name 用"北京""上海"…"台湾"）
-   - 附加南海诸岛 feature（若存在，用于地图完整性展示）
-3. 生成元数据表 `units.json`：`{ adcode, name(全名), shortName(去限定词后的简称), province(所属省), level, center(中心点), pinyin(可选) }`。
-4. 可选优化：用 mapshaper 简化几何（全国面可压到 2–5MB），精度损失可接受。
+### 4.2 数据管线（scripts/fetch-cn-atlas.mjs，Node 脚本，一次性运行）
+1. 下载 cn-atlas TopoJSON，用 topojson-client 展开 prefectures/provinces。
+2. 按现有 `units.json` 白名单对齐 adcode（340 真实地级 + 南海诸岛），字段映射为 `adcode`/`name`。
+3. mapshaper 拓扑保持简化（`visvalingam keep-shapes`，共享弧只简化一次 → 永不产生缝隙）出两档：
+   - `china_units.json`（fine 15%，展开约 2.7 万顶点）——zoom ≥ 10 或钻省
+   - `china_units_coarse.json`（coarse 8%，展开约 1.6 万顶点）——zoom < 10
+4. 省级 `china_provinces.geojson` 同法单档简化（15%）。
+5. 装饰面 `china_decorative.geojson` 单独保留（DataV 源，不进拓扑简化）。
+6. 用 fine 档几何重建 `units.json` 的 center/neighbors。
+- 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用（仅保留 units.json 元数据的初始生成参考）。
 
 ### 4.3 运行时加载
-- 单文件 `china_units.geojson` 一次性加载（gzip 后约 2–5MB，本地项目可接受）。
-- 后续若需优化：按省拆分、ECharts 下钻省地图时按需 `registerMap`。
+- 地级双档以 TopoJSON 存储（`china_units.json`/`china_units_coarse.json`，各 130~190KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
+- 省级 `china_provinces.geojson`（约 400KB）直接 GeoJSON 加载。
 
 ## 5. 地名匹配引擎
 
@@ -143,10 +146,15 @@ interface MemoryState {
   vite.config.ts
   index.html
   scripts/
-    build-data.mjs        # 抓取 DataV → 合并 GeoJSON + 生成元数据表（一次性）
+    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → 拓扑保持简化双档 + 重建元数据（一次性）
+    check-data.mjs        # 数据校验（逐面几何 + 单位覆盖）
+    build-data.mjs        # ⚠️ 已弃用（DataV 源，逐面有缝隙；仅作元数据生成历史参考）
   public/
     data/
-      china_units.geojson
+      china_units.json         # 地级 fine 档（TopoJSON）
+      china_units_coarse.json  # 地级 coarse 档（TopoJSON）
+      china_decorative.geojson # 县级装饰面 + 南海诸岛（DataV 源，补白）
+      china_provinces.geojson  # 省级面（省界粗线 + 省级地图）
       units.json
   src/
     matcher/
@@ -233,8 +241,8 @@ interface MemoryState {
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略（双档）**：地级地图按 zoom 分两档（2026-09-09 二次下调，替代原单档 0.012）——
-   - **fine 档** `china_units.geojson`：tolerance 0.02（点 -74% 至约 3.3 万、面积保真 99.98%），zoom ≥ 10 或已钻省（下钻聚焦看细节）时使用；
-   - **coarse 档** `china_units_coarse.geojson`：tolerance 0.03（点 -82% 至约 2.2 万、面积保真 99.91%），未钻省且 zoom < 10（全国全景 + 中度放大）时使用——该档全国缩放边界偏差 <0.6px 不可感知，换取最大拖动余量；
-   - **省级** `china_provinces.geojson`：单档 tolerance 0.02（点 -49% 至约 1.25 万）。
-   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，两档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。跨度 < 0.2° 的面（岛屿/小县级）跳过简化，简化结果退化时回退原始；离线简化/还原用 `scripts/simplify-data.mjs`（高精度原始在 `.backup-data/`），`scripts/check-data.mjs` 提供逐面校验。
+7. **数据简化策略（双档，拓扑保持）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分两档，均由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，永不产生缝隙）——
+   - **fine 档** `china_units.json`：keep 15%（展开约 2.7 万顶点），zoom ≥ 10 或已钻省（下钻聚焦看细节）时使用；
+   - **coarse 档** `china_units_coarse.json`：keep 8%（展开约 1.6 万顶点），未钻省且 zoom < 10（全国全景 + 中度放大）时使用；
+   - **省级** `china_provinces.geojson`：单档 keep 15%（约 1 万顶点）。
+   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，两档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`；校验：`scripts/check-data.mjs`。

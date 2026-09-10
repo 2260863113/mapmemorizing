@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { feature } from 'topojson-client';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.join(ROOT, 'public', 'data');
@@ -46,7 +47,11 @@ function geoStats(geometry) {
 }
 
 const meta = load('units.json');
-const geo = load('china_units.geojson');
+// 地级 fine 档 TopoJSON → GeoJSON + 装饰面（与运行时 data.ts 同法）
+const fineTopo = load('china_units.json');
+const fineGeo = feature(fineTopo, fineTopo.objects.china);
+const decoGeo = load('china_decorative.geojson');
+const geo = { type: 'FeatureCollection', features: [...fineGeo.features, ...(decoGeo.features ?? [])] };
 const provGeo = fs.existsSync(path.join(DATA, 'china_provinces.geojson')) ? load('china_provinces.geojson') : null;
 
 const byAdcode = new Map(meta.units.map((u) => [u.adcode, u]));

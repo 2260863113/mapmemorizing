@@ -1,5 +1,7 @@
 import type { AppData, CountryMeta, Unit } from './types';
 import { t } from './i18n';
+import { feature } from 'topojson-client';
+import type { Topology, GeometryCollection } from 'topojson-specification';
 
 let cache: AppData | null = null;
 
@@ -9,25 +11,37 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** 把 TopoJSON（objects.china 拓扑对象）转成 GeoJSON，并拼接装饰面（省直辖县级/兵团城市，DataV 源）。 */
+function topoToGeoJson(topo: Topology, decorative: { features?: unknown[] }): unknown {
+  const obj = topo.objects?.china as GeometryCollection | undefined;
+  if (!obj) throw new Error('TopoJSON 缺 objects.china');
+  const geo = feature(topo, obj);
+  const decoFeatures = decorative.features ?? [];
+  return { type: 'FeatureCollection', features: [...geo.features, ...decoFeatures] };
+}
+
 /** 加载数据（public/data 下的构建产物） */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
-  const [meta, geo, coarseGeo, provGeo, worldMeta, worldGeo] = await Promise.all([
+  const [meta, fineTopo, coarseTopo, decorativeGeo, provGeo, worldMeta, worldGeo] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
-    fetchJson<unknown>('data/china_units.geojson'),
-    fetchJson<unknown>('data/china_units_coarse.geojson'),
+    fetchJson<Topology>('data/china_units.json'),
+    fetchJson<Topology>('data/china_units_coarse.json'),
+    fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
     fetchJson<unknown>('data/world.geojson'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
+  const geoJson = topoToGeoJson(fineTopo, decorativeGeo);
+  const coarseGeoJson = topoToGeoJson(coarseTopo, decorativeGeo);
   cache = {
     units,
     allUnits,
     provinces: meta.provinces,
-    geoJson: geo,
-    coarseGeoJson: coarseGeo,
+    geoJson,
+    coarseGeoJson,
     provincesGeoJson: provGeo,
     countries: worldMeta.countries,
     worldGeoJson: worldGeo,
