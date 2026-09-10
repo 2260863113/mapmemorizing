@@ -53,6 +53,8 @@ const fineGeo = feature(fineTopo, fineTopo.objects.china);
 const decoGeo = load('china_decorative.geojson');
 const geo = { type: 'FeatureCollection', features: [...fineGeo.features, ...(decoGeo.features ?? [])] };
 const provGeo = fs.existsSync(path.join(DATA, 'china_provinces.geojson')) ? load('china_provinces.geojson') : null;
+const rawTopo = fs.existsSync(path.join(DATA, 'china_units_raw.json')) ? load('china_units_raw.json') : null;
+const hkmacGeo = fs.existsSync(path.join(DATA, 'hkmac.geojson')) ? load('hkmac.geojson') : null;
 
 const byAdcode = new Map(meta.units.map((u) => [u.adcode, u]));
 const problems = [];
@@ -111,6 +113,37 @@ if (provGeo) {
   console.log(`无效省界: ${pbad}`);
 } else {
   console.log('（尚未生成）');
+}
+
+console.log('\n=== 无压缩 raw 档 ===');
+if (rawTopo && rawTopo.objects?.china) {
+  const rawGeo = feature(rawTopo, rawTopo.objects.china);
+  console.log(`china_units_raw.json: ${rawGeo.features.length} 个 feature`);
+  let rbad = 0;
+  for (const f of rawGeo.features) {
+    const st = geoStats(f.geometry);
+    if (!st.ok) { rbad++; problems.push(`raw 几何无效: ${f.properties.name} (${f.properties.adcode}) - ${st.reason}`); }
+  }
+  console.log(`无效 raw 几何: ${rbad}`);
+} else {
+  problems.push('缺失 china_units_raw.json 或 objects.china');
+}
+
+console.log('\n=== 港澳放大框无压缩面 ===');
+if (hkmacGeo && hkmacGeo.features) {
+  const adcodes = hkmacGeo.features.map((f) => String(f.properties.adcode)).sort();
+  console.log(`hkmac.geojson: ${hkmacGeo.features.length} 个 feature，adcodes=[${adcodes.join(', ')}]`);
+  if (!['440000', '810000', '820000'].every((a) => adcodes.includes(a))) {
+    problems.push(`港澳放大框缺面: 需要 440000/810000/820000，实际 [${adcodes.join(', ')}]`);
+  }
+  let hbad = 0;
+  for (const f of hkmacGeo.features) {
+    const st = geoStats(f.geometry);
+    if (!st.ok) { hbad++; problems.push(`港澳放大框几何无效: ${f.properties.name} (${f.properties.adcode}) - ${st.reason}`); }
+  }
+  console.log(`无效港澳放大框几何: ${hbad}`);
+} else {
+  problems.push('缺失 hkmac.geojson');
 }
 
 console.log('\n=== 问题汇总 ===');

@@ -154,3 +154,26 @@ georoam 处理器不再依赖 payload 里的 center，改为从 geo 坐标系读
 - probe-wheel2（真实滚轮逐帧）：修复前 mismatch 最高 7.5，修复后恒 0。
 - probe-anchor2（直接跨 5x/10x 边界）：锚点误差 0px。
 - tsc 0、vitest 112、build 通过、check-data 无问题。
+
+## 2026-09-09（新需求：港澳无压缩放大框 + 档位重划 10/2 + 取消拖动钳制）
+### 需求（三点）
+1. 港澳小地图**始终**显示最精细地图（不进行任何简化）。
+2. 档位重划：zoom ≥ 10 → 无压缩最精细；~6x → 次精细；< 2 → 最简略。
+3. 取消拖动地图四周边界限制，允许随意移动。
+
+### 决策（用户确认）
+- 三档：**raw(无压缩) ≥10 / fine(次精细) 2~10 / ultra(最简略) <2**；原 coarse 8% 弃用（保留注册兼容）。
+- 无压缩档数据源 = cn-atlas 原始几何（不 mapshaper 简化），**异步加载**：首屏用 fine 渲染，后台拉取 raw，放大到 ≥10 自动切换（失败静默回退 fine）。
+
+### 实现
+- 管线 `fetch-cn-atlas.mjs`：新增 raw 档（未 explode，直接 coreGjFile → topojson）产出 `china_units_raw.json`（889KB，341 面，展开约 16.9 万顶点）；新增 `hkmac.geojson`（从省级无压缩几何抽 440000/810000/820000 三面，125KB，同步加载）。
+- `data.ts`：`loadData()` 增加 `rawGeoJson: null`（占位）+ `hkmacGeoJson` 同步加载；新增 `loadRawGeoJson()` 异步加载 raw。
+- `main.ts`：boot 后 `void loadRawGeoJson().then(app.setRawGeoJson)`。
+- `renderer.ts`：常量 `RAW_ZOOM_MIN=10`、`ULTRA_ZOOM_MAX=2`（原 5）、`PROVINCE_COARSE_ZOOM_MAX=5`（省级档不变）；`chinaTierMapName()` 三档 raw/fine/ultra；新增 `rawReady` + `setRawGeoJson()`；港澳放大框数据源改 `data.hkmacGeoJson`。
+- **取消拖动钳制**：删除 `schedulePanClamp`/`clampPan`/`panClampRaf`/`PAN_MARGIN`/`MAP_BBOX` 及 georoam 里的钳制调用与 dispose 清理。
+
+### 验证（probe-tiers2，11/11 通过）
+- 地级档：zoom 1.5→ultra、2→fine、6→fine、9.9→fine、10→raw、20→raw ✅；省级档 zoom 3→粗档、8→细档 ✅（阈值 5 不变）。
+- 港澳放大框无压缩：香港 283 顶点 vs fine 71、广东 2934 vs 553 ✅。
+- 取消钳制：拖动(1200,600) 后中心移动 127.65°，可自由拖动 ✅。
+- tsc 0、vitest 112/112、build 通过、check-data 无问题（raw/hkmac 均校验）。

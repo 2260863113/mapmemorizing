@@ -27,6 +27,8 @@ describe('buildProvinceAdjacency', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      rawGeoJson: null,
+      hkmacGeoJson: null,
     };
     const adj = buildProvinceAdjacency(data);
     expect([...adj.get('p1')!].sort()).toEqual(['p2']);
@@ -49,6 +51,8 @@ describe('buildProvinceAdjacency', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      rawGeoJson: null,
+      hkmacGeoJson: null,
     };
     expect(buildProvinceAdjacency(data).size).toBe(0);
   });
@@ -67,6 +71,8 @@ describe('provinceUnits', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      rawGeoJson: null,
+      hkmacGeoJson: null,
     };
     const out = provinceUnits(data, new Map([['450000', []]]));
     expect(out.map((x) => [x.adcode, x.shortName])).toEqual([['450000', '广西'], ['110000', '北京']]);
@@ -84,6 +90,8 @@ describe('provinceShortName', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      rawGeoJson: null,
+      hkmacGeoJson: null,
     };
     expect(provinceShortName(data, '450000')).toBe('广西');
     expect(provinceShortName(data, '999999')).toBe('999999');

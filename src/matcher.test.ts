@@ -65,6 +65,8 @@ describe('Matcher.bestUnit', () => {
     worldGeoJson: null,
     ultraGeoJson: null,
     provincesCoarseGeoJson: null,
+    rawGeoJson: null,
+    hkmacGeoJson: null,
   };
   const m = new Matcher(data);
 

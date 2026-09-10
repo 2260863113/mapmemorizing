@@ -60,8 +60,10 @@ export interface AppData {
   geoJson: unknown; // 地级 + 装饰面（fine 档，zoom ≥ 10 / 宽省钻取）
   coarseGeoJson: unknown; // 地级 + 装饰面（coarse 档，5 ≤ zoom < 10）
   ultraGeoJson: unknown; // 地级 + 装饰面（ultra 档，zoom < 5，大幅简化）
+  rawGeoJson: unknown; // 地级 + 装饰面（无压缩档，zoom ≥ 10，异步加载后可用）
   provincesGeoJson: unknown; // 省界图层（细档：省级视图 / zoom ≥ 5）
   provincesCoarseGeoJson: unknown; // 省界图层（粗档：地级视图 zoom < 5 的省界粗线）
+  hkmacGeoJson: unknown; // 港澳放大框无压缩面（广东+香港+澳门，始终最精细不简化）
   countries: CountryMeta[]; // 世界 195 答题国
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
 }

@@ -1,5 +1,6 @@
 // 数据管线：从 cn-atlas（shengshixian.com 2023 拓扑干净的行政区划，TopoJSON）生成中国地图数据。
-// 产出双档 TopoJSON（fine 15% / coarse 8% 拓扑保持简化，无缝隙）+ 装饰面 GeoJSON + 元数据表。
+// 产出三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%，拓扑保持无缝隙）+ 无压缩 raw 档（zoom ≥ 10）
+// + 港澳放大框无压缩面 + 装饰面 GeoJSON + 元数据表。
 //
 // 背景（grill-rounds.log 2026-09-09 换源）：阿里 DataV 逐面数字化导致相邻边 32.7% 零共享 → 缝隙；
 // cn-atlas 用共享弧（TopoJSON），相邻边 0.1% 零共享，且 adcode 与现有 units.json 对齐 370/371。
@@ -239,6 +240,20 @@ async function run() {
     console.log(`  ${name}(${pct}%): arcs=${t.arcs.length} 合并后 features=${t.objects.china.geometries.length}`);
   }
 
+  // raw 档：无压缩（zoom ≥ 10 用），保留 cn-atlas 原始几何，不 simplify。
+  // 体积约 1.3MB，运行期**异步加载**（首屏用 fine 15% 渲染，后台拉 raw，放大到 ≥10 时切换）。
+  // 未 explode：core 里每 adcode 恰一个 feature（无 MultiPolygon 拆分），故无需按 adcode 合并。
+  {
+    const rawOutFile = path.join(TMP, 'china-raw.json');
+    await runCommands(`-i ${coreGjFile} -o format=topojson ${rawOutFile}`);
+    const rawTopo = JSON.parse(fs.readFileSync(rawOutFile, 'utf8'));
+    const rawObjName = Object.keys(rawTopo.objects)[0];
+    rawTopo.objects.china = rawTopo.objects[rawObjName];
+    delete rawTopo.objects[rawObjName];
+    tierTopos.raw = rawTopo;
+    console.log(`  raw(无压缩): arcs=${rawTopo.arcs.length} features=${rawTopo.objects.china.geometries.length}`);
+  }
+
   console.log('[4/6] 装饰面单独保存 + 省级地图（cn-atlas provinces）...');
   const decoFeatures = decoUnits
     .filter((u) => u.adcode !== NANHAI_ADCODE) // 南海已进 core
@@ -259,6 +274,12 @@ async function run() {
   }
   provFeatures.push({ type: 'Feature', properties: { adcode: NANHAI_ADCODE, name: '南海诸岛' }, geometry: nanhai.geometry });
   const provGeoJsonRaw = { type: 'FeatureCollection', features: provFeatures };
+
+  // 港澳放大框：始终用**无压缩原始**几何（不简化），从省级原始几何抽取 广东(440000) + 香港(810000) + 澳门(820000)。
+  // 三面合计仅 ~12KB，运行期同步加载即可。
+  const hkmacFeatures = provFeatures.filter((f) => ['440000', '810000', '820000'].includes(String(f.properties.adcode)));
+  const hkmacGeoJson = { type: 'FeatureCollection', features: hkmacFeatures };
+  console.log(`  港澳放大框无压缩面: ${hkmacFeatures.length} 个`);
 
   // 省级也拓扑保持简化（省界粗线每帧重绘，简化以减重），两档：
   //   fine 15%（省级地图视图 / zoom ≥ 5）、coarse 4%（地级视图下的省界粗线，zoom < 5）
@@ -327,11 +348,13 @@ async function run() {
   fs.writeFileSync(path.join(OUT_DIR, 'china_units.json'), JSON.stringify({ ...tierTopos.fine, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_coarse.json'), JSON.stringify({ ...tierTopos.coarse, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_ultra.json'), JSON.stringify({ ...tierTopos.ultra, _source: SOURCE_NOTE }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units_raw.json'), JSON.stringify({ ...tierTopos.raw, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_decorative.geojson'), JSON.stringify(decoGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify(provGeoJsons.fine));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify(provGeoJsons.coarse));
+  fs.writeFileSync(path.join(OUT_DIR, 'hkmac.geojson'), JSON.stringify(hkmacGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'units.json'), JSON.stringify({ units: allUnits, provinces: meta.provinces }));
-  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson']) {
+  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_raw.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'hkmac.geojson']) {
     console.log(`  ${f}: ${(fs.statSync(path.join(OUT_DIR, f)).size / 1024).toFixed(0)}KB`);
   }
 }
