@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildProvinceAdjacency, continentFromScope, continentScope, isNationLikeScope, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE } from './province';
 import { CONTINENTS } from './types';
-import type { AppData, Unit, Province } from './types';
+import type { Unit, Province } from './types';
+import { makeAppData } from './testFixture';
 
 function u(adcode: string, provinceAdcode: string, neighbors: string[] = []): Unit {
   return { adcode, name: adcode, shortName: adcode, province: 'P', provinceAdcode, center: [0, 0], neighbors, decorative: false };
@@ -12,71 +13,35 @@ function p(adcode: string, name: string): Province {
 
 describe('buildProvinceAdjacency', () => {
   it('aggregates cross-province unit neighbors into province adjacency', () => {
-    const data: AppData = {
+    const data = makeAppData({
       units: [
         u('a1', 'p1', ['a2', 'b1']),
         u('a2', 'p1', ['a1']),
         u('b1', 'p2', ['a1']),
       ],
-      allUnits: [],
       provinces: [p('p1', '省一'), p('p2', '省二')],
-      geoJson: null,
-      coarseGeoJson: null,
-      provincesGeoJson: null,
-      countries: [],
-      worldGeoJson: null,
-      ultraGeoJson: null,
-      provincesCoarseGeoJson: null,
-      provincesRawGeoJson: null,
-      losslessGeoJson: null,
-      hkmacGeoJson: null,
-    };
+    });
     const adj = buildProvinceAdjacency(data);
     expect([...adj.get('p1')!].sort()).toEqual(['p2']);
     expect([...adj.get('p2')!].sort()).toEqual(['p1']);
   });
 
   it('ignores decorative units and intra-province neighbors', () => {
-    const data: AppData = {
+    const data = makeAppData({
       units: [
         u('a1', 'p1', ['a2', 'dec']),
         u('a2', 'p1', ['a1']),
         { ...u('dec', 'p2', ['a1']), decorative: true },
       ],
-      allUnits: [],
       provinces: [p('p1', '省一'), p('p2', '省二')],
-      geoJson: null,
-      coarseGeoJson: null,
-      provincesGeoJson: null,
-      countries: [],
-      worldGeoJson: null,
-      ultraGeoJson: null,
-      provincesCoarseGeoJson: null,
-      provincesRawGeoJson: null,
-      losslessGeoJson: null,
-      hkmacGeoJson: null,
-    };
+    });
     expect(buildProvinceAdjacency(data).size).toBe(0);
   });
 });
 
 describe('provinceUnits', () => {
   it('models provinces as virtual units with normalized short names', () => {
-    const data: AppData = {
-      units: [],
-      allUnits: [],
-      provinces: [p('450000', '广西壮族自治区'), p('110000', '北京市')],
-      geoJson: null,
-      coarseGeoJson: null,
-      provincesGeoJson: null,
-      countries: [],
-      worldGeoJson: null,
-      ultraGeoJson: null,
-      provincesCoarseGeoJson: null,
-      provincesRawGeoJson: null,
-      losslessGeoJson: null,
-      hkmacGeoJson: null,
-    };
+    const data = makeAppData({ provinces: [p('450000', '广西壮族自治区'), p('110000', '北京市')] });
     const out = provinceUnits(data, new Map([['450000', []]]));
     expect(out.map((x) => [x.adcode, x.shortName])).toEqual([['450000', '广西'], ['110000', '北京']]);
     expect(out[0].decorative).toBe(false);
@@ -85,18 +50,7 @@ describe('provinceUnits', () => {
 
 describe('provinceShortName', () => {
   it('returns normalized province short name', () => {
-    const data: AppData = {
-      units: [], allUnits: [],
-      provinces: [p('450000', '广西壮族自治区')],
-      geoJson: null, coarseGeoJson: null, provincesGeoJson: null,
-      countries: [],
-      worldGeoJson: null,
-      ultraGeoJson: null,
-      provincesCoarseGeoJson: null,
-      provincesRawGeoJson: null,
-      losslessGeoJson: null,
-      hkmacGeoJson: null,
-    };
+    const data = makeAppData({ provinces: [p('450000', '广西壮族自治区')] });
     expect(provinceShortName(data, '450000')).toBe('广西');
     expect(provinceShortName(data, '999999')).toBe('999999');
   });

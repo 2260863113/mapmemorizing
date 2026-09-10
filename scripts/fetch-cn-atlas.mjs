@@ -374,7 +374,7 @@ async function run() {
   coreFeatures.push({ type: 'Feature', properties: { adcode: NANHAI_ADCODE, name: '南海诸岛' }, geometry: nanhai.geometry });
   console.log(`  另补南海诸岛 1 面（cn-atlas 无；远离大陆，不产生接缝）`);
 
-  console.log('[3/6] 拓扑保持简化出 fine/coarse/ultra 三档 ...');
+  console.log('[3/6] 拓扑保持简化出 ultra/pro/fine/plus 四档 ...');
   const baseGeoJson = { type: 'FeatureCollection', features: coreFeatures };
   const coreGjFile = path.join(TMP, 'china-core.geojson');
   fs.writeFileSync(coreGjFile, JSON.stringify(baseGeoJson));
@@ -402,10 +402,15 @@ async function run() {
   const explodedFile = path.join(TMP, 'china-core-exploded.geojson');
   await runCommands(`-i ${snappedFile} -explode -o format=geojson ${explodedFile}`);
 
-  // 三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%）。
-  // 注意：zoom ≥ 14 用的最精细档（无压缩，约 9.7 万顶点）在 fine 之上就地生成，
+  // 四档简化 TopoJSON。精细度阶梯（顶点保留比例）：
+  //   ultra 4%  →  pro 8%  →  fine 15%  →  plus 40%  →  lossless 100%（下方单独生成）
+  // pro 取 8%：位于 ultra(4%) 与 fine(15%) 之间（几何中点 √(4×15)≈7.7）；
+  // plus 取 40%：位于 fine(15%) 与 lossless(100%) 之间（几何中点 √(15×100)≈38.7）。
+  // 注意 pro 8% 与本项目历史上已弃用的 coarse 8% 是**同一个比例**，故 pro 的产物
+  // 同时写一份到 china_units_coarse.json，保证旧缓存里的老 bundle 仍能取到该文件。
+  // 注意：zoom ≥ 14 用的最精细档（无压缩，约 9.7 万顶点）在下方单独生成，
   // 见下方 losslessTopo（不经过 -simplify，直接由 exploded 拓扑导出）。
-  const tiers = [['fine', 15], ['coarse', 8], ['ultra', 4]];
+  const tiers = [['ultra', 4], ['pro', 8], ['fine', 15], ['plus', 40]];
   const tierTopos = {};
   for (const [name, pct] of tiers) {
     const outFile = path.join(TMP, `china-${name}.json`);
@@ -419,6 +424,8 @@ async function run() {
     tierTopos[name] = t;
     console.log(`  ${name}(${pct}%): arcs=${t.arcs.length} 合并后 features=${t.objects.china.geometries.length}`);
   }
+  // 历史文件名兼容：coarse 8% 与 pro 8% 内容完全相同，直接复用同一份拓扑。
+  tierTopos.coarse = tierTopos.pro;
 
   // 最精细档 = 无损（无简化）：zoom ≥ 14 时使用。
   // 卡顿问题改由「视口裁剪」解决（见 src/map/cull.ts），而非降顶点：
@@ -461,21 +468,33 @@ async function run() {
   const hkmacGeoJson = { type: 'FeatureCollection', features: hkmacFeatures };
   console.log(`  港澳放大框无压缩面: ${hkmacFeatures.length} 个`);
 
-  // 省级也拓扑保持简化（省界粗线每帧重绘，简化以减重），两档：
-  //   fine 15%（省级地图视图 / zoom ≥ 5）、coarse 4%（地级视图下的省界粗线，zoom < 5）
+  // 省级也拓扑保持简化（省界粗线每帧重绘，简化以减重），四档，与地级精细度阶梯对齐：
+  //   ultra 4% (<2) / pro 8% (2~6) / fine 15% (6~10) / plus 40% (10~14)；lossless 走下方 raw 档。
   // 同地级：先 -explode 保护 MultiPolygon 内部小环（如沿海岛屿），简化后按 adcode 合并回来。
+  //
+  // **存 TopoJSON 而非 GeoJSON**（本次修正）：省级面与地级面一样是拓扑相邻的，共享弧压缩收益极大。
+  // 实测同顶点数下 TopoJSON 比 GeoJSON 小 78%~84%（plus 40%: 1087KB → 174KB），
+  // 且 plus 档若存 GeoJSON 会比**100% 的无损档 TopoJSON（396KB）还大 2.7 倍**，明显不合理。
+  // 运行期由 data.ts 的 topoToGeoJson() 统一转回 GeoJSON，下游（renderer/inset）无需改动。
   const provGjFile = path.join(TMP, 'china-provinces.geojson');
   fs.writeFileSync(provGjFile, JSON.stringify(provGeoJsonRaw));
   const provExploded = path.join(TMP, 'china-provinces-exploded.geojson');
   await runCommands(`-i ${provGjFile} -explode -o format=geojson ${provExploded}`);
-  const provTiers = [['fine', 15], ['coarse', 4]];
-  const provGeoJsons = {};
+  const provTiers = [['ultra', 4], ['pro', 8], ['fine', 15], ['plus', 40]];
+  const provTopos = {};
   for (const [name, pct] of provTiers) {
-    const outFile = path.join(TMP, `china-provinces-out-${name}.geojson`);
-    await runCommands(`-i ${provExploded} -simplify visvalingam keep-shapes ${pct}% -o format=geojson ${outFile}`);
-    provGeoJsons[name] = mergeFeaturesByAdcode(JSON.parse(fs.readFileSync(outFile, 'utf8')));
-    console.log(`  省级面 ${name}(${pct}%): ${provGeoJsons[name].features.length} 个`);
+    const outFile = path.join(TMP, `china-provinces-out-${name}.json`);
+    await runCommands(`-i ${provExploded} -simplify visvalingam keep-shapes ${pct}% -o format=topojson ${outFile}`);
+    const t = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const objName = Object.keys(t.objects)[0];
+    t.objects.china = mergeGeometriesByAdcode(t.objects[objName]);
+    delete t.objects[objName];
+    t._source = SOURCE_NOTE;
+    provTopos[name] = t;
+    console.log(`  省级面 ${name}(${pct}%): arcs=${t.arcs.length} features=${t.objects.china.geometries.length}`);
   }
+  // 历史文件名兼容：省级 coarse 4% 与 ultra 4% 内容完全相同（旧 bundle 会请求 china_provinces_coarse.geojson）。
+  provTopos.coarse = provTopos.ultra;
 
   // 省级无损档（zoom ≥ 14 用）：无压缩，转 TopoJSON 共享弧压缩（2632KB GeoJSON → 396KB TopoJSON）。
   // 面积小可同步加载，无需像地级 raw 那样异步。
@@ -543,7 +562,11 @@ async function run() {
   console.log(`  源拓扑真相邻（共享 ≥1 arc）: ${srcPairs.size} 对`);
   const tierStats = {};
   let gateFail = false;
+  // 只闸门**唯一**档位：coarse 是 pro 的别名（同一份拓扑对象），重复检查无意义。
+  const seenTier = new Set();
   for (const [name, topo] of Object.entries(tierTopos)) {
+    if (seenTier.has(topo)) continue;
+    seenTier.add(topo);
     const gj = feature(topo, topo.objects.china);
     const st = sharedVertexStats(gj, allUnits);
     tierStats[name] = st;
@@ -565,21 +588,43 @@ async function run() {
     process.exit(1);
   }
 
-  fs.writeFileSync(path.join(OUT_DIR, 'china_units.json'), JSON.stringify({ ...tierTopos.fine, _source: SOURCE_NOTE }));
-  fs.writeFileSync(path.join(OUT_DIR, 'china_units_coarse.json'), JSON.stringify({ ...tierTopos.coarse, _source: SOURCE_NOTE }));
+  // ── 地级五档 ──────────────────────────────────────────────────────────────
+  // 精细度阶梯：ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_ultra.json'), JSON.stringify({ ...tierTopos.ultra, _source: SOURCE_NOTE }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units_pro.json'), JSON.stringify({ ...tierTopos.pro, _source: SOURCE_NOTE }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units.json'), JSON.stringify({ ...tierTopos.fine, _source: SOURCE_NOTE }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units_plus.json'), JSON.stringify({ ...tierTopos.plus, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_lossless.json'), JSON.stringify({ ...tierTopos.lossless, _source: SOURCE_NOTE }));
-  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify(provGeoJsons.fine));
-  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify(provGeoJsons.coarse));
+  // 历史文件名（旧缓存里的老 bundle 仍会请求这两个文件；内容与 pro 8% / ultra 4% 完全相同）
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units_coarse.json'), JSON.stringify({ ...tierTopos.coarse, _source: SOURCE_NOTE }));
+  // ── 省级五档（TopoJSON；运行期 topoToGeoJson 转回 GeoJSON）──────────────────
+  // 命名与地级对称：无后缀 = fine 15%，其余带档位后缀。
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_ultra.json'), JSON.stringify(provTopos.ultra));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_pro.json'), JSON.stringify(provTopos.pro));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.json'), JSON.stringify(provTopos.fine));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_plus.json'), JSON.stringify(provTopos.plus));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_raw.json'), JSON.stringify({ ...provRawTopo, _source: SOURCE_NOTE }));
+  // ── 历史文件名（仅服务「旧缓存 index.html → 旧 hash bundle」）─────────────────
+  // 旧 bundle 会请求这两个 GeoJSON 文件名。保留它们可让缓存未过期的用户仍能正常加载，
+  // 代价是 658KB 冗余静态资源；新 bundle 一律只读上面的 TopoJSON。
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify({ type: 'FeatureCollection', features: feature(provTopos.fine, provTopos.fine.objects.china).features }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify({ type: 'FeatureCollection', features: feature(provTopos.ultra, provTopos.ultra.objects.china).features }));
   fs.writeFileSync(path.join(OUT_DIR, 'hkmac.geojson'), JSON.stringify(hkmacGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'units.json'), JSON.stringify({ units: allUnits, provinces: meta.provinces }));
-  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_lossless.json', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
+  for (const f of ['china_units.json', 'china_units_ultra.json', 'china_units_pro.json', 'china_units_plus.json', 'china_units_lossless.json', 'china_provinces.json', 'china_provinces_ultra.json', 'china_provinces_pro.json', 'china_provinces_plus.json', 'china_provinces_raw.json', 'hkmac.geojson']) {
     console.log(`  ${f}: ${(fs.statSync(path.join(OUT_DIR, f)).size / 1024).toFixed(0)}KB`);
   }
-  // 退役产物：装饰面已并入地级拓扑，运行时不再单独加载。
-  const stale = path.join(OUT_DIR, 'china_decorative.geojson');
-  if (fs.existsSync(stale)) { fs.unlinkSync(stale); console.log('  已删除退役产物 china_decorative.geojson（装饰面已并入拓扑）'); }
+  // 退役产物清理。
+  //   1) china_decorative.geojson：装饰面已并入地级拓扑，运行时不再单独加载。
+  //   2) china_provinces_{ultra,pro,plus}.geojson：省级各档曾短暂以 GeoJSON 输出，现改回 TopoJSON
+  //      （同顶点数下小 78%~84%，plus 档 1087KB → 174KB）。旧文件留着只会浪费带宽，删掉。
+  //      注意 china_provinces.geojson 与 china_provinces_coarse.geojson **不删**：它们是
+  //      历史文件名，仍由本脚本写入，服务「旧 index.html + 旧 hash bundle」的缓存用户。
+  const stale = ['china_decorative.geojson', 'china_provinces_ultra.geojson', 'china_provinces_pro.geojson', 'china_provinces_plus.geojson'];
+  for (const f of stale) {
+    const p = path.join(OUT_DIR, f);
+    if (fs.existsSync(p)) { fs.unlinkSync(p); console.log(`  已删除退役产物 ${f}`); }
+  }
 }
 
 run().catch((e) => { console.error('FAIL:', e.message); process.exit(1); });

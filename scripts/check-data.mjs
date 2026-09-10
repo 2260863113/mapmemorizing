@@ -119,6 +119,26 @@ if (provGeo) {
   console.log('（尚未生成）');
 }
 
+console.log('\n=== 省级五档（与地级同一精细度阶梯）===');
+// 省级各档现在存 TopoJSON（比同顶点数的 GeoJSON 小 78%~84%），运行期由 data.ts 转回 GeoJSON。
+for (const [label, file] of [['ultra 4%', 'china_provinces_ultra.json'], ['pro 8%', 'china_provinces_pro.json'],
+  ['fine 15%', 'china_provinces.json'], ['plus 40%', 'china_provinces_plus.json'], ['lossless 100%', 'china_provinces_raw.json']]) {
+  if (!fs.existsSync(path.join(DATA, file))) { problems.push(`缺失省级档 ${file}`); continue; }
+  const topo = load(file);
+  const obj = topo?.objects?.china;
+  if (!obj) { problems.push(`省级档 ${file} 缺 objects.china`); continue; }
+  const gj = feature(topo, obj);
+  let bad = 0, verts = 0;
+  for (const f of gj.features ?? []) {
+    const st = geoStats(f.geometry);
+    verts += st.points ?? 0;
+    if (!st.ok) bad++;
+  }
+  const ok = bad === 0;
+  console.log(`  ${label.padEnd(14)} ${file.padEnd(30)} ${String(gj.features.length).padStart(3)} 面 ${String(verts).padStart(6)} 顶点 ${ok ? '✅' : '❌'}`);
+  if (!ok) problems.push(`省级档 ${file} 有 ${bad} 个无效几何`);
+}
+
 console.log('\n=== 地级无损档（zoom ≥ 14，100% 顶点；靠视口裁剪保证流畅） ===');
 if (losslessTopo && losslessTopo.objects?.china) {
   const losslessGeo = feature(losslessTopo, losslessTopo.objects.china);
@@ -176,8 +196,9 @@ if (hkmacGeo && hkmacGeo.features) {
 // 共享 0 条 arc，units.json 里也互不为邻居）、三亚市(460200)↔五指山市(469001)（同理）。
 // 而 neighbors 是**结构性**事实，无歧义。
 {
-  const tierFiles = [['fine', 'china_units.json'], ['coarse', 'china_units_coarse.json'],
-    ['ultra', 'china_units_ultra.json'], ['lossless', 'china_units_lossless.json']];
+  // 五档精细度阶梯：ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%
+  const tierFiles = [['ultra', 'china_units_ultra.json'], ['pro', 'china_units_pro.json'],
+    ['fine', 'china_units.json'], ['plus', 'china_units_plus.json'], ['lossless', 'china_units_lossless.json']];
   const meta = load('units.json');
   const byAd = new Map((meta.units ?? []).map((u) => [String(u.adcode), u]));
 
@@ -265,7 +286,7 @@ console.log('\n=== 空洞检查（多边形内环是否被相邻面填满）==='
     }
     return m;
   };
-  for (const [label, file] of [['fine', 'china_units.json'], ['coarse', 'china_units_coarse.json'], ['ultra', 'china_units_ultra.json'], ['lossless', 'china_units_lossless.json']]) {
+  for (const [label, file] of [['ultra', 'china_units_ultra.json'], ['pro', 'china_units_pro.json'], ['fine', 'china_units.json'], ['plus', 'china_units_plus.json'], ['lossless', 'china_units_lossless.json']]) {
     const topo = load(file);
     const obj = topo?.objects?.china;
     if (!obj) continue;

@@ -6,6 +6,7 @@ import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
 import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
 import { InsetMap } from './inset';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
+import { TIER_ZOOM_MIN, tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
 import {
   CITY_LABEL_SIZE,
   PRICE_LABEL_SIZE,
@@ -28,17 +29,22 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-/** 地级档阈值（三档：lossless 100% ≥14 / 次精细 fine 15% 6~14 / 最简略 ultra 4% <6）。 */
-const LOSSLESS_ZOOM_MIN = 14; // zoom ≥ 14 用无损档（100% 顶点，靠视口裁剪保证流畅）
-const ULTRA_ZOOM_MAX = 6; // zoom < 6 用 ultra 档（最简略）
+// 五档缩放档位的阈值与地图名映射统一放在 ./tiers.ts（纯逻辑 + 单测覆盖），
+// renderer 只经 activeTier() / chinaTierMapName() / provinceTierMapName() 间接使用，
+// 避免地级与省级各写一套阈值而漂移。见该文件顶部注释的精细度阶梯表。
 /** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
-  'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 档与 fine 同数据范围
-  'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档与 fine 同数据范围
-  'china-lossless': { center: [104.3, 28.5], zoom: 1 }, // 无损档与 fine 同数据范围
+  'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 历史别名（= pro 档），同数据范围
+  'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档同数据范围
+  'china-pro': { center: [104.3, 28.5], zoom: 1 }, // pro 档同数据范围
+  'china-plus': { center: [104.3, 28.5], zoom: 1 }, // plus 档同数据范围
+  'china-lossless': { center: [104.3, 28.5], zoom: 1 }, // 无损档同数据范围
   'china-provinces': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级 coarse 档（已弃用，保留兼容）
+  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级 coarse 历史别名（= ultra 档）
+  'china-provinces-ultra': { center: [104.3, 28.5], zoom: 1 },
+  'china-provinces-pro': { center: [104.3, 28.5], zoom: 1 },
+  'china-provinces-plus': { center: [104.3, 28.5], zoom: 1 },
   'china-provinces-raw': { center: [104.3, 28.5], zoom: 1 }, // 省级无损档同数据范围
   world: { center: [0, -3.2], zoom: 1 },
 };
@@ -52,7 +58,7 @@ const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> 
  * bbox 一变，投影比例与居中偏移就变，于是缩放跨换档阈值触发换档时整幅地图微移、
  * 鼠标所指位置出现偏移。
  *
- * 用 boundingCoords 把投影范围钉成常量后，fine/coarse/ultra 与省级两档共用同一投影，
+ * 用 boundingCoords 把投影范围钉成常量后，地级五档与省级五档共用同一投影，
  * 换档前后同一经纬度的像素位置完全一致（这也是「地图不因换档移动」的根本保证）。
  * 取值与中国族各档数据的实际并集一致，保证默认视野与钉死前完全相同。
  */
@@ -111,9 +117,10 @@ export class MapRenderer {
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
   private adcodeToUnit = new Map<string, Unit>();
-  /** 省界线两档（次精细档：zoom < 14；无损档：zoom ≥ 14，与地级无损档阈值一致）。 */
-  private provinceLinesFine: { adcode: string; coords: number[][] }[] = [];
-  private provinceLinesRaw: { adcode: string; coords: number[][] }[] = [];
+  /** 省界线五档折线（与地级档位阈值完全一致，见文件顶部阈值注释）。 */
+  private provinceLines: Record<'ultra' | 'pro' | 'fine' | 'plus' | 'lossless', { adcode: string; coords: number[][] }[]> = {
+    ultra: [], pro: [], fine: [], plus: [], lossless: [],
+  };
   private labelAnchors = new Map<string, GeoPoint>();
   private provinceLabelAnchors = new Map<string, GeoPoint>();
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
@@ -160,13 +167,20 @@ export class MapRenderer {
   onZoomChange: (() => void) | null = null;
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
-    echarts.registerMap('china', data.geoJson as never);
-    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（保留注册，避免旧缓存引用）
-    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 6，大幅简化）
-    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // 地级无损档（zoom ≥ 14，100% 顶点）
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（次精细档，zoom < 14）
-    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（coarse 4%，已弃用；保留注册避免旧缓存引用）
-    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // 省级地图（无损档，zoom ≥ 14）
+    // 地级五档（精细度阶梯 ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%）
+    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // zoom < 2
+    echarts.registerMap('china-pro', data.proGeoJson as never); // 2 ≤ zoom < 6
+    echarts.registerMap('china', data.geoJson as never); // 6 ≤ zoom < 10（fine 15%）
+    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 历史别名 = pro 档，保留注册避免旧缓存引用
+    echarts.registerMap('china-plus', data.plusGeoJson as never); // 10 ≤ zoom < 14
+    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // zoom ≥ 14（100% 顶点）
+    // 省级五档（与地级同一套阈值）
+    echarts.registerMap('china-provinces-ultra', data.provincesUltraGeoJson as never); // zoom < 2
+    echarts.registerMap('china-provinces-pro', data.provincesProGeoJson as never); // 2 ≤ zoom < 6
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 6 ≤ zoom < 10（fine 15%）
+    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 历史别名 = ultra 档
+    echarts.registerMap('china-provinces-plus', data.provincesPlusGeoJson as never); // 10 ≤ zoom < 14
+    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // zoom ≥ 14（100% 顶点）
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     this.inset = new InsetMap({
       theme: () => this.theme(),
@@ -183,8 +197,11 @@ export class MapRenderer {
       this.nameToUnit.set(u.name, u);
       this.adcodeToUnit.set(u.adcode, u);
     }
-    this.provinceLinesFine = this.buildProvinceLines();
-    this.provinceLinesRaw = this.buildProvinceLines(data.provincesRawGeoJson);
+    this.provinceLines.ultra = this.buildProvinceLines(data.provincesUltraGeoJson);
+    this.provinceLines.pro = this.buildProvinceLines(data.provincesProGeoJson);
+    this.provinceLines.fine = this.buildProvinceLines(data.provincesGeoJson);
+    this.provinceLines.plus = this.buildProvinceLines(data.provincesPlusGeoJson);
+    this.provinceLines.lossless = this.buildProvinceLines(data.provincesRawGeoJson);
     this.labelAnchors = this.buildLabelAnchors();
     this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
     // 省全名 → 省 adcode（省级地图点击/悬浮命中整省时回传）
@@ -534,8 +551,8 @@ export class MapRenderer {
     return MAP_THEMES[this.themeName];
   }
 
-  /** 省界折线：省界 GeoJSON 的每个环转为线坐标（用于 lines 系列粗线渲染） */
-  private buildProvinceLines(src?: unknown): { adcode: string; coords: number[][] }[] {
+  /** 省界折线：省界 GeoJSON 的每个环转为线坐标（用于 lines 系列粗线渲染）。五个档位各调一次。 */
+  private buildProvinceLines(src: unknown): { adcode: string; coords: number[][] }[] {
     const geo = (src ?? this.data.provincesGeoJson) as {
       features: { properties: { adcode: string }; geometry: { type: string; coordinates: unknown } }[];
     };
@@ -557,9 +574,17 @@ export class MapRenderer {
     return out;
   }
 
-  /** 省界线当前档：zoom ≥ 14 用无损档，否则用次精细档（14x 以下始终次精细，不再降级到 coarse）。 */
+  /**
+   * 按 zoom 解析当前档位（阈值与映射见 ./tiers.ts，有单测覆盖）。
+   * 钻省时强制 lossless：钻省后视口只剩一个省，顶点再多也被裁剪挡住。
+   */
+  private activeTier(): Tier {
+    return tierOfZoom(this.zoom, this.viewProvince !== null);
+  }
+
+  /** 省界线当前档（与地级档位同步换档，五档）。 */
   private activeProvinceLines(): { adcode: string; coords: number[][] }[] {
-    return this.zoom >= LOSSLESS_ZOOM_MIN ? this.provinceLinesRaw : this.provinceLinesFine;
+    return this.provinceLines[this.activeTier()];
   }
 
   /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
@@ -829,7 +854,7 @@ export class MapRenderer {
     if (this.labelUpdateTimer !== null) window.clearTimeout(this.labelUpdateTimer);
     this.labelUpdateTimer = window.setTimeout(() => {
       this.labelUpdateTimer = null;
-      // zoom 停止变化后：先按 zoom 档位决定是否换地级地图档（coarse/fine），再刷标签。
+      // zoom 停止变化后：先按 zoom 档位决定是否换地图档（五档），再刷标签。
       // 换档需完整 render（replaceMerge 重建 geo），不能只 applyLabelMode。
       const settledMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
       const applied = this.appliedMapName;
@@ -847,7 +872,7 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode(state);
     this.labelScaleApplied = labelScale(this.zoom);
 
-    // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图（按 zoom/钻省切 coarse/fine 档）
+    // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图（按 zoom/钻省切五档）
     const mapName = this.currentMapName();
     // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
     const eventData = this.worldMode
@@ -1255,20 +1280,17 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
-  /** 地级档应使用的地图名：无损 100%（≥14 或已钻省）→ 次精细 fine（6~14）→ 最简略 ultra（<6）。 */
+  /** 地级地图名（五档，映射见 ./tiers.ts）。钻省同样走 lossless。 */
   private chinaTierMapName(): string {
-    if (this.viewProvince !== null) return 'china-lossless'; // 钻省用最精细档
-    if (this.zoom >= LOSSLESS_ZOOM_MIN) return 'china-lossless';
-    if (this.zoom < ULTRA_ZOOM_MAX) return 'china-ultra';
-    return 'china'; // 次精细（fine 15%）
+    return chinaMapNameForTier(this.activeTier());
   }
 
-  /** 省级档应使用的地图名（zoom ≥ 14 用无损档，14x 以下始终用次精细档）。 */
+  /** 省级地图名（五档，与地级同一套阈值）。 */
   private provinceTierMapName(): string {
-    return this.zoom >= LOSSLESS_ZOOM_MIN ? 'china-provinces-raw' : 'china-provinces';
+    return provinceMapNameForTier(this.activeTier());
   }
 
-  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图（按 zoom 分档），否则地级地图（按 zoom 切三档）。 */
+  /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图，否则地级地图（均按 zoom 切五档）。 */
   private currentMapName(): string {
     if (this.worldMode) return 'world';
     if (this.provinceMode) return this.provinceTierMapName();

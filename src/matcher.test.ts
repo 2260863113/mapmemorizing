@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalize, normalizeProvince, Matcher } from './matcher';
-import type { AppData, Unit, Province } from './types';
+import type { Unit, Province } from './types';
+import { makeAppData } from './testFixture';
 
 describe('normalize', () => {
   it('strips whitespace and lowercases', () => {
@@ -51,24 +52,13 @@ function unit(adcode: string, name: string, shortName: string, province: string,
 }
 
 describe('Matcher.bestUnit', () => {
-  const data: AppData = {
+  const data = makeAppData({
     units: [
       unit('522700', '黔南布依族苗族自治州', '黔南', '贵州省', '520000'),
       unit('422800', '恩施土家族苗族自治州', '恩施', '湖北省', '420000'),
     ],
-    allUnits: [],
     provinces: [{ adcode: '520000', name: '贵州省', center: [0, 0] }],
-    geoJson: null,
-    coarseGeoJson: null,
-    provincesGeoJson: null,
-    countries: [],
-    worldGeoJson: null,
-    ultraGeoJson: null,
-    provincesCoarseGeoJson: null,
-    provincesRawGeoJson: null,
-    losslessGeoJson: null,
-    hkmacGeoJson: null,
-  };
+  });
   const m = new Matcher(data);
 
   it('matches by exact normalized short name', () => {

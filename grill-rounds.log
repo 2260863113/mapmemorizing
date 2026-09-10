@@ -428,3 +428,78 @@ cn-atlas 的 `prefectures` 在新疆有两个面不在白名单里，其区域�
 - tsc 0、vitest **112/112**、build 通过（bundle 1,222.30 kB / gzip 393.59 kB，只换数据 hash 未变）。
 - 临时脚本已全部删除（含未被 .gitignore 覆盖的 `exp-*`/`ver-*`）。
 
+
+---
+
+## 第 N+1 轮：2~6 倍加 pro、10~14 倍加 plus（地级 + 省级同档）
+
+### 需求
+- 用户原话：「在 2-6 的缩放倍率加一个 pro 地级市和省级边界（精细度介于 ultra 和 fine 之间），10-14 倍率就加一个 plus 地级市和省级边界（精细度介于 fine 和 lossless 之间）。」
+- 即从三档变五档：`<2 ultra` / `2~6 pro` / `6~10 fine` / `10~14 plus` / `≥14 lossless`，**地级与省级共用同一套阈值**。
+
+### 关键决策
+1. **比例取相邻档的几何中点**，不是算术中点：`√(4×15)≈7.7 → 8%`、`√(15×100)≈38.7 → 40%`。
+   理由：顶点数是**乘性**关系（简化到 1/n 时顶点数约为 n 分之一），用几何中点才能把相邻档的顶点数落差拉平。
+   实测落差从 `2.6x / 5.8x` 降到 `1.9x / 2.0x / 2.4x`。
+2. **pro 8% 与历史上的 `coarse` 8% 数值重合** —— 于是 `china_units_coarse.json` 直接写成 pro 的别名（`tierTopos.coarse = tierTopos.pro`），旧缓存 bundle 请求它时拿到的就是 pro 档，不会 404。省级 `coarse` 同理 = ultra 4%。
+3. **省级五档改存 TopoJSON**（本轮最大的一个反直觉点，见下）。
+
+### 「省级 plus 档居然比无损档还大 2.7 倍」
+第一版按地级的做法把省级也输出成 GeoJSON，结果：
+
+| 省级文件 | 体积 |
+|---|---|
+| `china_provinces_plus.geojson`（40% 顶点） | **1087KB** |
+| `china_provinces_raw.json`（100% 顶点，TopoJSON） | 396KB |
+
+**保留 40% 顶点的档比保留 100% 顶点的档还大 2.7 倍** —— 因为无损档存的是 TopoJSON（共享弧压缩），省级各档存的是 GeoJSON（无压缩）。
+
+实测两者在同顶点数下的比值：
+
+| 档案 | GeoJSON | TopoJSON | 压缩 |
+|---|---|---|---|
+| ultra 4% | 192KB | 43KB | −78% |
+| pro 8% | 292KB | 58KB | −80% |
+| fine 15% | 466KB | 84KB | −82% |
+| plus 40% | 1087KB | 174KB | −84% |
+
+（省份面彼此拓扑相邻，共享弧被复用，故顶点越多收益越大。）
+
+**修法**：省级五档全部改存 TopoJSON（`mergeGeometriesByAdcode`，与地级同一函数），运行期由 `data.ts` 的 `provTopoToGeoJson()` 转回。plus 从 1087KB → **174KB**。下游（renderer / inset）因为拿到的仍是 GeoJSON，一行没改。
+
+### 运行时加载量反而变小了
+| | 文件数 | 合计 |
+|---|---|---|
+| 上一版（地级三档 + 省级两档 GeoJSON） | 11 | 3852KB |
+| 本轮（地级五档 + 省级五档，全 TopoJSON） | 14 | **3114KB** |
+
+**加了两个档，同步加载量反而少了 738KB** —— 格式优化的收益（省级 −1758KB）远大于新增档的代价（地级 +574KB、省级 +232KB）。
+
+### 历史文件名保留
+`china_provinces.geojson`（467KB = fine 展开）与 `china_provinces_coarse.geojson`（192KB = ultra 展开）**继续写出**，只服务「浏览器缓存里还是旧 index.html + 旧 hash bundle」的用户。新 bundle 只读 TopoJSON。
+反过来，省级各档短暂产出过的 `china_provinces_{ultra,pro,plus}.geojson` 是过渡产物，已在管线里加入删除逻辑（否则会留 1571KB 死文件）。
+
+### 把档位逻辑抽成可单测的纯模块
+原先阈值判断内联在 `renderer.ts` 私有方法里，构造 Renderer 需要 DOM + ECharts，**根本没法单测**；而且地级一套、省级一套，很容易「改了一个忘另一个」。
+新建 `src/map/tiers.ts`（纯函数、无依赖）：`tierOfZoom(zoom, drilled)` + `chinaMapNameForTier(tier)` / `provinceMapNameForTier(tier)`。
+renderer 的 `activeTier()` / `chinaTierMapName()` / `provinceTierMapName()` / `activeProvinceLines()` 全部改为经它推导，阈值只有一处。测试覆盖了每个边界值（含 2/6/10/14 的 ±1e-9）、单调性（**绝不允许「放大反而变糙」**），以及「`data.ts` 的字段名与 `tiers.ts` 的地图名一一对应」。
+
+### 抓住一个真实缺陷：别名不是同一份数据
+新写的端到端测试 `dataTiers.test.ts` 断言 `data.coarseGeoJson === data.proGeoJson`（同一对象），**当场失败** ——
+`data.ts` 里 `coarseGeoJson: topoToGeoJson(proTopo)` 和 `proGeoJson: topoToGeoJson(proTopo)` 对**同一份 TopoJSON 转换了两次**（省级 ultra 同理）。
+TopoJSON→GeoJSON 每次都要重新展开全部弧，重复转换白费一次 18k 顶点的内存，也让「别名」名不副实。
+已改为先 `const proGeo = topoToGeoJson(proTopo)` 再复用。
+
+### 跨档一致性（新增不变式测试）
+`src/tierConsistency.test.ts`：ECharts 的 `registerMap` 按 `feature.properties.name` 建 region，**着色 / 点击命中 / 标签锚点全靠这个名字**。若五档的 name 集合或 adcode↔name 映射有差异，跨阈值换档时该单位会突然丢色或点不中（历史上 DataV/拼音名混用就踩过）。
+实测五档地级（373 面）与五档省级（35 面）的 name 集合与 adcode↔name 映射**逐字相同**，且 `units.json` 里每个单位在 fine 档都有面对应。
+
+### 踩坑
+- `node --experimental-strip-types ver-tiers-e2e.mjs` 失败：Node 的 type-stripping **不做无扩展名解析**，`src/data.ts` 里 `from './i18n'` 解析不到。改为把端到端验证写成 vitest 用例（`dataTiers.test.ts`），复用 vite 的解析规则，顺便让它在 CI 里长期守着。
+- `edit` 工具替换 `data.ts` 的 cache 字面量时，old_string 从 `units,` 开始、而 new_string 又带上了 `cache = {`，导致 `cache = {` 出现两次、语法崩（tsc 报 8 个 TS1005）。读回文件修正后重跑通过。
+
+### 验证
+- 管线五档全部通过：`邻接表相邻边 1835 对零共享 0 ✅`、`源拓扑 970 对相邻，保持共享顶点 970 对，断裂 0 ✅`。
+- `check-data.mjs` `无问题 ✅`：地级五档 970/970 邻接、五档 46 个内环全部被填；省级五档（4875 / 7524 / 12086 / 28365 / 68879 顶点）几何全部有效。
+- tsc 0；vitest **130/130**（新增 `tiers.test.ts` 11 条 + `dataTiers.test.ts` 4 条 + `tierConsistency.test.ts` 3 条）；build 通过（1,223.48 kB / gzip 393.88 kB）。
+- 临时脚本 `probe-tier-size.mjs`、`probe-prov-topo.mjs` 已删除。

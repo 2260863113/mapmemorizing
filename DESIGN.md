@@ -54,18 +54,37 @@
 ### 4.2 数据管线（scripts/fetch-cn-atlas.mjs，Node 脚本，一次性运行）
 1. 下载 cn-atlas TopoJSON，用 topojson-client 展开 prefectures/provinces。
 2. 对齐 `units.json` 口径：取**全部** 372 个 `prefectures` 面（`properties.id != null`），按 `区划码` 建 `NAME_BY_ADCODE` 映射取中文名，并补入 `units.json` 原先遗漏的两个兵团市（**新星市 659011**、**白杨市 659012**，见下），再单独补 1 个南海诸岛面。
-3. 先 `-explode` 拆 MultiPolygon → 拓扑保持简化 → 最后按 adcode 合并回 MultiPolygon，出三档简化 + 一档无损（最精细档不经过 `-simplify`）：
-   - `china_units.json`（fine 15%，**215KB**）——6 ≤ zoom < 14（次精细）
-   - `china_units_coarse.json`（coarse 8%，**158KB**）——已弃用（保留注册兼容）
-   - `china_units_ultra.json`（ultra 4%，**124KB**）——zoom < 6（最简略，全国全景）
-   - `china_units_lossless.json`（无损 100%，展开约 9.7 万顶点，**908KB**）——zoom ≥ 14 或钻省（最精细）
-4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者已弃用）+ **省级无损档** `china_provinces_raw.json`（无压缩转 TopoJSON 共享弧压缩，2632KB GeoJSON → 396KB，zoom ≥ 14 用）。
+3. 先 `-explode` 拆 MultiPolygon → 拓扑保持简化 → 最后按 adcode 合并回 MultiPolygon，出**四档简化 + 一档无损**（最精细档不经过 `-simplify`）：
+
+   | 文件 | 档位 | 保留顶点 | 实际顶点 | 体积 | zoom 区间 |
+   |---|---|---|---|---|---|
+   | `china_units_ultra.json` | ultra | 4% | 11,464 | **124KB** | < 2 |
+   | `china_units_pro.json` | pro | 8% | 18,173 | **158KB** | 2 ~ 6 |
+   | `china_units.json` | fine | 15% | 29,828 | **215KB** | 6 ~ 10 |
+   | `china_units_plus.json` | plus | 40% | 71,509 | **416KB** | 10 ~ 14 |
+   | `china_units_lossless.json` | lossless | 100% | 173,337 | **908KB** | ≥ 14 或钻省 |
+   | `china_units_coarse.json` | — | 8% | 18,173 | 158KB | 历史别名，内容 = pro |
+
+   **为什么新增 pro 8% / plus 40%**：原三档的精细度落差极不均匀 —— ultra(4%)→fine(15%) 顶点差 2.6 倍，fine(15%)→lossless(100%) 差 5.8 倍。放大时能明显感到「fine 在 10~13 倍率偏糙、一过 14 倍又突然变精细」。补的比例取自相邻档的**几何中点**（√(4×15)≈7.7→8、√(15×100)≈38.7→40），把落差压到 1.9x / 2.0x / 2.4x，缩放观感更连续。
+4. 省级同法四档 + 一档无损，**与地级同一套阈值与比例**：
+
+   | 文件 | 档位 | 保留顶点 | 实际顶点 | 体积 | zoom 区间 |
+   |---|---|---|---|---|---|
+   | `china_provinces_ultra.json` | ultra | 4% | 4,875 | **43KB** | < 2 |
+   | `china_provinces_pro.json` | pro | 8% | 7,524 | **58KB** | 2 ~ 6 |
+   | `china_provinces.json` | fine | 15% | 12,086 | **84KB** | 6 ~ 10 |
+   | `china_provinces_plus.json` | plus | 40% | 28,365 | **174KB** | 10 ~ 14 |
+   | `china_provinces_raw.json` | lossless | 100% | 68,879 | **396KB** | ≥ 14 |
+
+   **省级必须存 TopoJSON 而非 GeoJSON**：省级面与地级面一样拓扑相邻，共享弧压缩收益极大。实测同顶点数下 TopoJSON 比 GeoJSON 小 **78%~84%**；plus 档若存 GeoJSON 为 1087KB，**比 100% 顶点的无损档 TopoJSON（396KB）还大 2.7 倍**。改存 TopoJSON 后 plus 从 1087KB 降到 174KB。运行期由 `data.ts` 的 `provTopoToGeoJson()` 统一转回 GeoJSON，下游（renderer / inset）无需改动。
+
+   **历史文件名兼容**：`china_provinces.geojson`（= fine 展开后的 GeoJSON，467KB）与 `china_provinces_coarse.geojson`（= ultra，192KB）仍照旧写出，只服务「浏览器缓存里还是旧 index.html + 旧 hash bundle」的用户；新 bundle 一律只读 TopoJSON 档。省级各档曾短暂以 GeoJSON 输出（`china_provinces_{ultra,pro,plus}.geojson`），管线会自动删除这些退役产物。
 5. 用 fine 档几何重建 `units.json` 的 center/neighbors（372 个单位，含 32 个装饰面）。
 6. **港澳放大框 `hkmac.geojson`**：从省级无压缩几何抽取 广东(440000)+香港(810000)+澳门(820000) 三面，始终不简化（125KB，同步加载）。
-7. **缝隙闸门**：各档（含无损档）展开成 GeoJSON 后跑两道检查，任一不过即 `exit 1` 拒绝输出：
+7. **缝隙闸门**：各档（含无损档，`coarse` 别名跳过）展开成 GeoJSON 后跑两道检查，任一不过即 `exit 1` 拒绝输出：
    - 邻接表检查：`units.json` 里互为邻居的单位必须共享 ≥1 顶点；
    - **源拓扑检查**：从源 TopoJSON 直接读出「共享 ≥1 条 arc」的 970 对真相邻，各档里必须仍全部共享 ≥1 顶点。
-8. 退役产物 `china_decorative.geojson` 若存在则删除；`scripts/check-data.mjs` 也会把它当问题报出。
+8. 退役产物清理：`china_decorative.geojson`（装饰面已并入拓扑）与 `china_provinces_{ultra,pro,plus}.geojson`（省级改存 TopoJSON 后作废）若存在则删除；`scripts/check-data.mjs` 也会把 `china_decorative.geojson` 当问题报出。
 
 **为什么不做 `-snap` / `-clean` 缝合（2026-09 第二次修正，已推翻上一版结论）**
 
@@ -102,16 +121,19 @@ cn-atlas 的 `prefectures` 在新疆有两个面**不在** `units.json` 白名�
 - 用「贴合边界长度」（尺度无关）：仍有 2 对零共享（凉山↔曲靖 5.86km、三亚↔五指山 0.87km），而真有共享的对最短 1.37km —— 依然重叠。
 - 且与 `units.json` 的 neighbors 字段交叉验证也**不能**自证：该字段由本管线自己用 fine 档几何生成，两个角点相接的单位本来就互不为邻居，用它当基线等于循环论证。
 
-根因是这两对**本就不相邻**：直接读源 TopoJSON 的 arc 引用，凉山↔曲靖、三亚↔五指山 各共享 **0 条 arc**（阳性对照：北京↔天津共享 4 条、塔城↔白杨共享 4 条、哈密↔新星共享 2 条）。改用「源里共享 ≥1 arc 的 970 对 ⇒ 产物里必须共享 ≥1 顶点」后，判据变为**确定性、无容差**的，实测四档均 970/970 通过；且因共享 arc 只被简化一次，公共边界上每个顶点逐字相同，实测**最短公共边界 0.47~0.63km，共享顶点 ≤1 的对 0 个** —— 共享顶点确实等价于共享整段边界。
+根因是这两对**本就不相邻**：直接读源 TopoJSON 的 arc 引用，凉山↔曲靖、三亚↔五指山 各共享 **0 条 arc**（阳性对照：北京↔天津共享 4 条、塔城↔白杨共享 4 条、哈密↔新星共享 2 条）。改用「源里共享 ≥1 arc 的 970 对 ⇒ 产物里必须共享 ≥1 顶点」后，判据变为**确定性、无容差**的，实测五档均 970/970 通过；且因共享 arc 只被简化一次，公共边界上每个顶点逐字相同，实测**最短公共边界 0.47~0.63km，共享顶点 ≤1 的对 0 个** —— 共享顶点确实等价于共享整段边界。
 
 - 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用/删除（逐面 Douglas-Peucker 会破坏共享边，是缝隙的另一成因）。
 
 ### 4.3 运行时加载
-- 地级各档以 TopoJSON 存储（`china_units.json` 215KB / `china_units_coarse.json` 158KB / `china_units_ultra.json` 124KB / `china_units_lossless.json` 908KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）后 `registerMap`（ECharts 不吃 TopoJSON）。**装饰面已并入拓扑，运行时不再单独请求 `china_decorative.geojson`**。
-- 无损档 `china_units_lossless.json`（908KB）与其他档一样**同步加载**，与 `Promise.all` 中其余文件并行；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
-- 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB 次精细档 / `china_provinces_coarse.geojson` 192KB 已弃用）；**省级无损档** `china_provinces_raw.json`（396KB TopoJSON，同步加载，zoom ≥ 14 用）。
-- 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面。
-- 档位切换由 `renderer.chinaTierMapName()`（地级：无损 ≥14 / fine 6~14 / ultra <6）与 `provinceTierMapName()`（省级：无损 ≥14 / 次精细 <14）按 zoom 决定（阈值为 `LOSSLESS_ZOOM_MIN=14`、`ULTRA_ZOOM_MAX=6`）；省界折线档位（`activeProvinceLines()`）同样以 14 为界。切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
+- 地级五档与省级五档**全部以 TopoJSON 存储**，运行时 `topojson-client` 转 GeoJSON 后 `registerMap`（ECharts 不吃 TopoJSON）。**装饰面已并入拓扑，运行时不再单独请求 `china_decorative.geojson`**。
+- 运行期实际同步加载 14 个文件（`Promise.all` 并行）：地级五档（124 / 158 / 215 / 416 / 908KB）+ 省级五档（43 / 58 / 84 / 174 / 396KB）+ `hkmac.geojson` 125KB + 元数据 `units.json` 84KB / `countries.json` 30KB / `world.geojson` 298KB。合计 **3114KB**。
+  - 对比：上一版（三档 + 省级两档 GeoJSON）为 3852KB —— 本轮**反而小了 738KB**，因为省级改用 TopoJSON。新增两档的净增量（地级 +574KB、省级 +232KB）远小于格式优化省下的量。
+- 无损档 `china_units_lossless.json`（908KB）与其他档一样**同步加载**；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
+- 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面；`InsetMap` 另从 `provincesGeoJson`（fine 档）取省界。
+- **档位判定集中在 `src/map/tiers.ts`**（纯逻辑、无 ECharts/DOM 依赖，便于单测），`renderer.chinaTierMapName()` / `provinceTierMapName()` / `activeProvinceLines()` 三者都经 `tierOfZoom()` 推导，不会出现「地级改了阈值、省级忘改」的漂移。阈值：`ultra <2`、`pro 2~6`、`fine 6~10`、`plus 10~14`、`lossless ≥14`；钻省时强制 `lossless`（视口只剩一个省，顶点再多也被裁剪挡住）。
+- 切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
+- **跨档一致性是不变式**（`src/tierConsistency.test.ts` 守着）：ECharts 按 `feature.properties.name` 建 region，着色 / 点击命中 / 标签锚点全靠这个名字。五档的 name 集合与 adcode↔name 映射必须**完全相同**，否则跨阈值换档时该单位会突然丢色或点不中。
 
 ### 4.4 视口裁剪（只渲染当前视角范围）
 
@@ -219,19 +241,28 @@ interface MemoryState {
   vite.config.ts
   index.html
   scripts/
-    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化三档 + 无损档 + 重建元数据 + 源拓扑闸门（一次性）
+    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化四档 + 无损档 + 重建元数据 + 源拓扑闸门（一次性）
     fetch-world-data.mjs  # 世界数据（含 CONTINENT_OF 大洲归属表 → countries.json 的 continent）
     check-data.mjs        # 数据校验（逐面几何 + 单位覆盖 + 邻接零共享 + 空洞是否被填）
   public/
     data/
-      china_units.json              # 地级 fine 档（TopoJSON，6 ≤ zoom < 14 次精细）
-      china_units_coarse.json       # 地级 coarse 档（TopoJSON，已弃用）
-      china_units_ultra.json        # 地级 ultra 档（TopoJSON，zoom < 6 最简略）
-      china_units_lossless.json     # 地级无损档（TopoJSON，zoom ≥ 14，100% 顶点）
+      # ── 地级五档（精细度阶梯，zoom 区间见 DESIGN 4.2）──
+      china_units_ultra.json        # 地级 ultra  4%（TopoJSON，zoom < 2）
+      china_units_pro.json          # 地级 pro    8%（TopoJSON，2 ≤ zoom < 6）
+      china_units.json              # 地级 fine  15%（TopoJSON，6 ≤ zoom < 10）
+      china_units_plus.json         # 地级 plus  40%（TopoJSON，10 ≤ zoom < 14）
+      china_units_lossless.json     # 地级无损 100%（TopoJSON，zoom ≥ 14 或钻省）
+      china_units_coarse.json       # 地级 8% 历史别名（内容 = pro，保留兼容旧缓存）
       # 注：china_decorative.geojson 已退役（装饰面并入地级拓扑），管线会删除，check-data 会报错
-      china_provinces.geojson       # 省级面 次精细档（省界 + 省级地图，zoom < 14）
-      china_provinces_coarse.geojson# 省级面 coarse 4%（已弃用）
-      china_provinces_raw.json      # 省级面 无损档（TopoJSON，zoom ≥ 14）
+      # ── 省级五档（与地级同一套阈值与比例）──
+      china_provinces_ultra.json    # 省级 ultra  4%（TopoJSON，zoom < 2）
+      china_provinces_pro.json      # 省级 pro    8%（TopoJSON，2 ≤ zoom < 6）
+      china_provinces.json          # 省级 fine  15%（TopoJSON，6 ≤ zoom < 10）
+      china_provinces_plus.json     # 省级 plus  40%（TopoJSON，10 ≤ zoom < 14）
+      china_provinces_raw.json      # 省级无损 100%（TopoJSON，zoom ≥ 14）
+      # 以下两个仅服务「旧 index.html + 旧 hash bundle」的缓存用户，新 bundle 不读
+      china_provinces.geojson       # 省级 fine 档展开成 GeoJSON（历史文件名）
+      china_provinces_coarse.geojson # 省级 ultra 档展开成 GeoJSON（历史文件名）
       hkmac.geojson                 # 港澳放大框无压缩面（广东+香港+澳门，始终不简化）
       countries.json                # 195 国元数据（含 continent 大洲字段）
       units.json
@@ -322,16 +353,19 @@ interface MemoryState {
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略（三档 + 无损档 + 视口裁剪，拓扑保持 + explode + 单一来源）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）；全部 372 个 `prefectures` 面（地级 + 县级/兵团市，本在同一套弧拓扑里）整体取用，**不做 `-snap`/`-clean` 缝合**（该步骤会在面上开洞造成露白，详见 4.2），只额外补入 cn-atlas 没有的南海诸岛面。地级地图按 zoom 分三档（无损 ≥14 / fine 6~14 / ultra <6），简化档由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），最精细档**完全不简化**，其流畅度由**运行时视口裁剪**保证（见 4.4）——
+7. **数据简化策略（四档 + 无损档 + 视口裁剪，拓扑保持 + explode + 单一来源）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）；全部 372 个 `prefectures` 面（地级 + 县级/兵团市，本在同一套弧拓扑里）整体取用，**不做 `-snap`/`-clean` 缝合**（该步骤会在面上开洞造成露白，详见 4.2），只额外补入 cn-atlas 没有的南海诸岛面。地级地图按 zoom 分五档（无损 ≥14 / plus 10~14 / fine 6~10 / pro 2~6 / ultra <2），省级同用一套阈值，简化档由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），最精细档**完全不简化**，其流畅度由**运行时视口裁剪**保证（见 4.4）——
    - **无损档** `china_units_lossless.json`：100% 顶点（约 9.7 万顶点，908KB），zoom ≥ 14 或已钻省时使用；同步加载，**不做任何简化**，靠视口裁剪把每帧 `buildPath` 限制在可见子集；
-   - **fine 档** `china_units.json`：keep 15%（215KB），6 ≤ zoom < 14（次精细）；
-   - **ultra 档** `china_units_ultra.json`：keep 4%（124KB），zoom < 6（最简略，全国全景）；
-   - **省级** `china_provinces.geojson`（keep 15%，次精细档，zoom < 14）/ `china_provinces_raw.json`（无损档，zoom ≥ 14）；省界折线（`activeProvinceLines()`）同样以 14 为界切换。
+   - **plus 档** `china_units_plus.json`：keep 40%（416KB），10 ≤ zoom < 14；
+   - **fine 档** `china_units.json`：keep 15%（215KB），6 ≤ zoom < 10；
+   - **pro 档** `china_units_pro.json`：keep 8%（158KB），2 ≤ zoom < 6；
+   - **ultra 档** `china_units_ultra.json`：keep 4%（124KB），zoom < 2（最简略，全国全景）；
+   - **省级**同样五档（43 / 58 / 84 / 174 / 396KB，均以 TopoJSON 存储），与地级共用阈值；省界折线（`activeProvinceLines()`）也随同一档位切换。档位判定集中在 `src/map/tiers.ts`。
+   - 补 pro / plus 的原因见 4.2：原三档把 4%→15%→100% 拉得太开（2.6x / 5.8x），10~13 倍率偏糙而 14 倍后骤精细；按几何中点补 8% 与 40% 后落差降到 1.9x / 2.0x / 2.4x。
    - **港澳放大框** `hkmac.geojson`：从省级无压缩几何抽取广东+香港+澳门三面，**始终不简化**（香港 283 顶点 vs fine 71、广东 2934 vs fine 553）。
    档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，各档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；全部 373 个面（372 cn-atlas + 南海诸岛）在**同一套弧拓扑**里一起简化、一起参与邻接计算。管线：`scripts/fetch-cn-atlas.mjs`（含源拓扑闸门）；校验：`scripts/check-data.mjs`。
    - **为什么用「裁剪」而不是「压缩顶点」**：放大后的卡顿 ∝ 顶点数（zrender 每帧重算 `buildPath`），与可见面积无关 —— 实测删掉整个省界线后无损档每帧仍有 15.9ms。裁剪不改任何顶点（精度 100%），只把不可见子树设 `ignore` 以跳过路径构建与绘制，代价 O(1) 且不需要 `setOption`（故无重建卡顿）。实测无损+裁剪（13.2ms @zoom12）优于「压缩 33% + 省界无损」（34.6ms），也优于任何简化档的全量渲染。详见 4.4。
    - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，各档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。
-   - **固定投影范围（boundingCoords）**：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影，而各简化档的 bbox 并不严格相同（ultra/省级粗档把南海诸岛最南端简化掉，纬度下界 3.3974 → 3.5349，高度少 0.1375°≈15km）。bbox 一变投影比例与居中偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。实测换档偏移 **13.8px**（这就是"跨档缩放时地图小幅度移动"的根因）。修法：`geo.boundingCoords` 钉死投影范围为常量（`MAP_PROJECTION_BBOX`），中国族各档与地级/省级两族共用同一投影。修复后偏移降至 **0.003px**（zrender 取整噪声量级）。注意 fine↔coarse 因 bbox 恰好相同本来就无偏移，问题只在 ultra 档与省级粗档。
+   - **固定投影范围（boundingCoords）**：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影，而各简化档的 bbox 并不严格相同（ultra/省级粗档把南海诸岛最南端简化掉，纬度下界 3.3974 → 3.5349，高度少 0.1375°≈15km）。bbox 一变投影比例与居中偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。实测换档偏移 **13.8px**（这就是"跨档缩放时地图小幅度移动"的根因）。修法：`geo.boundingCoords` 钉死投影范围为常量（`MAP_PROJECTION_BBOX`），中国族各档与地级/省级两族共用同一投影。修复后偏移降至 **0.003px**（zrender 取整噪声量级）。注意 bbox 完全相同的两档（如 fine↔pro）本来就无偏移，问题只出在把南海诸岛最南端简化掉的粗档上。
    - **换档 center 同步（georoam 读 geo 权威中心）**：缩放仍存在水平方向微移的**第二个独立根因**。ECharts 滚轮/捏合缩放以**鼠标为锚点**，缩放时 geo 中心会隐式移动（锚点缩放），但 zoom 事件的 payload 只含 `zoom`/`totalZoom`，**不含 center**（见 `MapDraw.js` 的 zoom dispatch：仅 `{totalZoom, zoom, originX, originY}`）。若 georoam 处理器只靠 payload 里的 `params.center` 同步，`this.center` 会在缩放期间停留在旧值 → 跨换档阈值 `render()` 用旧 center 重建 geo，地图朝缩放锚点方向跳十几像素。修法：georoam 里直接从 geo 坐标系读 ECharts 已更新好的权威 `getCenter()`/`getZoom()`（georoam 事件在 `geoRoam` action 处理完、`updateCenterAndZoom` 已写回 center 之后才触发，故此刻读到的必为缩放后最新值）。实测 pan/zoom/混合三种路径 rc 与 geo 中心 mismatch 恒 0，跨档锚点误差 0px。注意不能用 `chart.getCoordinateSystems()`（其返回的 geo 对象可能滞后），须用 `getModel().getComponent('geo').coordinateSystem`（TS 下 getModel 是私有，需 `as unknown as` 强转）。
 
 8. **世界粒度的大洲范围（六洲，不含南极洲）**：世界粒度下在「世界/省级/市级」按钮**下方**再出一行分段按钮「全世界 | 亚洲 | 欧洲 | 非洲 | 北美 | 南美 | 大洋洲」。
