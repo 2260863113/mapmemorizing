@@ -1,6 +1,6 @@
 // 数据管线：从 cn-atlas（shengshixian.com 2023 拓扑干净的行政区划，TopoJSON）生成中国地图数据。
 // 产出三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%，拓扑保持无缝隙）+ 无压缩 raw 档（zoom ≥ 10）
-// + 港澳放大框无压缩面 + 装饰面 GeoJSON + 元数据表。
+// + 省级无损档（TopoJSON，zoom ≥ 10）+ 港澳放大框无压缩面 + 装饰面 GeoJSON + 元数据表。
 //
 // 背景（grill-rounds.log 2026-09-09 换源）：阿里 DataV 逐面数字化导致相邻边 32.7% 零共享 → 缝隙；
 // cn-atlas 用共享弧（TopoJSON），相邻边 0.1% 零共享，且 adcode 与现有 units.json 对齐 370/371。
@@ -297,6 +297,16 @@ async function run() {
     console.log(`  省级面 ${name}(${pct}%): ${provGeoJsons[name].features.length} 个`);
   }
 
+  // 省级无损档（zoom ≥ 10 用）：无压缩，转 TopoJSON 共享弧压缩（2632KB GeoJSON → 396KB TopoJSON）。
+  // 面积小可同步加载，无需像地级 raw 那样异步。
+  const provRawTopoFile = path.join(TMP, 'china-provinces-raw-topo.json');
+  await runCommands(`-i ${provGjFile} -o format=topojson ${provRawTopoFile}`);
+  const provRawTopo = JSON.parse(fs.readFileSync(provRawTopoFile, 'utf8'));
+  const provRawObjName = Object.keys(provRawTopo.objects)[0];
+  provRawTopo.objects.china = provRawTopo.objects[provRawObjName];
+  delete provRawTopo.objects[provRawObjName];
+  console.log(`  省级无损档: arcs=${provRawTopo.arcs.length} features=${provRawTopo.objects.china.geometries.length}`);
+
   console.log('[5/6] 用 fine 档几何重建中心点与邻接 ...');
   const fineTopo = tierTopos.fine;
   const fineGeo = feature(fineTopo, fineTopo.objects.china);
@@ -352,9 +362,10 @@ async function run() {
   fs.writeFileSync(path.join(OUT_DIR, 'china_decorative.geojson'), JSON.stringify(decoGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify(provGeoJsons.fine));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify(provGeoJsons.coarse));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_raw.json'), JSON.stringify({ ...provRawTopo, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'hkmac.geojson'), JSON.stringify(hkmacGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'units.json'), JSON.stringify({ units: allUnits, provinces: meta.provinces }));
-  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_raw.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'hkmac.geojson']) {
+  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_raw.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
     console.log(`  ${f}: ${(fs.statSync(path.join(OUT_DIR, f)).size / 1024).toFixed(0)}KB`);
   }
 }

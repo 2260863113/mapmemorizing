@@ -55,6 +55,7 @@ const geo = { type: 'FeatureCollection', features: [...fineGeo.features, ...(dec
 const provGeo = fs.existsSync(path.join(DATA, 'china_provinces.geojson')) ? load('china_provinces.geojson') : null;
 const rawTopo = fs.existsSync(path.join(DATA, 'china_units_raw.json')) ? load('china_units_raw.json') : null;
 const hkmacGeo = fs.existsSync(path.join(DATA, 'hkmac.geojson')) ? load('hkmac.geojson') : null;
+const provRawTopo = fs.existsSync(path.join(DATA, 'china_provinces_raw.json')) ? load('china_provinces_raw.json') : null;
 
 const byAdcode = new Map(meta.units.map((u) => [u.adcode, u]));
 const problems = [];
@@ -127,6 +128,22 @@ if (rawTopo && rawTopo.objects?.china) {
   console.log(`无效 raw 几何: ${rbad}`);
 } else {
   problems.push('缺失 china_units_raw.json 或 objects.china');
+}
+
+console.log('\n=== 省级无损档 ===');
+if (provRawTopo && provRawTopo.objects?.china) {
+  const provRawGeo = feature(provRawTopo, provRawTopo.objects.china);
+  console.log(`china_provinces_raw.json: ${provRawGeo.features.length} 个 feature`);
+  const adcodes = new Set(provRawGeo.features.map((f) => String(f.properties.adcode)));
+  if (adcodes.size !== provRawGeo.features.length) problems.push('省级无损档 adcode 有重复');
+  let prbad = 0;
+  for (const f of provRawGeo.features) {
+    const st = geoStats(f.geometry);
+    if (!st.ok) { prbad++; problems.push(`省级无损几何无效: ${f.properties.name} (${f.properties.adcode}) - ${st.reason}`); }
+  }
+  console.log(`无效省级无损几何: ${prbad}`);
+} else {
+  problems.push('缺失 china_provinces_raw.json 或 objects.china');
 }
 
 console.log('\n=== 港澳放大框无压缩面 ===');

@@ -58,7 +58,7 @@
    - `china_units_coarse.json`（coarse 8%，展开约 1.8 万顶点）——已弃用（保留注册兼容）
    - `china_units_ultra.json`（ultra 4%，展开约 1.1 万顶点）——zoom < 2（最简略，全国全景）
    - `china_units_raw.json`（无压缩，展开约 16.9 万顶点，889KB）——zoom ≥ 10 或钻省（最精细，异步加载）
-4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者供 zoom < 5 的省界粗线）。
+4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者已弃用）+ **省级无损档** `china_provinces_raw.json`（无压缩转 TopoJSON 共享弧压缩，2632KB GeoJSON → 396KB，zoom ≥ 10 用）。
 5. 装饰面 `china_decorative.geojson` 单独保留（DataV 源，不进拓扑简化）。
 6. **港澳放大框 `hkmac.geojson`**：从省级无压缩几何抽取 广东(440000)+香港(810000)+澳门(820000) 三面，始终不简化（125KB，同步加载）。
 7. 用 fine 档几何重建 `units.json` 的 center/neighbors。
@@ -71,9 +71,9 @@
 ### 4.3 运行时加载
 - 地级三档以 TopoJSON 存储（`china_units.json` 207KB / `china_units_coarse.json` 151KB / `china_units_ultra.json` 117KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
 - 无压缩 raw 档 `china_units_raw.json`（889KB）**异步加载**：首屏用 fine 渲染不阻塞启动，`loadRawGeoJson()` 后台拉取并 `registerMap('china-raw')`，加载完成后放大到 ≥10 自动切换（失败静默回退 fine）。
-- 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB / `china_provinces_coarse.geojson` 192KB）。
+- 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB 次精细档 / `china_provinces_coarse.geojson` 192KB 已弃用）；**省级无损档** `china_provinces_raw.json`（396KB TopoJSON，同步加载，zoom ≥ 10 用）。
 - 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面。
-- 档位切换由 `renderer.chinaTierMapName()`（地级）与 `provinceTierMapName()`（省级）按 zoom 决定；切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
+- 档位切换由 `renderer.chinaTierMapName()`（地级：raw≥10 / fine 2~10 / ultra<2）与 `provinceTierMapName()`（省级：无损≥10 / 次精细<10）按 zoom 决定；省界折线档位（`activeProvinceLines()`）同样以 10 为界。切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
 
 ## 5. 地名匹配引擎
 
@@ -167,8 +167,9 @@ interface MemoryState {
       china_units_ultra.json        # 地级 ultra 档（TopoJSON，zoom < 2 最简略）
       china_units_raw.json          # 地级无压缩档（TopoJSON，zoom ≥ 10，异步加载）
       china_decorative.geojson      # 县级装饰面 + 南海诸岛（DataV 源，补白）
-      china_provinces.geojson       # 省级面 细档（省界粗线 + 省级地图）
-      china_provinces_coarse.geojson# 省级面 粗档（zoom < 5 的省界粗线）
+      china_provinces.geojson       # 省级面 次精细档（省界 + 省级地图，zoom < 10）
+      china_provinces_coarse.geojson# 省级面 coarse 4%（已弃用）
+      china_provinces_raw.json      # 省级面 无损档（TopoJSON，zoom ≥ 10）
       hkmac.geojson                 # 港澳放大框无压缩面（广东+香港+澳门，始终不简化）
       countries.json                # 195 国元数据（含 continent 大洲字段）
       units.json
@@ -262,7 +263,7 @@ interface MemoryState {
    - **raw 档** `china_units_raw.json`：无压缩（展开约 16.9 万顶点，889KB），zoom ≥ 10 或已钻省时使用；**异步加载**（首屏用 fine，后台拉取后自动切换）；
    - **fine 档** `china_units.json`：keep 15%（展开约 2.7 万顶点），2 ≤ zoom < 10（次精细）；
    - **ultra 档** `china_units_ultra.json`：keep 4%（展开约 1.1 万顶点），zoom < 2（最简略，全国全景）；
-   - **省级** `china_provinces.geojson` / `china_provinces_coarse.geojson`：keep 15% / 4%，后者供 zoom < 5 的省界粗线；
+   - **省级** `china_provinces.geojson`（keep 15%，次精细档，zoom < 10）/ `china_provinces_raw.json`（无损档，zoom ≥ 10）；省界折线（`activeProvinceLines()`）同样以 10 为界切换。
    - **港澳放大框** `hkmac.geojson`：从省级无压缩几何抽取广东+香港+澳门三面，**始终不简化**（香港 283 顶点 vs fine 71、广东 2934 vs fine 553）。
    档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，三档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。
    - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，三档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。

@@ -27,6 +27,7 @@ describe('buildProvinceAdjacency', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      provincesRawGeoJson: null,
       rawGeoJson: null,
       hkmacGeoJson: null,
     };
@@ -51,6 +52,7 @@ describe('buildProvinceAdjacency', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      provincesRawGeoJson: null,
       rawGeoJson: null,
       hkmacGeoJson: null,
     };
@@ -71,6 +73,7 @@ describe('provinceUnits', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      provincesRawGeoJson: null,
       rawGeoJson: null,
       hkmacGeoJson: null,
     };
@@ -90,6 +93,7 @@ describe('provinceShortName', () => {
       worldGeoJson: null,
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
+      provincesRawGeoJson: null,
       rawGeoJson: null,
       hkmacGeoJson: null,
     };

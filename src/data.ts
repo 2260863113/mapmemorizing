@@ -20,10 +20,17 @@ function topoToGeoJson(topo: Topology, decorative: { features?: unknown[] }): un
   return { type: 'FeatureCollection', features: [...geo.features, ...decoFeatures] };
 }
 
+/** 省级无损档 TopoJSON → GeoJSON（不拼装饰面：省界折线只要省级面）。 */
+function provRawTopoToGeoJson(topo: Topology): unknown {
+  const obj = topo.objects?.china as GeometryCollection | undefined;
+  if (!obj) throw new Error('省级无损档 TopoJSON 缺 objects.china');
+  return feature(topo, obj);
+}
+
 /** 加载数据（public/data 下的构建产物）。raw 档（无压缩，889KB）单独异步加载，不阻塞首屏。 */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
-  const [meta, fineTopo, coarseTopo, ultraTopo, decorativeGeo, provGeo, provCoarseGeo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
+  const [meta, fineTopo, coarseTopo, ultraTopo, decorativeGeo, provGeo, provCoarseGeo, provRawTopo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units.json'),
     fetchJson<Topology>('data/china_units_coarse.json'),
@@ -31,6 +38,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
     fetchJson<unknown>('data/china_provinces_coarse.geojson'),
+    fetchJson<Topology>('data/china_provinces_raw.json'),
     fetchJson<unknown>('data/hkmac.geojson'),
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
     fetchJson<unknown>('data/world.geojson'),
@@ -47,6 +55,7 @@ export async function loadData(): Promise<AppData> {
     rawGeoJson: null, // 无压缩档异步加载（见 loadRawGeoJson）
     provincesGeoJson: provGeo,
     provincesCoarseGeoJson: provCoarseGeo,
+    provincesRawGeoJson: provRawTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 10）
     hkmacGeoJson: hkmacGeo, // 港澳放大框无压缩面（广东+香港+澳门）
     countries: worldMeta.countries,
     worldGeoJson: worldGeo,

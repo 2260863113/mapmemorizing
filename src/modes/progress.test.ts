@@ -25,6 +25,7 @@ describe('scopedUnits', () => {
     worldGeoJson: null,
     ultraGeoJson: null,
     provincesCoarseGeoJson: null,
+    provincesRawGeoJson: null,
     rawGeoJson: null,
     hkmacGeoJson: null,
   };

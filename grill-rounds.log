@@ -177,3 +177,25 @@ georoam 处理器不再依赖 payload 里的 center，改为从 geo 坐标系读
 - 港澳放大框无压缩：香港 283 顶点 vs fine 71、广东 2934 vs 553 ✅。
 - 取消钳制：拖动(1200,600) 后中心移动 127.65°，可自由拖动 ✅。
 - tsc 0、vitest 112/112、build 通过、check-data 无问题（raw/hkmac 均校验）。
+
+## 2026-09-09（追加：省级边界档位 + Cloudflare 部署核查）
+### 需求
+省级边界：10x 以下始终用次精细档，10x 以上用无损版。
+
+### 实现
+- 管线新增省级无损档 `china_provinces_raw.json`：无压缩省级几何转 TopoJSON 共享弧压缩（2632KB GeoJSON → **396KB**），体积小于现有 fine GeoJSON（466KB），故**同步加载**（无需像地级 raw 那样异步）。
+- `PROVINCE_COARSE_ZOOM_MAX`(5) 删除，省级统一以 `RAW_ZOOM_MIN`(10) 为界：
+  - `provinceTierMapName()`：zoom ≥ 10 → `china-provinces-raw`，否则 `china-provinces`（次精细）
+  - `activeProvinceLines()`：zoom ≥ 10 → `provinceLinesRaw`，否则 `provinceLinesFine`
+  - `provinceLinesCoarse` 字段删除，coarse 4% 弃用（保留文件与注册避免旧缓存引用）
+- `types.ts`/`data.ts` 新增 `provincesRawGeoJson`（TopoJSON → GeoJSON，专用 `provRawTopoToGeoJson` 不拼装饰面）。
+
+### 验证（probe-tiers2，18/18 通过）
+- 省级档：zoom 3→次精细、9.9→次精细、10→无损、20→无损 ✅
+- 省界折线：zoom 9.9 用 fine（顶点 12086）、zoom 10 用 raw（顶点 **68879**）✅；地级视图 zoom 6→fine、12→raw ✅
+- 地级档、港澳无压缩、自由拖动回归全部仍通过。
+- tsc 0、vitest 112/112、check-data 无问题（含省级无损档校验）。
+
+### Cloudflare 部署核查（用户问"为何没触发部署"）
+- 结论：**部署实际已正常触发**。`mapmemorizing` 项目（Git Provider=Yes，域名 mapmemorizing.pages.dev / mapmemory.cn）最新 Production 部署 `9ba2a48d` 的 Source 正是本次提交 `caf30a8`，且线上 `data/china_units_raw.json`、`data/hkmac.geojson` 均返回 200。
+- 易混淆点：`wrangler.toml` 的 `name = "china-admin-memory"`，而账户下存在同名旧项目 `china-admin-memory.pages.dev`（**Git Provider=No**，一周未更新）——真正的线上项目是 `mapmemorizing`。另有 `origin` remote 指向 Gitee（落后 4 个提交），Cloudflare 集成的应是 GitHub `github/main`。

@@ -30,8 +30,6 @@ const FOLLOW_FRAME_INTERVAL = 1000 / 45;
 /** 地级档阈值（三档：无压缩 raw ≥10 / 次精细 fine 2~10 / 最简略 ultra <2）。 */
 const RAW_ZOOM_MIN = 10; // zoom ≥ 10 用无压缩 raw 档（最精细，不简化）
 const ULTRA_ZOOM_MAX = 2; // zoom < 2 用 ultra 档（最简略）
-/** 省级两档阈值：省级视图 zoom < 5 用省界粗线档（coarse 4%），≥ 5 用细档（fine 15%）。 */
-const PROVINCE_COARSE_ZOOM_MAX = 5;
 /** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
@@ -39,7 +37,8 @@ const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> 
   'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档与 fine 同数据范围
   'china-raw': { center: [104.3, 28.5], zoom: 1 }, // 无压缩档与 fine 同数据范围
   'china-provinces': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级粗档同数据范围
+  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级 coarse 档（已弃用，保留兼容）
+  'china-provinces-raw': { center: [104.3, 28.5], zoom: 1 }, // 省级无损档同数据范围
   world: { center: [0, -3.2], zoom: 1 },
 };
 
@@ -111,9 +110,9 @@ export class MapRenderer {
   private units: Unit[];
   private nameToUnit = new Map<string, Unit>();
   private adcodeToUnit = new Map<string, Unit>();
-  /** 省界线两档（细档：省级视图 / zoom ≥ 5；粗档：地级视图 zoom < 5 的省界粗线）。 */
+  /** 省界线两档（次精细档：zoom < 10；无损档：zoom ≥ 10）。 */
   private provinceLinesFine: { adcode: string; coords: number[][] }[] = [];
-  private provinceLinesCoarse: { adcode: string; coords: number[][] }[] = [];
+  private provinceLinesRaw: { adcode: string; coords: number[][] }[] = [];
   private labelAnchors = new Map<string, GeoPoint>();
   private provinceLabelAnchors = new Map<string, GeoPoint>();
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
@@ -162,8 +161,9 @@ export class MapRenderer {
     echarts.registerMap('china', data.geoJson as never);
     echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（保留注册，避免旧缓存引用）
     echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 2，大幅简化）
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（细档）
-    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（粗档，zoom < 5）
+    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（次精细档，zoom < 10）
+    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（coarse 4%，已弃用；保留注册避免旧缓存引用）
+    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // 省级地图（无损档，zoom ≥ 10）
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
     // 无压缩 raw 档异步加载（首屏用 fine 渲染，后台拉取后注册，放大到 ≥10 时自动切换）
     if (data.rawGeoJson) {
@@ -186,7 +186,7 @@ export class MapRenderer {
       this.adcodeToUnit.set(u.adcode, u);
     }
     this.provinceLinesFine = this.buildProvinceLines();
-    this.provinceLinesCoarse = this.buildProvinceLines(data.provincesCoarseGeoJson);
+    this.provinceLinesRaw = this.buildProvinceLines(data.provincesRawGeoJson);
     this.labelAnchors = this.buildLabelAnchors();
     this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
     // 省全名 → 省 adcode（省级地图点击/悬浮命中整省时回传）
@@ -555,10 +555,9 @@ export class MapRenderer {
     return out;
   }
 
-  /** 省界线当前档：省级视图或 zoom ≥ 5 用细档，地级视图 zoom < 5 用粗档。 */
+  /** 省界线当前档：zoom ≥ 10 用无损档，否则用次精细档（10x 以下始终次精细，不再降级到 coarse）。 */
   private activeProvinceLines(): { adcode: string; coords: number[][] }[] {
-    if (this.provinceMode || this.zoom >= PROVINCE_COARSE_ZOOM_MAX) return this.provinceLinesFine;
-    return this.provinceLinesCoarse;
+    return this.zoom >= RAW_ZOOM_MIN ? this.provinceLinesRaw : this.provinceLinesFine;
   }
 
   /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
@@ -1237,8 +1236,9 @@ export class MapRenderer {
   }
 
   /** 省级档应使用的地图名（省级视图按 zoom 切细/粗档；省级粗档 = 4% 拓扑简化）。 */
+  /** 省级档应使用的地图名（zoom ≥ 10 用无损档，10x 以下始终用次精细档）。 */
   private provinceTierMapName(): string {
-    return this.zoom < PROVINCE_COARSE_ZOOM_MAX ? 'china-provinces-coarse' : 'china-provinces';
+    return this.zoom >= RAW_ZOOM_MIN ? 'china-provinces-raw' : 'china-provinces';
   }
 
   /** 异步加载完成后注册无压缩 raw 档，并立即生效（若当前已放大到 ≥10 或钻省中）。 */
