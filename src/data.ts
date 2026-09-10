@@ -11,13 +11,11 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** 把 TopoJSON（objects.china 拓扑对象）转成 GeoJSON，并拼接装饰面（省直辖县级/兵团城市，DataV 源）。 */
-function topoToGeoJson(topo: Topology, decorative: { features?: unknown[] }): unknown {
+/** 把 TopoJSON（objects.china 拓扑对象）转成 GeoJSON。 */
+function topoToGeoJson(topo: Topology): unknown {
   const obj = topo.objects?.china as GeometryCollection | undefined;
   if (!obj) throw new Error('TopoJSON 缺 objects.china');
-  const geo = feature(topo, obj);
-  const decoFeatures = decorative.features ?? [];
-  return { type: 'FeatureCollection', features: [...geo.features, ...decoFeatures] };
+  return feature(topo, obj);
 }
 
 /** 省级无损档 TopoJSON → GeoJSON（不拼装饰面：省界折线只要省级面）。 */
@@ -30,13 +28,12 @@ function provRawTopoToGeoJson(topo: Topology): unknown {
 /** 加载数据（public/data 下的构建产物）。 */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
-  const [meta, fineTopo, coarseTopo, ultraTopo, losslessTopo, decorativeGeo, provGeo, provCoarseGeo, provRawTopo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
+  const [meta, fineTopo, coarseTopo, ultraTopo, losslessTopo, provGeo, provCoarseGeo, provRawTopo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units.json'),
     fetchJson<Topology>('data/china_units_coarse.json'),
     fetchJson<Topology>('data/china_units_ultra.json'),
     fetchJson<Topology>('data/china_units_lossless.json'),
-    fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
     fetchJson<unknown>('data/china_provinces_coarse.geojson'),
     fetchJson<Topology>('data/china_provinces_raw.json'),
@@ -50,10 +47,11 @@ export async function loadData(): Promise<AppData> {
     units,
     allUnits,
     provinces: meta.provinces,
-    geoJson: topoToGeoJson(fineTopo, decorativeGeo),
-    coarseGeoJson: topoToGeoJson(coarseTopo, decorativeGeo),
-    ultraGeoJson: topoToGeoJson(ultraTopo, decorativeGeo),
-    losslessGeoJson: topoToGeoJson(losslessTopo, decorativeGeo), // 无损档（100% 顶点，zoom ≥ 10）
+    // 县级装饰面（省直辖县级/兵团城市）已并入地级拓扑组，随各档一起输出，无需再单独拼接。
+    geoJson: topoToGeoJson(fineTopo),
+    coarseGeoJson: topoToGeoJson(coarseTopo),
+    ultraGeoJson: topoToGeoJson(ultraTopo),
+    losslessGeoJson: topoToGeoJson(losslessTopo), // 无损档（100% 顶点，zoom ≥ 10）
     provincesGeoJson: provGeo,
     provincesCoarseGeoJson: provCoarseGeo,
     provincesRawGeoJson: provRawTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 10）

@@ -49,28 +49,43 @@
   - `provinces` 34 面（省/自治区/直辖市/特别行政区/台湾）
 - 30 个省直辖县级/兵团城市装饰面 + 南海诸岛装饰面来自阿里 DataV（cn-atlas 无县级粒度，仅用于补白，不参与答题/邻接）。
 - 换源原因（2026-09）：DataV 逐面数字化导致相邻边 32.7% 零共享 → 地图缝隙；cn-atlas 共享弧 0% 零共享。
+- 装饰面与 cn-atlas 是**两个独立来源**，边界既不共享顶点、也不完全重合（实测相邻 41 对中 40 对互相**重叠** 0.2%~27%）。见 4.2 第 3 步的缝合法。
 
 ### 4.2 数据管线（scripts/fetch-cn-atlas.mjs，Node 脚本，一次性运行）
 1. 下载 cn-atlas TopoJSON，用 topojson-client 展开 prefectures/provinces。
 2. 按现有 `units.json` 白名单对齐 adcode（340 真实地级 + 南海诸岛），字段映射为 `adcode`/`name`。
-3. **先 `-explode` 拆 MultiPolygon，再拓扑保持简化，最后按 adcode 合并回 MultiPolygon**，出三档简化 + 一档无损（最精细档不经过 `-simplify`）：
-   - `china_units.json`（fine 15%，展开约 2.7 万顶点）——2 ≤ zoom < 10（次精细）
-   - `china_units_coarse.json`（coarse 8%，展开约 1.8 万顶点）——已弃用（保留注册兼容）
-   - `china_units_ultra.json`（ultra 4%，展开约 1.1 万顶点）——zoom < 2（最简略，全国全景）
-   - `china_units_lossless.json`（无损 100%，展开约 9.6 万顶点，889KB）——zoom ≥ 10 或钻省（最精细）
+   30 个装饰面与南海诸岛**并入同一拓扑组**（不再是独立 GeoJSON）——这是缝合的前提。
+3. **缝合（snap + clean）→ 先 `-explode` 拆 MultiPolygon → 拓扑保持简化 → 最后按 adcode 合并回 MultiPolygon**，出三档简化 + 一档无损（最精细档不经过 `-simplify`）：
+   - `china_units.json`（fine 15%，展开约 2.7 万顶点，**210KB**）——2 ≤ zoom < 10（次精细）
+   - `china_units_coarse.json`（coarse 8%，**159KB**）——已弃用（保留注册兼容）
+   - `china_units_ultra.json`（ultra 4%，**129KB**）——zoom < 2（最简略，全国全景）
+   - `china_units_lossless.json`（无损 100%，展开约 8.7 万顶点，**821KB**）——zoom ≥ 10 或钻省（最精细）
+   - 缝合后文件反而**变小**：clean 把两个来源重叠/错开的边界重划为共享弧，冗余顶点被消除。
 4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者已弃用）+ **省级无损档** `china_provinces_raw.json`（无压缩转 TopoJSON 共享弧压缩，2632KB GeoJSON → 396KB，zoom ≥ 10 用）。
-5. 装饰面 `china_decorative.geojson` 单独保留（DataV 源，不进拓扑简化）。
+5. 用 fine 档几何重建 `units.json` 的 center/neighbors（装饰面此时已可算出真实邻接，不再恒为空）。
 6. **港澳放大框 `hkmac.geojson`**：从省级无压缩几何抽取 广东(440000)+香港(810000)+澳门(820000) 三面，始终不简化（125KB，同步加载）。
-7. 用 fine 档几何重建 `units.json` 的 center/neighbors。
-8. **缝隙闸门**：输出各档（含无损档）各自展开成 GeoJSON，校验「真实相邻单位必须共享 ≥1 顶点」，零共享即 `exit 1` 拒绝输出。
+7. **缝隙闸门**：各档（含无损档）展开成 GeoJSON 后跑两道检查，任一不过即 `exit 1` 拒绝输出：
+   - 邻接表检查：`units.json` 里互为邻居的单位必须共享 ≥1 顶点；
+   - 几何邻接检查：**不依赖 neighbors 字段**，直接按几何找相邻对（判据见下），零共享即为缝隙。
+8. 退役产物 `china_decorative.geojson` 若存在则删除；`scripts/check-data.mjs` 也会把它当问题报出。
+
+**缝合法（第 3 步的关键，两步缺一不可）**
+- 第一步 `-snap interval=0.01`：把邻近顶点吸附到 0.01° 网格（≈1.1km，全国尺度约 1px）。
+- 第二步 `-clean gap-width=auto`：**在对方边界上插入顶点**，把两个来源的折线切成同一组弧段（其内部 `snapAndCut` 做「求交 → 在交点处切开弧」）。
+- **为什么必须有第二步**：`-snap` 只合并「本来就靠得近的既有顶点」，**不会把顶点插入对方的边里**。典型例子 晋城市(257 顶点)↔济源市(23 顶点)：只 snap 时有 8 个精确重合顶点，但共享**边**仍为 0 条 —— 两个重合顶点之间两条折线各走各的，渲染时中间仍透出背景色。
+- **度量方式**：看跨源相邻对「共享 arc」的比例（拓扑上是否真的共用边界）。只 snap = 16/41（39%）；snap+clean = **41/41（100%）**，同源对 896/896（100%）。四档均 100%。
+- **几何代价**：顶点 +0.4%（154447→155061）；总面积 −0.0013%；平均位移 72m；面积变化 >0.1% 的面仅 43/371，且**全部是 30 个装饰面**（核心面最大 1.56%）。装饰面最大 27%（双河市）并非失真 —— 它与 cn-atlas 邻居本就重叠 27%，clean 把重叠区判给一方，属预期。
+- 被否决的方案：只 `-snap`（跨源仅 39% 共享弧，仍有缝）；`-snap interval=0.02`（跨源 64%，且位移 2.17km）；`-dissolve gap-width=` 会把所有面并成一块、丢失 adcode 属性，无法按单位渲染。
+
+**闸门的「相邻」判据必须用点到线段**：早期实现用「任意两顶点距离 ≤1km」，会把**角点相接**误判为相邻。实例：三亚市(460200) 与 五指山市(469001) 并不接壤（中间隔着保亭/乐东，`units.json` 里二者互不为邻居），边界最小间距 1.10km，但各有一个角点相距 0.57km → 误报「相邻却零共享顶点」。现判据为「至少 3 个顶点落在对方**边界**（点到线段）1km 内」：真实相邻会让一整段边界贴近（产生几十个近邻顶点），角点相接只产生 1~2 个。该判据已用对照验证：当前数据 0 误报；平移 1/2/6km、缩放 98%/95%/90% 全部能抓到；**喂入旧数据能准确报出全部 42 处旧缝隙**。
 
 **为什么必须 explode**：mapshaper 的 `keep-shapes` 只保证「整个 feature 不消失」，**不保护 MultiPolygon 内部的孤立小环**。实测淮北（340600）含一个约 39.7km² 的飞地小环，在 8%/4% 简化下该环被删除 → 其弧拓扑被改写 → 与徐州（320300）的共享弧消失 → 0.135° 可见缝隙。explode 后每个小环成为独立 feature，受 `keep-shapes` 保护，实测各档零共享均为 0。
 
 - 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用/删除（逐面 Douglas-Peucker 会破坏共享边，是缝隙的另一成因）。
 
 ### 4.3 运行时加载
-- 地级各档以 TopoJSON 存储（`china_units.json` 207KB / `china_units_coarse.json` 151KB / `china_units_ultra.json` 117KB / `china_units_lossless.json` 889KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
-- 无损档 `china_units_lossless.json`（889KB，gzip 282KB）与其他档一样**同步加载**，与 `Promise.all` 中其余文件并行；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
+- 地级各档以 TopoJSON 存储（`china_units.json` 210KB / `china_units_coarse.json` 159KB / `china_units_ultra.json` 129KB / `china_units_lossless.json` 821KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）后 `registerMap`。**装饰面已并入拓扑，运行时不再单独请求 `china_decorative.geojson`**。
+- 无损档 `china_units_lossless.json`（821KB）与其他档一样**同步加载**，与 `Promise.all` 中其余文件并行；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
 - 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB 次精细档 / `china_provinces_coarse.geojson` 192KB 已弃用）；**省级无损档** `china_provinces_raw.json`（396KB TopoJSON，同步加载，zoom ≥ 10 用）。
 - 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面。
 - 档位切换由 `renderer.chinaTierMapName()`（地级：无损≥10 / fine 2~10 / ultra<2）与 `provinceTierMapName()`（省级：无损≥10 / 次精细<10）按 zoom 决定；省界折线档位（`activeProvinceLines()`）同样以 10 为界。切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
@@ -191,7 +206,7 @@ interface MemoryState {
       china_units_coarse.json       # 地级 coarse 档（TopoJSON，已弃用）
       china_units_ultra.json        # 地级 ultra 档（TopoJSON，zoom < 2 最简略）
       china_units_lossless.json     # 地级无损档（TopoJSON，zoom ≥ 10，100% 顶点）
-      china_decorative.geojson      # 县级装饰面 + 南海诸岛（DataV 源，补白）
+      # 注：china_decorative.geojson 已退役（装饰面并入地级拓扑），管线会删除，check-data 会报错
       china_provinces.geojson       # 省级面 次精细档（省界 + 省级地图，zoom < 10）
       china_provinces_coarse.geojson# 省级面 coarse 4%（已弃用）
       china_provinces_raw.json      # 省级面 无损档（TopoJSON，zoom ≥ 10）
@@ -280,15 +295,15 @@ interface MemoryState {
 ## 14. v3 修订（用户反馈定稿）
 
 1. **配色语义调整**：🔵 蓝 = 当前题目（自测/挑战的提问目标）；🔴 红 = 仅答错标记；🟢 绿 = 正确/已记忆；⚪ 灰 = 未涉及。自测模式的"蓝色预告"概念取消（蓝即题目）。
-2. **省直辖县级填充面**：海南 15 个直辖县、湖北仙桃/潜江/天门/神农架、河南济源、新疆兵团城市等 30 个县级区域以灰色装饰面补齐地图空白（修复"海南等区域看起来没加载"的问题），不参与匹配/统计/测试/邻接。
+2. **省直辖县级填充面**：海南 15 个直辖县、湖北仙桃/潜江/天门/神农架、河南济源、新疆兵团城市等 30 个县级区域以灰色装饰面补齐地图空白（修复"海南等区域看起来没加载"的问题），不参与匹配/统计/测试。**它们现已并入地级拓扑参与简化与邻接计算**（2026-09 缝合改造），`decorative: true` 仅用于配色与出题排除；详见 4.2。
 3. **省界**：geo 组件作为唯一坐标系（`map: 'china'` 地级数据，自身全透明），地级 series 绑定 `geoIndex: 0`（着色/细边界/标签全部正常）；省界由**同一坐标系的 lines 线条系列**绘制粗线（2.4px 深灰，339 条省界线，z 在地级之上）——单视图、无重叠、不隐藏地级边界；下钻省份时省界线只保留当前省。修复记录：series 绑定 geoIndex 后 `getMapType()` 取 geo 的 map，若 geo.map 用省界数据会导致地级名与省 region 不匹配、地级面整体消失（"地级边界被隐藏"bug），故 geo.map 必须用地级数据。
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略（三档 + 无损档 + 视口裁剪，拓扑保持 + explode）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分三档，简化档由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），最精细档**完全不简化**，其流畅度由**运行时视口裁剪**保证（见 4.4）——
-   - **无损档** `china_units_lossless.json`：100% 顶点（约 9.6 万顶点，889KB / gzip 282KB），zoom ≥ 10 或已钻省时使用；同步加载，**不做任何简化**，靠视口裁剪把每帧 `buildPath` 限制在可见子集；
-   - **fine 档** `china_units.json`：keep 15%（展开约 2.7 万顶点），2 ≤ zoom < 10（次精细）；
-   - **ultra 档** `china_units_ultra.json`：keep 4%（展开约 1.1 万顶点），zoom < 2（最简略，全国全景）；
+7. **数据简化策略（三档 + 无损档 + 视口裁剪，拓扑保持 + explode + 缝合）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）；30 个 DataV 装饰面并入同一拓扑组并做 `-snap 0.01 + -clean gap-width=auto` 缝合（跨源相邻对共享弧 39% → 100%），详见 4.2。地级地图按 zoom 分三档，简化档由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），最精细档**完全不简化**，其流畅度由**运行时视口裁剪**保证（见 4.4）——
+   - **无损档** `china_units_lossless.json`：100% 顶点（约 8.7 万顶点，821KB），zoom ≥ 10 或已钻省时使用；同步加载，**不做任何简化**，靠视口裁剪把每帧 `buildPath` 限制在可见子集；
+   - **fine 档** `china_units.json`：keep 15%（210KB），2 ≤ zoom < 10（次精细）；
+   - **ultra 档** `china_units_ultra.json`：keep 4%（129KB），zoom < 2（最简略，全国全景）；
    - **省级** `china_provinces.geojson`（keep 15%，次精细档，zoom < 10）/ `china_provinces_raw.json`（无损档，zoom ≥ 10）；省界折线（`activeProvinceLines()`）同样以 10 为界切换。
    - **港澳放大框** `hkmac.geojson`：从省级无压缩几何抽取广东+香港+澳门三面，**始终不简化**（香港 283 顶点 vs fine 71、广东 2934 vs fine 553）。
    档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，各档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。

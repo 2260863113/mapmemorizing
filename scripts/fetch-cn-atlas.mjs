@@ -26,6 +26,8 @@ const SRC_URL = 'https://unpkg.com/cn-atlas/cn-atlas.json';
 const SOURCE_NOTE = 'https://github.com/BarbarossaWang/cn-atlas (shengshixian.com 2023 shp → mapshaper 简化 → TopoJSON；台湾/港澳整体单位、南海诸岛与县级装饰面保留自 DataV)。';
 const TMP = path.join(ROOT, '.cnatlas-tmp');
 const NANHAI_ADCODE = '100000_JD';
+/** 南海诸岛固定标注点（人工设定，见 [5/6] 处说明）。 */
+const NANHAI_CENTER = [112, 16];
 
 const { runCommands } = mapshaper;
 
@@ -161,6 +163,154 @@ function sharedVertexStats(geojson, units) {
   return { pairs, zero, zeroList };
 }
 
+/**
+ * 几何邻接缝隙普查：**不依赖 units.json 的 neighbors 字段**。
+ *
+ * 为什么需要它：装饰面的 neighbors 字段历史上恒为空数组（它们不参与出题），
+ * 于是旧的「按 neighbors 查共享顶点」闸门从未检查过装饰面 ——
+ * 这正是全国 42 处装饰面缝隙（新疆兵团 10、海南 15、湖北 4 等）长期没被发现的原因。
+ * 本函数直接从几何判定邻接，覆盖全部单位（含装饰面）。
+ *
+ * 相邻判定：两单位最近顶点距离 ≤ tolKm（0.05° 网格哈希加速，避免 O(n²) 顶点两两比较）。
+ * 缝隙判定：判定为相邻但共享顶点数为 0。
+ * 同时返回 nearPairs 规模（有多少对顶点互相在容差内），用于区分
+ * 「真正的长边界缝隙」（大量顶点邻近却零共享）与「两块分离小岛恰好靠得近」（仅个位数顶点邻近）。
+ */
+function adjacencySeamStats(geojson, tolKm = 1.0) {
+  const CELL = 0.05; // ≈5.5km，保证 3x3 邻域足以覆盖 1km 容差
+  const kmPerDegLat = 111.32;
+  // 「沿边界相邻」的判据：至少 MIN_NEAR_PTS 个顶点落在对方边界 1km 内。
+  //
+  // 为什么不是「任意两顶点距离 ≤1km」：那会把**角点相接**误判为相邻。
+  // 实例：三亚市(460200) 与 五指山市(469001) 并不接壤（中间隔着保亭/乐东），
+  // 二者在 units.json 的邻居表里互不出现，边界最小间距 1.10km；
+  // 但各有一个角点相距 0.57km，旧判据据此认定「相邻却零共享顶点」→ 误报缝隙。
+  // 真实的相邻（含数字化错开）会让**一整段**边界贴近，产生远多于 3 个的近邻顶点；
+  // 角点相接只产生 1~2 个。故要求 ≥3 个，既能排除角点，又能抓住「整段错开」的回归。
+  const MIN_NEAR_PTS = 3;
+  const toPoints = (f) => {
+    const out = [];
+    const walk = (c) => {
+      if (!Array.isArray(c)) return;
+      if (Array.isArray(c[0]) && typeof c[0][0] === 'number') { for (const p of c) out.push(p); return; }
+      for (const cc of c) walk(cc);
+    };
+    walk(f.geometry.coordinates);
+    return out;
+  };
+  const items = [];
+  for (const f of geojson.features ?? []) {
+    const pts = toPoints(f);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    const grid = new Map();
+    for (const p of pts) {
+      const k = `${Math.floor(p[0] / CELL)},${Math.floor(p[1] / CELL)}`;
+      let arr = grid.get(k);
+      if (!arr) { arr = []; grid.set(k, arr); }
+      arr.push(p);
+    }
+    const set = new Set(pts.map((p) => p[0].toFixed(6) + ',' + p[1].toFixed(6)));
+    items.push({ ad: String(f.properties.adcode), name: f.properties.name, pts, grid, set, bbox: [minX, minY, maxX, maxY], segGrid: null });
+  }
+
+  /** 点到线段的最近距离（km） */
+  const ptSegKm = (p, a, b) => {
+    const kx = kmPerDegLat * Math.cos((p[1] * Math.PI) / 180);
+    const px = p[0] * kx, py = p[1] * kmPerDegLat;
+    const ax = a[0] * kx, ay = a[1] * kmPerDegLat;
+    const bx = b[0] * kx, by = b[1] * kmPerDegLat;
+    const dx = bx - ax, dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  };
+  /** 惰性构建线段栅格（同一单位在多对中复用） */
+  const segGridOf = (it, coords) => {
+    if (it.segGrid) return it.segGrid;
+    const g = new Map();
+    const push = (seg, key) => {
+      let arr = g.get(key);
+      if (!arr) { arr = []; g.set(key, arr); }
+      arr.push(seg);
+    };
+    const walkRings = (c) => {
+      if (!Array.isArray(c)) return;
+      if (Array.isArray(c[0]) && typeof c[0][0] === 'number') {
+        for (let i = 0; i < c.length; i++) {
+          const a = c[i], b = c[(i + 1) % c.length];
+          const seg = [a, b];
+          const x0 = Math.floor(Math.min(a[0], b[0]) / CELL), x1 = Math.floor(Math.max(a[0], b[0]) / CELL);
+          const y0 = Math.floor(Math.min(a[1], b[1]) / CELL), y1 = Math.floor(Math.max(a[1], b[1]) / CELL);
+          if ((x1 - x0 + 1) * (y1 - y0 + 1) > 20000) { push(seg, 'ALL'); continue; }
+          for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) push(seg, `${x},${y}`);
+        }
+        return;
+      }
+      for (const cc of c) walkRings(cc);
+    };
+    walkRings(coords);
+    it.segGrid = g;
+    return g;
+  };
+  /** A 的顶点中有几个落在 B 边界 tolKm 内（返回 {count, minKm}） */
+  const countNearBoundary = (A, B) => {
+    const g = segGridOf(B, B.coords);
+    let count = 0, minKm = Infinity;
+    for (const p of A.pts) {
+      const cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL);
+      let best = Infinity;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const arr = g.get(`${cx + dx},${cy + dy}`);
+        if (!arr) continue;
+        for (const [a, b] of arr) { const d = ptSegKm(p, a, b); if (d < best) best = d; }
+      }
+      const all = g.get('ALL');
+      if (all) for (const [a, b] of all) { const d = ptSegKm(p, a, b); if (d < best) best = d; }
+      if (best < minKm) minKm = best;
+      if (best <= tolKm) count++;
+    }
+    return { count, minKm };
+  };
+
+  // 保存几何坐标供线段索引使用
+  for (let k = 0; k < items.length; k++) items[k].coords = (geojson.features[k] ?? {}).geometry?.coordinates;
+
+  const tolDegPad = tolKm / 100; // 保守外扩，避免 bbox 恰好相邻时被剪掉
+  let pairs = 0; let zero = 0; const zeroList = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const A = items[i], B = items[j];
+      if (A.bbox[0] - tolDegPad > B.bbox[2] || B.bbox[0] - tolDegPad > A.bbox[2]) continue;
+      if (A.bbox[1] - tolDegPad > B.bbox[3] || B.bbox[1] - tolDegPad > A.bbox[3]) continue;
+      // 相邻判定：A 的一段边界贴近 B 的边界，或反之
+      const fb = countNearBoundary(A, B);
+      const fa = countNearBoundary(B, A);
+      const near = Math.max(fa.count, fb.count);
+      if (near < MIN_NEAR_PTS) continue; // 不相邻（含仅角点相接）
+      pairs++;
+      let shared = 0;
+      for (const p of A.pts) if (B.set.has(p[0].toFixed(6) + ',' + p[1].toFixed(6))) { shared++; }
+      if (shared === 0) {
+        zero++;
+        zeroList.push({
+          a: A.name, b: B.name, aad: A.ad, bad: B.ad, near,
+          km: Math.min(fa.minKm, fb.minKm),
+          minPts: Math.min(A.pts.length, B.pts.length),
+        });
+      }
+    }
+  }
+  zeroList.sort((x, y) => y.near - x.near);
+  return { pairs, zero, zeroList };
+}
+
 function centerOf(feature) {
   const polys = ringsOfGeometry(feature.geometry);
   let best = null; let bestArea = -1;
@@ -222,17 +372,56 @@ async function run() {
   if (!nanhai) { console.error('⚠ 装饰面源缺南海诸岛 (data-src/datav-decorative.geojson)'); process.exit(1); }
   coreFeatures.push({ type: 'Feature', properties: { adcode: NANHAI_ADCODE, name: '南海诸岛' }, geometry: nanhai.geometry });
 
-  console.log('[3/6] 拓扑保持简化出 fine/coarse/ultra 三档 ...');
+  // 县级装饰面（30 个省直辖县级/兵团城市）也并入核心拓扑组 —— 这是修复缝隙的关键。
+  //
+  // 历史问题（grill-rounds.log 2026-09-09 缝合）：它们原先作为独立 GeoJSON 在运行期拼接，有两个后果：
+  //   1. 与 cn-atlas 边界**不共享顶点**：两个来源各自数字化，相邻边必然错开（实测 42 对相邻 100% 有缝，
+  //      最大 0.847km）→ 全国 26 个装饰面周围都有可见裂缝（新疆兵团 10 个、湖北 4 个、海南 15 个等）。
+  //   2. 装饰面恒为 100% 不简化，而核心面被简化到 15%/4% → 即使只对 100% 几何 snap，
+  //      到了 fine/ultra 档二者仍不可能共享顶点（实测各档均 100% 有缝）。
+  // 所以必须「并入同一拓扑组 → snap → 一起 explode → 一起简化」，让相邻边成为共享弧。
+  for (const u of decoUnits) {
+    if (u.adcode === NANHAI_ADCODE) continue; // 南海已加过
+    const f = decoByAdcode.get(u.adcode);
+    if (!f) { console.error(`⚠ 装饰面源缺 ${u.adcode} ${u.name}`); process.exit(1); }
+    coreFeatures.push({ type: 'Feature', properties: { adcode: u.adcode, name: u.name }, geometry: f.geometry });
+  }
+  console.log(`  并入核心拓扑组的装饰面: ${decoUnits.length - 1} 个（另加南海诸岛）`);
+
+  console.log('[3/6] 缝合 (snap) + 拓扑保持简化出 fine/coarse/ultra 三档 ...');
   const baseGeoJson = { type: 'FeatureCollection', features: coreFeatures };
   const coreGjFile = path.join(TMP, 'china-core.geojson');
   fs.writeFileSync(coreGjFile, JSON.stringify(baseGeoJson));
+
+  // 缝合：分两步，缺一不可。
+  //
+  // 第一步 -snap interval=0.01：把邻近顶点吸附到 0.01° 网格（≈1.1km，全国尺度约 1px）。
+  // 第二步 -clean gap-width=auto：**在对方边界上插入顶点**，把两个来源的折线切成同一组弧段。
+  //
+  // 为什么必须有第二步（实测教训）：
+  //   -snap 只能合并「本来就靠得近的既有顶点」，**不会把顶点插入对方的边里**。
+  //   典型例子：晋城市(257 顶点)↔济源市(23 顶点)，snap 后有 8 个精确重合顶点，
+  //   但共享**边**仍是 0 条 —— 两个重合顶点之间，两条折线各走各的，
+  //   渲染时中间仍会透出背景色（细白线）。
+  //   度量：跨源相邻对「共享 arc」的比例，snap 后仅 16/41 = 39%；
+  //   加上 -clean gap-width=auto 后达到 41/41 = 100%（同源对 896/896 = 100%）。
+  //   clean 内部的 snapAndCut 会做「求交 → 在交点处切开弧段」，这正是共享弧的来源。
+  //
+  // 代价（实测，相对只 snap）：
+  //   顶点 154447 → 155061（+0.4%）；总面积 −0.0013%；
+  //   平均位移 72m；面积变化 >0.1% 的面 43/371，且**全部集中在 30 个装饰面**
+  //   （核心面最大仅 1.56%，装饰面最大 27%——因为 DataV 装饰面与 cn-atlas 邻居本来
+  //    就**互相重叠**（实测重叠 0.2%~27%），clean 把重叠区判给其中一方，属预期而非失真）。
+  const snappedFile = path.join(TMP, 'china-core-snapped.geojson');
+  await runCommands(`-i ${coreGjFile} -snap interval=0.01 -clean gap-width=auto -o format=geojson ${snappedFile}`);
+  console.log(`  缝合 snap=0.01 + clean: 面数 ${JSON.parse(fs.readFileSync(snappedFile, 'utf8')).features.length}/${coreFeatures.length}`);
 
   // 关键：先 -explode 把 MultiPolygon 拆成独立 Polygon 再简化。
   // 原因：mapshaper 的 keep-shapes 只保证「整个 feature 不消失」，不保护 MultiPolygon 内部的孤立小环
   // （实测淮北 340600 有个 39.68km² 飞地小环，在 8%/4% 简化下被删除 → 拓扑改写 → 与徐州 320300 的共享弧被拆开
   //   → 0.135° 可见缝隙）。explode 后每个小环都是独立 feature，受 keep-shapes 保护，简化后零共享恢复到 0。
   const explodedFile = path.join(TMP, 'china-core-exploded.geojson');
-  await runCommands(`-i ${coreGjFile} -explode -o format=geojson ${explodedFile}`);
+  await runCommands(`-i ${snappedFile} -explode -o format=geojson ${explodedFile}`);
 
   // 三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%）。
   // 注意：zoom ≥ 10 用的最精细档（无压缩，16.9 万顶点）在 fine 之上就地生成，
@@ -273,16 +462,9 @@ async function run() {
     console.log(`  lossless(100%): arcs=${t.arcs.length} 合并后 features=${t.objects.china.geometries.length} 顶点=${v}`);
   }
 
-  console.log('[4/6] 装饰面单独保存 + 省级地图（cn-atlas provinces）...');
-  const decoFeatures = decoUnits
-    .filter((u) => u.adcode !== NANHAI_ADCODE) // 南海已进 core
-    .map((u) => {
-      const f = decoByAdcode.get(u.adcode);
-      return f ? { type: 'Feature', properties: { adcode: u.adcode, name: u.name }, geometry: f.geometry } : null;
-    })
-    .filter(Boolean);
-  const decoGeoJson = { type: 'FeatureCollection', features: decoFeatures, _source: 'DataV decorative counties (not in cn-atlas prefecture level)' };
-  console.log(`  装饰面: ${decoFeatures.length} 个`);
+  console.log('[4/6] 省级地图（cn-atlas provinces）...');
+  // 注：装饰面已并入地级核心拓扑组（见 [3/6]），不再单独输出 china_decorative.geojson。
+  // 原先「装饰面单独成文件 + 运行期拼接」是缝隙的根源，该文件与其拼接逻辑一并移除。
 
   // 省级地图：cn-atlas provinces（34 面）+ 南海装饰面，字段映射 adcode/name(中文)
   const provFeatures = [];
@@ -336,24 +518,41 @@ async function run() {
     const f = fineById.get(u.adcode);
     if (f) u.center = centerOf(f);
   }
+  // 装饰面也刷新中心点：它们原先的中心来自旧 DataV 几何，并入拓扑并 snap 后有微小位移，
+  // 保持与所用几何一致（标签落点/定位更准）。
+  // 例外：南海诸岛**不重算**，固定为人工标注点 [112, 16]。
+  // 它是纯装饰（不出题），常规标注点在南海中部；重算会取「面积最大的小岛」→ 实测漂到
+  // 122.5,23.5（东海方向），位移 1434km，属明显回归。
+  // 注意：本脚本以 units.json 为**输入**（读 allUnits）又把它写回输出，所以这里必须显式赋回
+  // 固定值而不是「跳过」—— 否则上一轮被污染的坐标会一直留在文件里。
+  for (const u of decoUnits) {
+    if (u.adcode === NANHAI_ADCODE) { u.center = NANHAI_CENTER; continue; }
+    const f = fineById.get(u.adcode);
+    if (f) u.center = centerOf(f);
+  }
 
-  for (const u of realUnits) u.neighbors = [];
-  const bboxes = realUnits.map((u) => bboxOf(fineById.get(u.adcode) ?? nanhai));
-  for (let i = 0; i < realUnits.length; i++) {
-    for (let j = i + 1; j < realUnits.length; j++) {
+  // 邻接：真实单位 + 装饰面都算。
+  // 装饰面（省直辖县级/兵团城市）在运行期是**可出题的真实单位**（data.ts 只把南海诸岛保留为 decorative），
+  // 但历史上它们的 neighbors 恒为空 → 「找相邻单位」类题目把它们排除在候选之外。并入拓扑后它们的邻接已可用，
+  // 顺带一并重建（判定与真实单位同一套 booleanIntersects）。
+  const nbrUnits = allUnits.filter((u) => u.adcode !== NANHAI_ADCODE && fineById.has(u.adcode));
+  for (const u of nbrUnits) u.neighbors = [];
+  const bboxes = nbrUnits.map((u) => bboxOf(fineById.get(u.adcode)));
+  for (let i = 0; i < nbrUnits.length; i++) {
+    for (let j = i + 1; j < nbrUnits.length; j++) {
       const a = bboxes[i], b = bboxes[j];
       if (a[0] > b[2] || b[0] > a[2] || a[1] > b[3] || b[1] > a[3]) continue;
-      const fi = fineById.get(realUnits[i].adcode);
-      const fj = fineById.get(realUnits[j].adcode);
+      const fi = fineById.get(nbrUnits[i].adcode);
+      const fj = fineById.get(nbrUnits[j].adcode);
       if (!fi || !fj) continue;
       if (booleanIntersects(fi, fj)) {
-        realUnits[i].neighbors.push(realUnits[j].adcode);
-        realUnits[j].neighbors.push(realUnits[i].adcode);
+        nbrUnits[i].neighbors.push(nbrUnits[j].adcode);
+        nbrUnits[j].neighbors.push(nbrUnits[i].adcode);
       }
     }
   }
-  const noNeighbor = realUnits.filter((u) => u.neighbors.length === 0);
-  console.log(`  无邻接（岛屿/飞地）: ${noNeighbor.map((u) => u.name).join('、') || '无'}`);
+  const noNeighbor = nbrUnits.filter((u) => u.neighbors.length === 0);
+  console.log(`  邻接重建：${nbrUnits.length} 个单位（含 ${decoUnits.length - 1} 个装饰面）；无邻接（岛屿/飞地）: ${noNeighbor.map((u) => u.name).join('、') || '无'}`);
 
   console.log('[6/6] 缝隙闸门 + 输出 ...');
   // 闸门：每档展开成 GeoJSON 后，真实相邻单位必须共享 ≥1 顶点（零共享 = 可见缝隙）。
@@ -366,11 +565,26 @@ async function run() {
     const st = sharedVertexStats(gj, allUnits);
     tierStats[name] = st;
     const ok = st.zero === 0;
-    if (!ok) gateFail = true;
-    console.log(`  ${name}: 相邻边 ${st.pairs} 对，零共享 ${st.zero} ${ok ? '✅' : '❌ ' + st.zeroList.slice(0, 5).join(', ')}`);
+    // 第二道闸门：几何邻接普查（含装饰面）。旧闸门只查 units.json 的 neighbors，
+    // 而装饰面 neighbors 恒为空 → 全国 42 处装饰面缝隙长期漏检。此闸门不依赖该字段。
+    const geoSt = adjacencySeamStats(gj);
+    // 排除南海诸岛（100000_JD）：它是一组远离大陆的岛礁散点，与任何陆地都不相邻，
+    // 其 "缝隙" 是地理距离而非数字化错位，不属于本闸门要拦的问题。
+    // 字段名注意：zeroList 的条目是 { a, b, aad, bad, km, near, minPts }，adcode 在 aad/bad 里。
+    const realZero = geoSt.zeroList.filter((z) => !String(z.aad).startsWith('100000') && !String(z.bad).startsWith('100000'));
+    const ok2 = realZero.length === 0;
+    if (!ok || !ok2) gateFail = true;
+    console.log(`  ${name}: 邻接表相邻边 ${st.pairs} 对零共享 ${st.zero} ${ok ? '✅' : '❌'}`);
+    console.log(`         几何邻接 ${geoSt.pairs} 对，缝隙 ${geoSt.zero}（排除南海 ${geoSt.zero - realZero.length}）${ok2 ? ' ✅' : ' ❌'}`);
+    if (!ok2) {
+      for (const z of realZero.slice(0, 8)) {
+        // near 大 = 长边界错开（真缝隙）；near 很小 = 两块几何恰好靠得近（多为分离小岛）
+        console.log(`           ${z.km.toFixed(3)}km 近邻顶点 ${z.near}/${z.minPts}  ${z.a}(${z.aad}) ↔ ${z.b}(${z.bad})`);
+      }
+    }
   }
   if (gateFail) {
-    console.error('FAIL: 存在零共享相邻边（可见缝隙），拒绝输出。检查 -explode 是否生效。');
+    console.error('FAIL: 存在零共享相邻边（可见缝隙），拒绝输出。检查 -snap/-explode 是否生效。');
     process.exit(1);
   }
 
@@ -378,15 +592,17 @@ async function run() {
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_coarse.json'), JSON.stringify({ ...tierTopos.coarse, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_ultra.json'), JSON.stringify({ ...tierTopos.ultra, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_lossless.json'), JSON.stringify({ ...tierTopos.lossless, _source: SOURCE_NOTE }));
-  fs.writeFileSync(path.join(OUT_DIR, 'china_decorative.geojson'), JSON.stringify(decoGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify(provGeoJsons.fine));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify(provGeoJsons.coarse));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_raw.json'), JSON.stringify({ ...provRawTopo, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'hkmac.geojson'), JSON.stringify(hkmacGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'units.json'), JSON.stringify({ units: allUnits, provinces: meta.provinces }));
-  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_lossless.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
+  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_lossless.json', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
     console.log(`  ${f}: ${(fs.statSync(path.join(OUT_DIR, f)).size / 1024).toFixed(0)}KB`);
   }
+  // 退役产物：装饰面已并入地级拓扑，运行时不再单独加载。
+  const stale = path.join(OUT_DIR, 'china_decorative.geojson');
+  if (fs.existsSync(stale)) { fs.unlinkSync(stale); console.log('  已删除退役产物 china_decorative.geojson（装饰面已并入拓扑）'); }
 }
 
 run().catch((e) => { console.error('FAIL:', e.message); process.exit(1); });
