@@ -5,6 +5,7 @@ import { normalizeProvince } from '../matcher';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
 import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
 import { InsetMap } from './inset';
+import { boxOfCoords, cullToViewport, type CullBox } from './cull';
 import {
   CITY_LABEL_SIZE,
   PRICE_LABEL_SIZE,
@@ -27,15 +28,15 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-/** 地级档阈值（三档：无压缩 raw ≥10 / 次精细 fine 2~10 / 最简略 ultra <2）。 */
-const RAW_ZOOM_MIN = 10; // zoom ≥ 10 用无压缩 raw 档（最精细，不简化）
+/** 地级档阈值（三档：lossless 100% ≥10 / 次精细 fine 15% 2~10 / 最简略 ultra 4% <2）。 */
+const LOSSLESS_ZOOM_MIN = 10; // zoom ≥ 10 用无损档（100% 顶点，靠视口裁剪保证流畅）
 const ULTRA_ZOOM_MAX = 2; // zoom < 2 用 ultra 档（最简略）
 /** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
 const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
   china: { center: [104.3, 28.5], zoom: 1 },
   'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 档与 fine 同数据范围
   'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档与 fine 同数据范围
-  'china-raw': { center: [104.3, 28.5], zoom: 1 }, // 无压缩档与 fine 同数据范围
+  'china-lossless': { center: [104.3, 28.5], zoom: 1 }, // 无损档与 fine 同数据范围
   'china-provinces': { center: [104.3, 28.5], zoom: 1 },
   'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级 coarse 档（已弃用，保留兼容）
   'china-provinces-raw': { center: [104.3, 28.5], zoom: 1 }, // 省级无损档同数据范围
@@ -140,7 +141,6 @@ export class MapRenderer {
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private worldMode = false; // 世界模式：只渲染世界地图（答题国 + 装饰面），无放大框、无下钻
   private worldContinent: Continent | null = null; // 世界模式下的洲范围（null = 全世界；非空 = 只渲染该洲 + 聚焦）
-  private rawReady = false; // 无压缩 raw 档是否已异步加载并注册（加载完成后放大到 ≥10 自动切换）
   /** 最近一次 render 实际应用到的 geo 地图名（用于检测地图切换，切换时强制重建 geo 组件）。 */
   private appliedMapName = '';
   /** 最近一次的「地图名|大洲」签名（大洲变化需 replaceMerge 重建 geo.regions）。 */
@@ -152,6 +152,8 @@ export class MapRenderer {
   private isoContinent = new Map<string, Continent>(); // iso → 大洲（世界大洲视图过滤用）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
+  /** 省界折线各元素的数据坐标 bbox（下标与 'province-lines' 系列 data 对齐，供逐帧视口裁剪用）。 */
+  private lineBoxes: CullBox[] = [];
   /** 命名 resize 监听器引用，dispose 时移除，避免匿名监听泄漏。 */
   private handleResize = () => this.resize();
   onViewChange: (() => void) | null = null;
@@ -161,15 +163,11 @@ export class MapRenderer {
     echarts.registerMap('china', data.geoJson as never);
     echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 地级 coarse 档（保留注册，避免旧缓存引用）
     echarts.registerMap('china-ultra', data.ultraGeoJson as never); // 地级 ultra 档（zoom < 2，大幅简化）
+    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // 地级无损档（zoom ≥ 10，100% 顶点）
     echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 省级地图（次精细档，zoom < 10）
     echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 省级地图（coarse 4%，已弃用；保留注册避免旧缓存引用）
     echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // 省级地图（无损档，zoom ≥ 10）
     echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
-    // 无压缩 raw 档异步加载（首屏用 fine 渲染，后台拉取后注册，放大到 ≥10 时自动切换）
-    if (data.rawGeoJson) {
-      echarts.registerMap('china-raw', data.rawGeoJson as never);
-      this.rawReady = true;
-    }
     this.inset = new InsetMap({
       theme: () => this.theme(),
       state: () => this.lastState,
@@ -336,6 +334,7 @@ export class MapRenderer {
         }
       }
       this.scheduleLabelModeUpdate();
+      this.cullToViewport(); // 视口移动后可见集合变化：刷新裁剪（约 1.3ms，可每帧执行）
       this.onZoomChange?.();
     });
 
@@ -346,6 +345,8 @@ export class MapRenderer {
   resize() {
     this.chart.resize();
     this.inset.resize();
+    // 画布尺寸变了 → 视口覆盖的数据范围随之变化，需按新尺寸重算裁剪
+    this.cullToViewport();
   }
 
   /** 某地图的默认全国视图（数据 bbox 中心 + zoom 1 = ECharts 的 fit 居中视图）。 */
@@ -393,6 +394,7 @@ export class MapRenderer {
     this.center = [v.center[0], v.center[1]];
     this.zoom = v.zoom;
     this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+    this.cullToViewport(); // 相机切换后视口范围变化（如省→全国）
     this.onZoomChange?.();
   }
 
@@ -557,15 +559,21 @@ export class MapRenderer {
 
   /** 省界线当前档：zoom ≥ 10 用无损档，否则用次精细档（10x 以下始终次精细，不再降级到 coarse）。 */
   private activeProvinceLines(): { adcode: string; coords: number[][] }[] {
-    return this.zoom >= RAW_ZOOM_MIN ? this.provinceLinesRaw : this.provinceLinesFine;
+    return this.zoom >= LOSSLESS_ZOOM_MIN ? this.provinceLinesRaw : this.provinceLinesFine;
   }
 
   /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
   private buildLineData(): { coords: number[][] }[] {
-    if (this.worldMode) return [];
-    return this.activeProvinceLines()
+    if (this.worldMode) {
+      this.lineBoxes = [];
+      return [];
+    }
+    const lines = this.activeProvinceLines()
       .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
       .map((l) => ({ coords: l.coords }));
+    // 逐帧裁剪需要每个元素的数据坐标 bbox：构建时算一次，拖动时只做区间比较
+    this.lineBoxes = lines.map((l) => boxOfCoords(l.coords));
+    return lines;
   }
 
   /** 标签锚点只服务文字位置，不影响聚焦和下钻使用的地图相机中心。 */
@@ -1042,6 +1050,20 @@ export class MapRenderer {
     }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
     if (this.provinceMode && this.provinceModeInset) this.inset.show();
+    // 视口裁剪必须放在最后一次 setOption 之后：replaceMerge 会重建 region 组、
+    // 清掉上一轮的 ignore 标记，且换档后可见集合本身也变了。
+    this.cullToViewport();
+  }
+
+  /**
+   * 只渲染当前视角范围内的地级面与省界线（详见 cull.ts 的说明）。
+   *
+   * 调用点有两处：render() 末尾（geo 重建后标记会被重置）与 georoam（视口移动后可见集合变化）。
+   * 刷新成本约为面 1.2ms + 线 0.1ms，可安全地每帧执行。
+   */
+  private cullToViewport() {
+    if (this.worldMode) return; // 世界图面数很少，且国名标签需常显
+    cullToViewport(this.chart, this.lineBoxes);
   }
 
   /** 清除临时黄色高亮（点击空白/其他区域时立即恢复） */
@@ -1075,7 +1097,10 @@ export class MapRenderer {
           item.itemStyle = { ...item.itemStyle, areaColor: theme.flashArea, borderColor: theme.flashBorder, borderWidth: 1.2 };
         }
       }
+      // setOption 改 geo.regions 会重建 MapDraw 的 region 组 → 清掉上一轮的 ignore 标记，
+      // 故必须紧跟一次裁剪，否则每次高亮都会让整幅地图重新参与构建与绘制（丢失裁剪收益）。
       this.chart.setOption({ geo: { regions } } as never);
+      this.cullToViewport();
     }
     this.flashAdcode = adcode;
     this.flashTimer = window.setTimeout(() => {
@@ -1128,6 +1153,7 @@ export class MapRenderer {
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
       this.center = center;
       this.chart.setOption({ geo: { map: animMap, center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      this.cullToViewport(); // 跟随动画每帧更新裁剪，避免动画中出现视口外的空档
       lastFrame = now;
       this.onZoomChange?.();
       if (t < 1) {
@@ -1190,6 +1216,7 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
     this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom } });
+    this.cullToViewport(); // 下钻改变相机与地图档，需在此刷新裁剪
     this.onZoomChange?.();
     this.onViewChange?.();
   }
@@ -1223,33 +1250,22 @@ export class MapRenderer {
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
     this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+    this.cullToViewport(); // 直接写相机不走 georoam，需在此刷新裁剪
     this.onZoomChange?.();
     this.onViewChange?.();
   }
 
-  /** 地级档应使用的地图名：无压缩 raw（≥10 或已钻省且 raw 就绪）→ 次精细 fine（2~10）→ 最简略 ultra（<2）。 */
+  /** 地级档应使用的地图名：无损 100%（≥10 或已钻省）→ 次精细 fine（2~10）→ 最简略 ultra（<2）。 */
   private chinaTierMapName(): string {
-    if (this.viewProvince !== null) return this.rawReady ? 'china-raw' : 'china'; // 钻省用最精细（raw 未就绪则 fine）
-    if (this.zoom >= RAW_ZOOM_MIN) return this.rawReady ? 'china-raw' : 'china';
+    if (this.viewProvince !== null) return 'china-lossless'; // 钻省用最精细档
+    if (this.zoom >= LOSSLESS_ZOOM_MIN) return 'china-lossless';
     if (this.zoom < ULTRA_ZOOM_MAX) return 'china-ultra';
     return 'china'; // 次精细（fine 15%）
   }
 
-  /** 省级档应使用的地图名（省级视图按 zoom 切细/粗档；省级粗档 = 4% 拓扑简化）。 */
   /** 省级档应使用的地图名（zoom ≥ 10 用无损档，10x 以下始终用次精细档）。 */
   private provinceTierMapName(): string {
-    return this.zoom >= RAW_ZOOM_MIN ? 'china-provinces-raw' : 'china-provinces';
-  }
-
-  /** 异步加载完成后注册无压缩 raw 档，并立即生效（若当前已放大到 ≥10 或钻省中）。 */
-  setRawGeoJson(geo: unknown) {
-    echarts.registerMap('china-raw', geo as never);
-    this.rawReady = true;
-    if (this.worldMode || this.provinceMode) return; // 世界/省级视图不用地级 raw
-    // 当前就应使用 raw 档（已放大到 ≥10 或钻省中）：重绘切换
-    if (this.lastState && this.currentMapName() === 'china-raw') {
-      this.render(this.lastState);
-    }
+    return this.zoom >= LOSSLESS_ZOOM_MIN ? 'china-provinces-raw' : 'china-provinces';
   }
 
   /** 当前 geo 地图名：世界模式用世界地图，省级模式用省级地图（按 zoom 分档），否则地级地图（按 zoom 切三档）。 */

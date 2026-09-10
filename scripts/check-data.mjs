@@ -53,7 +53,7 @@ const fineGeo = feature(fineTopo, fineTopo.objects.china);
 const decoGeo = load('china_decorative.geojson');
 const geo = { type: 'FeatureCollection', features: [...fineGeo.features, ...(decoGeo.features ?? [])] };
 const provGeo = fs.existsSync(path.join(DATA, 'china_provinces.geojson')) ? load('china_provinces.geojson') : null;
-const rawTopo = fs.existsSync(path.join(DATA, 'china_units_raw.json')) ? load('china_units_raw.json') : null;
+const losslessTopo = fs.existsSync(path.join(DATA, 'china_units_lossless.json')) ? load('china_units_lossless.json') : null;
 const hkmacGeo = fs.existsSync(path.join(DATA, 'hkmac.geojson')) ? load('hkmac.geojson') : null;
 const provRawTopo = fs.existsSync(path.join(DATA, 'china_provinces_raw.json')) ? load('china_provinces_raw.json') : null;
 
@@ -116,18 +116,18 @@ if (provGeo) {
   console.log('（尚未生成）');
 }
 
-console.log('\n=== 无压缩 raw 档 ===');
-if (rawTopo && rawTopo.objects?.china) {
-  const rawGeo = feature(rawTopo, rawTopo.objects.china);
-  console.log(`china_units_raw.json: ${rawGeo.features.length} 个 feature`);
+console.log('\n=== 地级无损档（zoom ≥ 10，100% 顶点；靠视口裁剪保证流畅） ===');
+if (losslessTopo && losslessTopo.objects?.china) {
+  const losslessGeo = feature(losslessTopo, losslessTopo.objects.china);
+  console.log(`china_units_lossless.json: ${losslessGeo.features.length} 个 feature`);
   let rbad = 0;
-  for (const f of rawGeo.features) {
+  for (const f of losslessGeo.features) {
     const st = geoStats(f.geometry);
-    if (!st.ok) { rbad++; problems.push(`raw 几何无效: ${f.properties.name} (${f.properties.adcode}) - ${st.reason}`); }
+    if (!st.ok) { rbad++; problems.push(`无损档几何无效: ${f.properties.name} (${f.properties.adcode}) - ${st.reason}`); }
   }
-  console.log(`无效 raw 几何: ${rbad}`);
+  console.log(`无效无损档几何: ${rbad}`);
 } else {
-  problems.push('缺失 china_units_raw.json 或 objects.china');
+  problems.push('缺失 china_units_lossless.json 或 objects.china');
 }
 
 console.log('\n=== 省级无损档 ===');

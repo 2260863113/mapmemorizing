@@ -199,3 +199,52 @@ georoam 处理器不再依赖 payload 里的 center，改为从 geo 坐标系读
 ### Cloudflare 部署核查（用户问"为何没触发部署"）
 - 结论：**部署实际已正常触发**。`mapmemorizing` 项目（Git Provider=Yes，域名 mapmemorizing.pages.dev / mapmemory.cn）最新 Production 部署 `9ba2a48d` 的 Source 正是本次提交 `caf30a8`，且线上 `data/china_units_raw.json`、`data/hkmac.geojson` 均返回 200。
 - 易混淆点：`wrangler.toml` 的 `name = "china-admin-memory"`，而账户下存在同名旧项目 `china-admin-memory.pages.dev`（**Git Provider=No**，一周未更新）——真正的线上项目是 `mapmemorizing`。另有 `origin` remote 指向 Gitee（落后 4 个提交），Cloudflare 集成的应是 GitHub `github/main`。
+
+## 2026-09-09（用户改变方向：不压缩，改为只渲染当前视角范围）
+
+需求原文：「先等一下，先不压缩，能不能当地图放大时，只渲染当前视角范围，这样增加流畅度」。
+即**撤销上一轮的「压缩到三分之一」计划**，改用视口裁剪 —— 保留 100% 顶点精度，只绘制可见部分。
+
+### 测量（先验证再改代码，1600×1000，中心广州，标签开）
+- 噪声地板 0.32ms；跨轮绝对值漂移可达 2x，故最终结论采用**多轮交错取各配置最小值**（漂移对所有配置同等作用）。
+- 逐档隔离成本（每帧拖动）：省界无损(69k 顶点) ≈ 12–13ms、省界次精细(12k) ≈ 2.3–2.7ms、地级无损(169k→展开) ≈ 10.6ms、标签 ≈ 5.4ms → **瓶颈是省界线，不是地级面**。
+- 把省界线整个删掉，无损档每帧仍有 15.9ms ⇒ **开销 ∝ 顶点数，与可见面积无关**（这正是用户直觉需要被验证的地方）。
+
+### 决定性机制（读 zrender 源码确认）
+- `zrender/lib/Storage.js` 的 `_updateAndAddDisplayable` 在 `el.ignore === true` 时**第 52 行提前 return**，位于 `el.update()`（即 `buildPath`）**之前** ⇒ 给整棵子树设 `ignore` 可跳过路径构建与绘制，代价 O(1)，且**不需要 `setOption`** ⇒ 无重建卡顿。
+- ECharts 自带的 `culling: true`（`MapDraw.js`）只在 `shouldBePainted()` 里跳过绘制，`buildPath` 照跑 ⇒ 对顶点密集的省界无效，必须用 `ignore`。
+- 访问路径：`getViewOfComponentModel(geoModel)._mapDraw._regionsGroupByName`（HashMap，`.each()`），兜底为受限递归扫描；面用 `cs.getRegion(name).getBoundingRect()`（内部缓存 `_rect`），线用 `data.getItemGraphicEl(i).ignore`。
+- 视口换算：`cs.pointToData()` 取画布四角 → 数据坐标 bbox（投影被 `boundingCoords` 钉死后为线性映射，四角即覆盖全视口）。
+
+### 交错实测（4 轮取 min）
+| 配置 | zoom10 | zoom12 | zoom16 |
+|---|---|---|---|
+| 无损 + 裁剪 | **6.8** | **13.2** | **11.3** |
+| 无损 无裁剪 | 15.8 | 28.2 | 27.7 |
+| 压缩33% + 省界无损（改前线上） | 17.2 | 34.6 | 35.8 |
+| 压缩33% + 省界细档 + 裁剪（理论上限） | 5.1 | 9.1 | 8.3 |
+
+⇒ **裁剪让无压缩的无损档比改前的线上方案快 2.5–3.2 倍**，且精度零损失；裁剪收益本身即 2.1–2.5x。
+
+### 被否决的方案（都实测过）
+- **省界分块裁剪**（把大环切成 16/32/64/128 点的小段再按段裁剪）：块数暴增（4547 块）反使每帧更慢（10.6–22.3ms）；且 size=16 时 ECharts `lines` 系列元素数被截断（4547 块只有 400 个拿到图形元素，其余无元素）⇒ 该配置「画 0 顶点」的 5.2ms 是**假胜**，已剔除。
+- **只裁省界不裁面**：21.9ms，跑不赢简单降档 ⇒ 必须面+线同裁。
+- **子集 remap（P2，用 `registerMap` 只注册可见子集）**：刷新一次 63.8ms 且会闪，而 `ignore` 刷新仅 1.2ms + 0.1ms ⇒ 选 `ignore`。
+
+### 实现
+- 新增 `src/map/cull.ts`：`cullToViewport()`（面+线）、`boxOfCoords()`、`CULL_MARGIN = 1.5`。
+- `renderer.ts`：`lineBoxes` 字段（构建 `buildLineData()` 时算一次逐元素 bbox）；调用点 = `render()` 末尾（replaceMerge 会重建 region 组、清掉 ignore）、`georoam`（视口移动）、`applyMapCamera()` 与跟随动画每帧、`drill()`、`backToNational()`（这些直接写相机、不触发 georoam）。
+- 命名统一：地级最精细档由「detailed 33%」改为「**lossless 100%**」——字段 `losslessGeoJson`、地图名 `china-lossless`、常量 `LOSSLESS_ZOOM_MIN`、文件 `china_units_lossless.json`（旧 `china_units_raw.json` 删除）。
+- 管线移除了地级无损档的 `-simplify`（不加任何简化），并修正了上一轮写入的、来自错误探针的 5.3ms 注释（真实值见上表）。
+
+### 验证
+- 集成验证（不注入任何函数，走线上 `render()`/`georoam` 真实路径）：`render()` 后裁剪自动生效；拖动 80 次后仍正确跟随（面忽略 262/371、线忽略 443/496）。
+- **边界情形 9/9 通过**（高亮 / 换档 / 省级 / 世界 / 下钻 / 返回全国 / resize / 换主题 / 露底复查）。过程中查出并修掉**两个真实 bug**：
+  1. `flash()` 走 `setOption({geo:{regions}})` 会重建 MapDraw 的 region 组 → **清掉全部 ignore 标记（实测 290 → 0）**，即每次高亮都会让整幅地图重新参与构建与绘制，裁剪收益丢失。修法：该 setOption 后紧跟一次 `cullToViewport()`。
+  2. `resize()` 改了画布尺寸却没重算裁剪 → 视口覆盖范围变化后裁剪标记全丢（0/371）。修法：`resize()` 末尾补 `cullToViewport()`。
+  两处都不是「裁剪不生效」而是「裁剪被后续操作清掉后未重算」，靠逐项边界用例才发现；仅测「拖动流畅度」不会暴露。
+- **像素级露底检测（9/9，差异恒为 0）**：对每个场景逐像素比对「裁剪渲染」与「同一状态放开裁剪的全量渲染」，可见区域必须完全一致。9 个场景（全国 z1 / 珠三角 z6 / 广州 z12 / 广州 z22 / 乌鲁木齐 z12 / 哈尔滨 z12 / 拉萨 z12 / 最南端 z12 / 省级 z4）差异像素**均为 0**，而被裁面数从 0 到 369/371 不等（即裁剪确实在起作用）。
+  - **阳性对照**（防止「0 差异」本身就是探针失效）：故意强行裁掉 1 个视口内的可见面 → 探针报出 **15560 个差异像素**；重新裁剪后差异回到 0。证明该比对确实能感知误裁。
+  - 初版探针有两个自身缺陷，已修正：① 用 `getRenderedCanvas` 数非背景像素时，四角取到的「背景色」实为地图填充色 → 读数饱和成 376000，改为与画布(2,2)像素比对；② 设 `r.center/r.zoom` 后调 `render()` 在**地图名未变**时不会写回相机（`render` 只在 `mapChanged` 时 `setOption` camera）→ 五组不同 center 得到完全相同的裁剪数 290/371，实为相机根本没动。修正为显式 `setOption` 写相机，并加相机校验（不匹配即判该用例无效）。
+- 每帧成本（线上路径）：无损+裁剪 zoom12 min 12.60ms；对比无损无裁剪再叠加约 2x。
+- tsc 0、vitest 112/112、build 通过、check-data 无问题（含地级无损档校验）、缝隙闸门四档零共享均为 0。

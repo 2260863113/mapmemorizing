@@ -190,11 +190,6 @@ export class AppController {
     this.switchMode('click'); // 默认展示点击模式
   }
 
-  /** 无压缩 raw 档异步加载完成后注册，放大到 ≥10 时自动切换最精细档。 */
-  setRawGeoJson(geo: unknown) {
-    this.renderer.setRawGeoJson(geo);
-  }
-
   // ==================== 确认按钮（二次确认） ====================
 
   private resetConfirmButton(btn: HTMLButtonElement) {

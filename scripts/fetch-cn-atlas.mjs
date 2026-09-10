@@ -1,6 +1,8 @@
 // 数据管线：从 cn-atlas（shengshixian.com 2023 拓扑干净的行政区划，TopoJSON）生成中国地图数据。
-// 产出三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%，拓扑保持无缝隙）+ 无压缩 raw 档（zoom ≥ 10）
+// 产出四档地级 TopoJSON（lossless 100% / fine 15% / coarse 8% / ultra 4%，拓扑保持无缝隙）
 // + 省级无损档（TopoJSON，zoom ≥ 10）+ 港澳放大框无压缩面 + 装饰面 GeoJSON + 元数据表。
+//
+// 最精细档（lossless）不经过 -simplify：卡顿由运行时「视口裁剪」解决，而非降顶点（详见 lossless 段注释）。
 //
 // 背景（grill-rounds.log 2026-09-09 换源）：阿里 DataV 逐面数字化导致相邻边 32.7% 零共享 → 缝隙；
 // cn-atlas 用共享弧（TopoJSON），相邻边 0.1% 零共享，且 adcode 与现有 units.json 对齐 370/371。
@@ -91,6 +93,13 @@ function mergeGeometriesByAdcode(obj) {
   }
   const geometries = [...byAd.values()].map((g) => (g.arcs.length === 1 ? { ...g, type: 'Polygon', arcs: g.arcs[0] } : g));
   return { type: 'GeometryCollection', geometries };
+}
+
+/** 统计 TopoJSON 的总弧点数（用于对比各档细节规模）。 */
+function countVertices(topo) {
+  let n = 0;
+  for (const arc of topo.arcs ?? []) n += arc.length;
+  return n;
 }
 
 /** 相邻单位共享顶点统计（缝隙闸门：真实相邻单位必须共享 ≥1 顶点）。 */
@@ -225,6 +234,9 @@ async function run() {
   const explodedFile = path.join(TMP, 'china-core-exploded.geojson');
   await runCommands(`-i ${coreGjFile} -explode -o format=geojson ${explodedFile}`);
 
+  // 三档简化 TopoJSON（fine 15% / coarse 8% / ultra 4%）。
+  // 注意：zoom ≥ 10 用的最精细档（无压缩，16.9 万顶点）在 fine 之上就地生成，
+  // 见下方 losslessTopo（不经过 -simplify，直接由 exploded 拓扑导出）。
   const tiers = [['fine', 15], ['coarse', 8], ['ultra', 4]];
   const tierTopos = {};
   for (const [name, pct] of tiers) {
@@ -240,18 +252,25 @@ async function run() {
     console.log(`  ${name}(${pct}%): arcs=${t.arcs.length} 合并后 features=${t.objects.china.geometries.length}`);
   }
 
-  // raw 档：无压缩（zoom ≥ 10 用），保留 cn-atlas 原始几何，不 simplify。
-  // 体积约 1.3MB，运行期**异步加载**（首屏用 fine 15% 渲染，后台拉 raw，放大到 ≥10 时切换）。
-  // 未 explode：core 里每 adcode 恰一个 feature（无 MultiPolygon 拆分），故无需按 adcode 合并。
+  // 最精细档 = 无损（无简化）：zoom ≥ 10 时使用。
+  // 卡顿问题改由「视口裁剪」解决（见 src/map/cull.ts），而非降顶点：
+  // 实测 zrender 每帧对每个 Path 重算 buildPath，开销 ∝ 顶点数，但把不可见的面/线整体
+  // 移出绘制列表（ignore=true）可跳过其 buildPath 与绘制，代价 O(1)。
+  // 实测（1600x1000，中心广州，标签开，4 轮交错取最小值）每帧拖动成本：
+  //   无损 无裁剪 28.2ms → 无损 + 裁剪 13.2ms（2.1x）
+  //   对照：压缩 33% + 省界无损 34.6ms（当前线上）、压缩 33% + 省界细档 10.5ms
+  // 即裁剪让**无压缩**的无损档优于「压缩 33% 但省界仍无损」的旧方案，且不损失任何精度。
+  // 拓扑来源仍是 explode 后的几何，故与各简化档共享同一套弧，天然无缝隙。
   {
-    const rawOutFile = path.join(TMP, 'china-raw.json');
-    await runCommands(`-i ${coreGjFile} -o format=topojson ${rawOutFile}`);
-    const rawTopo = JSON.parse(fs.readFileSync(rawOutFile, 'utf8'));
-    const rawObjName = Object.keys(rawTopo.objects)[0];
-    rawTopo.objects.china = rawTopo.objects[rawObjName];
-    delete rawTopo.objects[rawObjName];
-    tierTopos.raw = rawTopo;
-    console.log(`  raw(无压缩): arcs=${rawTopo.arcs.length} features=${rawTopo.objects.china.geometries.length}`);
+    const outFile = path.join(TMP, 'china-lossless.json');
+    await runCommands(`-i ${explodedFile} -o format=topojson ${outFile}`);
+    const t = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const objName = Object.keys(t.objects)[0];
+    t.objects.china = mergeGeometriesByAdcode(t.objects[objName]);
+    delete t.objects[objName];
+    tierTopos.lossless = t;
+    const v = countVertices(t);
+    console.log(`  lossless(100%): arcs=${t.arcs.length} 合并后 features=${t.objects.china.geometries.length} 顶点=${v}`);
   }
 
   console.log('[4/6] 装饰面单独保存 + 省级地图（cn-atlas provinces）...');
@@ -358,14 +377,14 @@ async function run() {
   fs.writeFileSync(path.join(OUT_DIR, 'china_units.json'), JSON.stringify({ ...tierTopos.fine, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_coarse.json'), JSON.stringify({ ...tierTopos.coarse, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_units_ultra.json'), JSON.stringify({ ...tierTopos.ultra, _source: SOURCE_NOTE }));
-  fs.writeFileSync(path.join(OUT_DIR, 'china_units_raw.json'), JSON.stringify({ ...tierTopos.raw, _source: SOURCE_NOTE }));
+  fs.writeFileSync(path.join(OUT_DIR, 'china_units_lossless.json'), JSON.stringify({ ...tierTopos.lossless, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'china_decorative.geojson'), JSON.stringify(decoGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces.geojson'), JSON.stringify(provGeoJsons.fine));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_coarse.geojson'), JSON.stringify(provGeoJsons.coarse));
   fs.writeFileSync(path.join(OUT_DIR, 'china_provinces_raw.json'), JSON.stringify({ ...provRawTopo, _source: SOURCE_NOTE }));
   fs.writeFileSync(path.join(OUT_DIR, 'hkmac.geojson'), JSON.stringify(hkmacGeoJson));
   fs.writeFileSync(path.join(OUT_DIR, 'units.json'), JSON.stringify({ units: allUnits, provinces: meta.provinces }));
-  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_raw.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
+  for (const f of ['china_units.json', 'china_units_coarse.json', 'china_units_ultra.json', 'china_units_lossless.json', 'china_decorative.geojson', 'china_provinces.geojson', 'china_provinces_coarse.geojson', 'china_provinces_raw.json', 'hkmac.geojson']) {
     console.log(`  ${f}: ${(fs.statSync(path.join(OUT_DIR, f)).size / 1024).toFixed(0)}KB`);
   }
 }

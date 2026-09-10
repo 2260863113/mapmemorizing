@@ -53,27 +53,52 @@
 ### 4.2 数据管线（scripts/fetch-cn-atlas.mjs，Node 脚本，一次性运行）
 1. 下载 cn-atlas TopoJSON，用 topojson-client 展开 prefectures/provinces。
 2. 按现有 `units.json` 白名单对齐 adcode（340 真实地级 + 南海诸岛），字段映射为 `adcode`/`name`。
-3. **先 `-explode` 拆 MultiPolygon，再拓扑保持简化，最后按 adcode 合并回 MultiPolygon**，出三档简化 + 一档无压缩：
+3. **先 `-explode` 拆 MultiPolygon，再拓扑保持简化，最后按 adcode 合并回 MultiPolygon**，出三档简化 + 一档无损（最精细档不经过 `-simplify`）：
    - `china_units.json`（fine 15%，展开约 2.7 万顶点）——2 ≤ zoom < 10（次精细）
    - `china_units_coarse.json`（coarse 8%，展开约 1.8 万顶点）——已弃用（保留注册兼容）
    - `china_units_ultra.json`（ultra 4%，展开约 1.1 万顶点）——zoom < 2（最简略，全国全景）
-   - `china_units_raw.json`（无压缩，展开约 16.9 万顶点，889KB）——zoom ≥ 10 或钻省（最精细，异步加载）
+   - `china_units_lossless.json`（无损 100%，展开约 9.6 万顶点，889KB）——zoom ≥ 10 或钻省（最精细）
 4. 省级 `china_provinces.geojson` 同法两档（fine 15% / coarse 4%，后者已弃用）+ **省级无损档** `china_provinces_raw.json`（无压缩转 TopoJSON 共享弧压缩，2632KB GeoJSON → 396KB，zoom ≥ 10 用）。
 5. 装饰面 `china_decorative.geojson` 单独保留（DataV 源，不进拓扑简化）。
 6. **港澳放大框 `hkmac.geojson`**：从省级无压缩几何抽取 广东(440000)+香港(810000)+澳门(820000) 三面，始终不简化（125KB，同步加载）。
 7. 用 fine 档几何重建 `units.json` 的 center/neighbors。
-8. **缝隙闸门**：输出前三档 + raw 档各自展开成 GeoJSON，校验「真实相邻单位必须共享 ≥1 顶点」，零共享即 `exit 1` 拒绝输出。
+8. **缝隙闸门**：输出各档（含无损档）各自展开成 GeoJSON，校验「真实相邻单位必须共享 ≥1 顶点」，零共享即 `exit 1` 拒绝输出。
 
 **为什么必须 explode**：mapshaper 的 `keep-shapes` 只保证「整个 feature 不消失」，**不保护 MultiPolygon 内部的孤立小环**。实测淮北（340600）含一个约 39.7km² 的飞地小环，在 8%/4% 简化下该环被删除 → 其弧拓扑被改写 → 与徐州（320300）的共享弧消失 → 0.135° 可见缝隙。explode 后每个小环成为独立 feature，受 `keep-shapes` 保护，实测各档零共享均为 0。
 
 - 原始 DataV 下载管线 `scripts/build-data.mjs` 与逐面简化 `scripts/simplify-data.mjs` 已弃用/删除（逐面 Douglas-Peucker 会破坏共享边，是缝隙的另一成因）。
 
 ### 4.3 运行时加载
-- 地级三档以 TopoJSON 存储（`china_units.json` 207KB / `china_units_coarse.json` 151KB / `china_units_ultra.json` 117KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
-- 无压缩 raw 档 `china_units_raw.json`（889KB）**异步加载**：首屏用 fine 渲染不阻塞启动，`loadRawGeoJson()` 后台拉取并 `registerMap('china-raw')`，加载完成后放大到 ≥10 自动切换（失败静默回退 fine）。
+- 地级各档以 TopoJSON 存储（`china_units.json` 207KB / `china_units_coarse.json` 151KB / `china_units_ultra.json` 117KB / `china_units_lossless.json` 889KB），运行时 `topojson-client` 转 GeoJSON（约 12ms）+ 拼接装饰面，再 `registerMap`。
+- 无损档 `china_units_lossless.json`（889KB，gzip 282KB）与其他档一样**同步加载**，与 `Promise.all` 中其余文件并行；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
 - 省级两档 GeoJSON 直接加载（`china_provinces.geojson` 466KB 次精细档 / `china_provinces_coarse.geojson` 192KB 已弃用）；**省级无损档** `china_provinces_raw.json`（396KB TopoJSON，同步加载，zoom ≥ 10 用）。
 - 港澳放大框 `hkmac.geojson`（125KB）同步加载，`InsetMap` 始终渲染无压缩三面。
-- 档位切换由 `renderer.chinaTierMapName()`（地级：raw≥10 / fine 2~10 / ultra<2）与 `provinceTierMapName()`（省级：无损≥10 / 次精细<10）按 zoom 决定；省界折线档位（`activeProvinceLines()`）同样以 10 为界。切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
+- 档位切换由 `renderer.chinaTierMapName()`（地级：无损≥10 / fine 2~10 / ultra<2）与 `provinceTierMapName()`（省级：无损≥10 / 次精细<10）按 zoom 决定；省界折线档位（`activeProvinceLines()`）同样以 10 为界。切换时 `setOption` 必须带 `replaceMerge: ['geo','series']`，否则 geo 停留在上一档绘制状态导致空白。
+
+### 4.4 视口裁剪（只渲染当前视角范围）
+
+**问题**：放大到 zoom ≥ 10 使用无损档后拖动卡顿。根因不是「可见面积大」，而是 **zrender 每帧对每个 Path 重算 `buildPath`，开销 ∝ 顶点数**，与是否落在视口内无关。实测把省界线整个删掉，无损档每帧仍有 15.9ms，证明是顶点数而非可见性驱动开销。
+
+**决定性机制**：`zrender/lib/Storage.js` 的 `_updateAndAddDisplayable` 在元素 `ignore === true` 时**第 52 行提前 return**，位于 `el.update()`（即 `buildPath`）**之前**。因此给整棵子树设 `ignore` 即可跳过其路径构建与绘制，代价 O(1)，且**无需 `setOption`**，所以不会产生重建卡顿。注意 ECharts 自带的 `culling: true`（见 `MapDraw.js`）只在 `shouldBePainted()` 里跳过绘制，`buildPath` 照跑，因此对顶点密集的省界无效。
+
+**实现**（`src/map/cull.ts`）：
+- 视口换算：用 `geoCoordSys.pointToData()` 取画布四角 → 数据坐标 bbox。投影经 `boundingCoords` 钉死后 lng/lat→像素为线性映射，四角即覆盖整个视口。
+- 地级面：递归/`getViewOfComponentModel` 取到 MapDraw 的 `_regionsGroupByName`（HashMap），按 `cs.getRegion(name).getBoundingRect()`（内部缓存 `_rect`）与视口 bbox 求交，设 `group.ignore`。
+- 省界线：`data.getItemGraphicEl(i).ignore`。逐元素 bbox 在 `buildLineData()` 构建时算一次（`LineRenderer.lineBoxes`），逐帧只做区间比较。
+- 调用点：`render()` 末尾（replaceMerge 会重建 region 组、清掉 ignore）、`georoam`（视口移动）、`applyMapCamera()` / 跟随动画每帧 / `drill()` / `backToNation()`（这些直接写相机、不触发 georoam）、`resize()`（画布尺寸变）、`flash()`（高亮改 `geo.regions` 同样会重建 region 组）。**凡是会重建 geo/region 组或改变画布尺寸的路径，都必须在其后补一次裁剪**，否则 ignore 标记被清空、裁剪收益静默丢失。
+- 外扩系数 `CULL_MARGIN = 1.5`：为帧间位移留余量，实测该余量下不露底、不误裁。
+
+**实测**（1600×1000，中心广州，标签开，4 轮交错取各配置最小值以消除逐轮漂移）：
+
+| 配置 | zoom 10 | zoom 12 | zoom 16 |
+|---|---|---|---|
+| 无损 + 裁剪 | **6.8ms** | **13.2ms** | **11.3ms** |
+| 无损 无裁剪 | 15.8ms | 28.2ms | 27.7ms |
+| 压缩 33% + 省界无损（改前的线上方案） | 17.2ms | 34.6ms | 35.8ms |
+
+即：**裁剪让无压缩的无损档比「压缩 33% 但省界仍无损」的旧方案快 2.5–3.2 倍**，且精度零损失。裁剪刷新成本约 面 1.2ms + 线 0.1ms（远低于 `setOption` 重建 series 的 33.7ms），故可每帧执行而不卡顿。省界线的开销（69k 顶点）大于地级面，故线裁剪（0.1ms）收益最大。
+
+**露底验证（像素级）**：对 9 个场景（全国 z1 / 珠三角 z6 / 广州 z12 / 广州 z22 / 乌鲁木齐 z12 / 哈尔滨 z12 / 拉萨 z12 / 最南端 z12 / 省级 z4）逐像素比对「裁剪渲染」与「同一状态放开裁剪的全量渲染」，差异像素**均为 0**，且被裁面数最高达 369/371。另做**阳性对照**：故意误裁 1 个可见面 → 探针报出 15560 个差异像素，证明该比对确能感知误裁（排除「0 差异」实为探针失效）。边界情形（高亮 / 换档 / 省级 / 世界 / 下钻 / 返回全国 / resize / 换主题）9/9 通过 —— 该组用例曾查出两个真实缺陷：`flash()` 的 `setOption({geo:{regions}})` 与 `resize()` 都会清空 ignore 标记，已在二者后补 `cullToViewport()`。
 
 ## 5. 地名匹配引擎
 
@@ -156,7 +181,7 @@ interface MemoryState {
   vite.config.ts
   index.html
   scripts/
-    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化三档 + 重建元数据 + 零共享闸门（一次性）
+    fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化三档 + 无损档 + 重建元数据 + 零共享闸门（一次性）
     fetch-world-data.mjs  # 世界数据（含 CONTINENT_OF 大洲归属表 → countries.json 的 continent）
     check-data.mjs        # 数据校验（逐面几何 + 单位覆盖）
     build-data.mjs        # ⚠️ 已弃用（DataV 源，逐面有缝隙；仅作元数据生成历史参考）
@@ -165,7 +190,7 @@ interface MemoryState {
       china_units.json              # 地级 fine 档（TopoJSON，2 ≤ zoom < 10 次精细）
       china_units_coarse.json       # 地级 coarse 档（TopoJSON，已弃用）
       china_units_ultra.json        # 地级 ultra 档（TopoJSON，zoom < 2 最简略）
-      china_units_raw.json          # 地级无压缩档（TopoJSON，zoom ≥ 10，异步加载）
+      china_units_lossless.json     # 地级无损档（TopoJSON，zoom ≥ 10，100% 顶点）
       china_decorative.geojson      # 县级装饰面 + 南海诸岛（DataV 源，补白）
       china_provinces.geojson       # 省级面 次精细档（省界 + 省级地图，zoom < 10）
       china_provinces_coarse.geojson# 省级面 coarse 4%（已弃用）
@@ -180,6 +205,7 @@ interface MemoryState {
       units.ts            # 元数据索引加载、简写索引构建
     map/
       renderer.ts         # ECharts 初始化、registerMap、着色、缩放
+      cull.ts             # 视口裁剪（只渲染当前视角范围内的面与省界线）
       colors.ts           # 配色常量
     store/
       memoryStore.ts      # localStorage 封装 + pub/sub
@@ -259,14 +285,15 @@ interface MemoryState {
 4. **地名标签**：白底标签（backgroundColor #fff + 状态色边框/字体）：绿=已记忆、红=答错、记忆模式=中性深灰；字号 12；标签位于区域中心；**题目（蓝）不显示标签**（防答案泄漏）。
 5. **缩放分级标签**：zoom < 2.5 时**不显示任何标签**（省名标签已取消）；zoom ≥ 2.5 显示地级标签，防止扎堆；缩放通过 geo 组件的 `georoam` 事件 + `rendered` 兜底读取 zoom，跨阈值才重绘。
 6. **取消输入联想下拉栏**：搜索框回车直接匹配（地级优先：`bestUnit`；未命中再试省名 `bestProvince` → 下钻）。"海南"→ 海南藏族自治州（地级优先）；"海南省"→ 下钻。
-7. **数据简化策略（三档 + 无压缩，拓扑保持 + explode）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分三档，均由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），外加一档**无压缩 raw**——
-   - **raw 档** `china_units_raw.json`：无压缩（展开约 16.9 万顶点，889KB），zoom ≥ 10 或已钻省时使用；**异步加载**（首屏用 fine，后台拉取后自动切换）；
+7. **数据简化策略（三档 + 无损档 + 视口裁剪，拓扑保持 + explode）**：数据源 2026-09 从阿里 DataV 换成 cn-atlas（TopoJSON 共享弧，相邻边 0% 零共享，根治地图缝隙）。地级地图按 zoom 分三档，简化档由 mapshaper `visvalingam keep-shapes` 拓扑简化（共享弧只简化一次，不产生缝隙），最精细档**完全不简化**，其流畅度由**运行时视口裁剪**保证（见 4.4）——
+   - **无损档** `china_units_lossless.json`：100% 顶点（约 9.6 万顶点，889KB / gzip 282KB），zoom ≥ 10 或已钻省时使用；同步加载，**不做任何简化**，靠视口裁剪把每帧 `buildPath` 限制在可见子集；
    - **fine 档** `china_units.json`：keep 15%（展开约 2.7 万顶点），2 ≤ zoom < 10（次精细）；
    - **ultra 档** `china_units_ultra.json`：keep 4%（展开约 1.1 万顶点），zoom < 2（最简略，全国全景）；
    - **省级** `china_provinces.geojson`（keep 15%，次精细档，zoom < 10）/ `china_provinces_raw.json`（无损档，zoom ≥ 10）；省界折线（`activeProvinceLines()`）同样以 10 为界切换。
    - **港澳放大框** `hkmac.geojson`：从省级无压缩几何抽取广东+香港+澳门三面，**始终不简化**（香港 283 顶点 vs fine 71、广东 2934 vs fine 553）。
-   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，三档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。
-   - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，三档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。
+   档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，各档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。
+   - **为什么用「裁剪」而不是「压缩顶点」**：放大后的卡顿 ∝ 顶点数（zrender 每帧重算 `buildPath`），与可见面积无关 —— 实测删掉整个省界线后无损档每帧仍有 15.9ms。裁剪不改任何顶点（精度 100%），只把不可见子树设 `ignore` 以跳过路径构建与绘制，代价 O(1) 且不需要 `setOption`（故无重建卡顿）。实测无损+裁剪（13.2ms @zoom12）优于「压缩 33% + 省界无损」（34.6ms），也优于任何简化档的全量渲染。详见 4.4。
+   - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，各档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。
    - **固定投影范围（boundingCoords）**：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影，而各简化档的 bbox 并不严格相同（ultra/省级粗档把南海诸岛最南端简化掉，纬度下界 3.3974 → 3.5349，高度少 0.1375°≈15km）。bbox 一变投影比例与居中偏移就变 → 缩放跨 5x/10x 换档时整幅地图微移、鼠标所指位置偏移。实测换档偏移 **13.8px**（这就是"跨档缩放时地图小幅度移动"的根因）。修法：`geo.boundingCoords` 钉死投影范围为常量（`MAP_PROJECTION_BBOX`），中国族各档与地级/省级两族共用同一投影。修复后偏移降至 **0.003px**（zrender 取整噪声量级）。注意 fine↔coarse 因 bbox 恰好相同本来就无偏移，问题只在 ultra 档与省级粗档。
    - **换档 center 同步（georoam 读 geo 权威中心）**：缩放仍存在水平方向微移的**第二个独立根因**。ECharts 滚轮/捏合缩放以**鼠标为锚点**，缩放时 geo 中心会隐式移动（锚点缩放），但 zoom 事件的 payload 只含 `zoom`/`totalZoom`，**不含 center**（见 `MapDraw.js` 的 zoom dispatch：仅 `{totalZoom, zoom, originX, originY}`）。若 georoam 处理器只靠 payload 里的 `params.center` 同步，`this.center` 会在缩放期间停留在旧值 → 跨 5x/10x 换档 `render()` 用旧 center 重建 geo，地图朝缩放锚点方向跳十几像素。修法：georoam 里直接从 geo 坐标系读 ECharts 已更新好的权威 `getCenter()`/`getZoom()`（georoam 事件在 `geoRoam` action 处理完、`updateCenterAndZoom` 已写回 center 之后才触发，故此刻读到的必为缩放后最新值）。实测 pan/zoom/混合三种路径 rc 与 geo 中心 mismatch 恒 0，跨档锚点误差 0px。注意不能用 `chart.getCoordinateSystems()`（其返回的 geo 对象可能滞后），须用 `getModel().getComponent('geo').coordinateSystem`（TS 下 getModel 是私有，需 `as unknown as` 强转）。
 

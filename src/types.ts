@@ -60,7 +60,7 @@ export interface AppData {
   geoJson: unknown; // 地级 + 装饰面（fine 档，zoom ≥ 10 / 宽省钻取）
   coarseGeoJson: unknown; // 地级 + 装饰面（coarse 档，5 ≤ zoom < 10）
   ultraGeoJson: unknown; // 地级 + 装饰面（ultra 档，zoom < 5，大幅简化）
-  rawGeoJson: unknown; // 地级 + 装饰面（无压缩档，zoom ≥ 10，异步加载后可用）
+  losslessGeoJson: unknown; // 地级 + 装饰面（无损档：100% 顶点，zoom ≥ 10；靠视口裁剪提速）
   provincesGeoJson: unknown; // 省界图层（次精细档：zoom < 10）
   provincesCoarseGeoJson: unknown; // 省界图层（coarse 4%，已弃用；保留字段兼容旧数据）
   provincesRawGeoJson: unknown; // 省界图层（无损档：zoom ≥ 10，TopoJSON）

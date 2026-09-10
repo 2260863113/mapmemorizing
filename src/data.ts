@@ -27,14 +27,15 @@ function provRawTopoToGeoJson(topo: Topology): unknown {
   return feature(topo, obj);
 }
 
-/** 加载数据（public/data 下的构建产物）。raw 档（无压缩，889KB）单独异步加载，不阻塞首屏。 */
+/** 加载数据（public/data 下的构建产物）。 */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
-  const [meta, fineTopo, coarseTopo, ultraTopo, decorativeGeo, provGeo, provCoarseGeo, provRawTopo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
+  const [meta, fineTopo, coarseTopo, ultraTopo, losslessTopo, decorativeGeo, provGeo, provCoarseGeo, provRawTopo, hkmacGeo, worldMeta, worldGeo] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units.json'),
     fetchJson<Topology>('data/china_units_coarse.json'),
     fetchJson<Topology>('data/china_units_ultra.json'),
+    fetchJson<Topology>('data/china_units_lossless.json'),
     fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
     fetchJson<unknown>('data/china_provinces.geojson'),
     fetchJson<unknown>('data/china_provinces_coarse.geojson'),
@@ -52,7 +53,7 @@ export async function loadData(): Promise<AppData> {
     geoJson: topoToGeoJson(fineTopo, decorativeGeo),
     coarseGeoJson: topoToGeoJson(coarseTopo, decorativeGeo),
     ultraGeoJson: topoToGeoJson(ultraTopo, decorativeGeo),
-    rawGeoJson: null, // 无压缩档异步加载（见 loadRawGeoJson）
+    losslessGeoJson: topoToGeoJson(losslessTopo, decorativeGeo), // 无损档（100% 顶点，zoom ≥ 10）
     provincesGeoJson: provGeo,
     provincesCoarseGeoJson: provCoarseGeo,
     provincesRawGeoJson: provRawTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 10）
@@ -61,15 +62,6 @@ export async function loadData(): Promise<AppData> {
     worldGeoJson: worldGeo,
   };
   return cache;
-}
-
-/** 异步加载无压缩 raw 档（不阻塞首屏）。返回拼接装饰面后的 GeoJSON。 */
-export async function loadRawGeoJson(): Promise<unknown> {
-  const [rawTopo, decorativeGeo] = await Promise.all([
-    fetchJson<Topology>('data/china_units_raw.json'),
-    fetchJson<{ features?: unknown[] }>('data/china_decorative.geojson'),
-  ]);
-  return topoToGeoJson(rawTopo, decorativeGeo);
 }
 
 /** 常用索引 */

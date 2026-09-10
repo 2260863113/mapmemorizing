@@ -28,7 +28,7 @@ describe('buildProvinceAdjacency', () => {
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
       provincesRawGeoJson: null,
-      rawGeoJson: null,
+      losslessGeoJson: null,
       hkmacGeoJson: null,
     };
     const adj = buildProvinceAdjacency(data);
@@ -53,7 +53,7 @@ describe('buildProvinceAdjacency', () => {
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
       provincesRawGeoJson: null,
-      rawGeoJson: null,
+      losslessGeoJson: null,
       hkmacGeoJson: null,
     };
     expect(buildProvinceAdjacency(data).size).toBe(0);
@@ -74,7 +74,7 @@ describe('provinceUnits', () => {
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
       provincesRawGeoJson: null,
-      rawGeoJson: null,
+      losslessGeoJson: null,
       hkmacGeoJson: null,
     };
     const out = provinceUnits(data, new Map([['450000', []]]));
@@ -94,7 +94,7 @@ describe('provinceShortName', () => {
       ultraGeoJson: null,
       provincesCoarseGeoJson: null,
       provincesRawGeoJson: null,
-      rawGeoJson: null,
+      losslessGeoJson: null,
       hkmacGeoJson: null,
     };
     expect(provinceShortName(data, '450000')).toBe('广西');

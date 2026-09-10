@@ -26,7 +26,7 @@ describe('scopedUnits', () => {
     ultraGeoJson: null,
     provincesCoarseGeoJson: null,
     provincesRawGeoJson: null,
-    rawGeoJson: null,
+    losslessGeoJson: null,
     hkmacGeoJson: null,
   };
   it('returns all units when scope is null', () => {
