@@ -134,6 +134,8 @@ export class ChromeSync {
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
     const isWorldGranularity = granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world';
     $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
+    // 换行占位随洲按钮一同显隐，否则非世界粒度时会凭空多出一个空行
+    $('continent-break').classList.toggle('hidden', !isWorldGranularity);
     if (isWorldGranularity) {
       const c = (current?.getWorldContinent?.() ?? null) as string | null;
       this.syncSegmentedToggle('continent-toggle', c ?? '');

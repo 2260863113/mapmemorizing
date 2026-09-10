@@ -479,15 +479,24 @@ body.theme-dark .mode-segmented button.active {
   background: linear-gradient(180deg, rgba(71, 85, 105, 0.7), rgba(30, 41, 59, 0.55));
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
 }
-/* 世界大洲范围分段按钮：7 项（全世界 + 六大洲），比粒度按钮更紧凑以免过宽。
-   基宽 100% 强制其在 #mode-actions 内独占一行（换行到粒度按钮下方）。 */
-#continent-toggle {
-  flex-basis: 100%;
-}
+/* 世界大洲范围分段按钮：7 项（全世界 + 六大洲），比粒度按钮更紧凑。
+   宽度取内容（不占满屏）；换行由 #continent-break 占位元素负责，不用 flex-basis:100%
+   （那会把整个按钮条拉伸到屏宽，并把顺序/重置挤到第三行）。 */
 #continent-toggle button {
   min-width: 0;
   padding: 0 9px;
   font-size: 13px;
+}
+/* 零尺寸换行占位：宽度 100% 触发行折断行，高度 0 不占纵向空间。
+   它随 #continent-toggle 一同 hidden（见 chromeSync.syncSegments），
+   否则非世界粒度时会凭空多出一个空行。 */
+#mode-actions > .flex-break {
+  flex-basis: 100%;
+  width: 100%;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
 }
 .mode-action.danger-hover:hover,
 #btn-end:hover,

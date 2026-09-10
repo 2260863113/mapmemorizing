@@ -51,6 +51,30 @@ const MAP_BBOX: Record<string, [number, number, number, number]> = {
   world: [-180, -90, 180, 83.6],
 };
 
+/**
+ * 固定投影范围（geo.boundingCoords 的 [左上, 右下] lng/lat）。
+ *
+ * 为什么必需：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影范围，
+ * 而同一地区不同简化档的 bbox 并不严格相同 —— 实测 ultra 档与省级粗档把南海诸岛
+ * 最南端简化掉，纬度下界从 3.3974 变成 3.5349（高度少 0.1375°，约 15km）。
+ * bbox 一变，投影比例与居中偏移就变，于是缩放跨 5x/10x 触发换档时整幅地图微移、
+ * 鼠标所指位置出现偏移。
+ *
+ * 用 boundingCoords 把投影范围钉成常量后，fine/coarse/ultra 与省级两档共用同一投影，
+ * 换档前后同一经纬度的像素位置完全一致（这也是「地图不因换档移动」的根本保证）。
+ * 取值与中国族各档数据的实际并集一致，保证默认视野与钉死前完全相同。
+ */
+const MAP_PROJECTION_BBOX: Record<'china' | 'world', [[number, number], [number, number]]> = {
+  china: [
+    [73.5, 3.4],
+    [135.1, 53.6],
+  ],
+  world: [
+    [-180, -90],
+    [180, 83.6],
+  ],
+};
+
 const STATUS_TXT: Record<UnitColor, string> = {
   green: t('map.status.green'),
   blue: t('map.status.blue'),
@@ -936,6 +960,11 @@ export class MapRenderer {
           : this.provinceMode
             ? this.buildProvinceRegionData(state)
             : this.buildRegionData(state),
+        // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
+        // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
+        // bbox 一变，投影比例与偏移就变 → 缩放跨 5x/10x 换档时整幅地图微移、鼠标所指位置偏移。
+        // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
+        boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
       },
       series: [
         {

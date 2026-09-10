@@ -36,15 +36,6 @@
           <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
           <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
         </div>
-        <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
-          <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>
-          <button id="continent-AS" type="button" data-continent="AS" role="radio" aria-checked="false">亚洲</button>
-          <button id="continent-EU" type="button" data-continent="EU" role="radio" aria-checked="false">欧洲</button>
-          <button id="continent-AF" type="button" data-continent="AF" role="radio" aria-checked="false">非洲</button>
-          <button id="continent-NA" type="button" data-continent="NA" role="radio" aria-checked="false">北美</button>
-          <button id="continent-SA" type="button" data-continent="SA" role="radio" aria-checked="false">南美</button>
-          <button id="continent-OC" type="button" data-continent="OC" role="radio" aria-checked="false">大洋洲</button>
-        </div>
         <div id="self-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="输入模式出题顺序">
           <button id="self-order-sequential" type="button" class="active" data-order="sequential" role="radio" aria-checked="true">顺序</button>
           <button id="self-order-random" type="button" data-order="random" role="radio" aria-checked="false">随机</button>
@@ -62,6 +53,18 @@
         <button id="btn-skip" class="mode-action">跳过</button>
         <button id="btn-end" class="mode-action danger-hover">暂停</button>
         <button id="btn-reset" class="mode-action">重置</button>
+        <!-- 换行占位：把洲范围按钮推到下一行，同时保持其自身为内容宽度（不占满屏）。
+             放在末尾是为了让「世界/省级/市级」与「顺序/重置」留在同一行。 -->
+        <div id="continent-break" class="flex-break" aria-hidden="true"></div>
+        <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
+          <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>
+          <button id="continent-AS" type="button" data-continent="AS" role="radio" aria-checked="false">亚洲</button>
+          <button id="continent-EU" type="button" data-continent="EU" role="radio" aria-checked="false">欧洲</button>
+          <button id="continent-AF" type="button" data-continent="AF" role="radio" aria-checked="false">非洲</button>
+          <button id="continent-NA" type="button" data-continent="NA" role="radio" aria-checked="false">北美</button>
+          <button id="continent-SA" type="button" data-continent="SA" role="radio" aria-checked="false">南美</button>
+          <button id="continent-OC" type="button" data-continent="OC" role="radio" aria-checked="false">大洋洲</button>
+        </div>
       </div>
       <div id="search-row">
         <input id="search-input" type="text" placeholder="输入地名" autocomplete="off" spellcheck="false" />

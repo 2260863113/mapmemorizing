@@ -258,6 +258,7 @@ interface MemoryState {
    - **省级** `china_provinces.geojson` / `china_provinces_coarse.geojson`：keep 15% / 4%，后者供 zoom < 5 的省界粗线。
    档位切换在 zoom 停止变化后防抖触发（`georoam` → `scheduleLabelModeUpdate`），切换走 replaceMerge 重建，三档 feature 属性一致故着色/点击/标签完全通用；拖动动画期间 map 固定起点档，动画结束再统一换档，避免帧间合并式切图触发 ECharts 空白 bug。运行时 `topojson-client` 转 GeoJSON 再 `registerMap`（ECharts 不吃 TopoJSON）；30 个县级装饰面 + 南海诸岛为 DataV 源单独保留，拼接后不参与拓扑简化。管线：`scripts/fetch-cn-atlas.mjs`（含零共享闸门）；校验：`scripts/check-data.mjs`。
    - **explode 必要性**：`keep-shapes` 不保护 MultiPolygon 内部孤立小环（淮北 340600 的 39.7km² 飞地在 8%/4% 档被删 → 与徐州 320300 产生 0.135° 缝隙）。管线先 `-explode` → 简化 → 按 adcode 合并回 MultiPolygon，三档零共享均为 0。注意 ECharts `parseGeoJson` 对每个 feature 单独建 region 且**不合并同名 feature**，故合并回 MultiPolygon 是必需的，否则同一地级市只有一块面被着色。
+   - **固定投影范围（boundingCoords）**：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影，而各简化档的 bbox 并不严格相同（ultra/省级粗档把南海诸岛最南端简化掉，纬度下界 3.3974 → 3.5349，高度少 0.1375°≈15km）。bbox 一变投影比例与居中偏移就变 → 缩放跨 5x/10x 换档时整幅地图微移、鼠标所指位置偏移。实测换档偏移 **13.8px**（这就是"跨档缩放时地图小幅度移动"的根因）。修法：`geo.boundingCoords` 钉死投影范围为常量（`MAP_PROJECTION_BBOX`），中国族各档与地级/省级两族共用同一投影。修复后偏移降至 **0.003px**（zrender 取整噪声量级）。注意 fine↔coarse 因 bbox 恰好相同本来就无偏移，问题只在 ultra 档与省级粗档。
 
 8. **世界粒度的大洲范围（六洲，不含南极洲）**：世界粒度下在「世界/省级/市级」按钮**下方**再出一行分段按钮「全世界 | 亚洲 | 欧洲 | 非洲 | 北美 | 南美 | 大洋洲」。
    - 大洲归属由 `fetch-world-data.mjs` 的静态 `CONTINENT_OF` 表（iso_a3 → AS/EU/AF/NA/SA/OC）写入 `countries.json` 的 `continent` 字段，不引入额外几何数据。跨洲国家按地理教科书口径：俄罗斯/土耳其/塞浦路斯 → 欧洲，高加索三国/哈萨克斯坦 → 亚洲，埃及 → 非洲，巴拿马 → 北美。分布 AF 54 / AS 46 / EU 46 / NA 23 / SA 12 / OC 14 = 195。
@@ -266,3 +267,4 @@ interface MemoryState {
    - 大洲用**独立排行榜哨兵** `__continent_<ID>__`（如 `__continent_AS__`，榜名「亚洲榜」），但**熟练度与世界数据集共享**（已答国家在大洲/全世界两种范围下都是绿色）。进度持久化也用独立键（`…:world-continent-AS`）。
    - 未开始测试时点击某国 → 下钻其所属大洲；已开始 → 正常判题（国家是世界的原子单位）。
    - 后端白名单同步放行该哨兵（`functions/_lib/validate.ts` 的 `isContinentScope`），排序与提交规则同「全国语义」（答对题数优先、允许未答完但必须全对）。
+   - 按钮布局：洲按钮放在 `#mode-actions` **末尾**，由零高度换行占位 `#continent-break`（`flex-basis:100%; height:0`）推到下一行并保持**内容宽度**。不要用 `flex-basis:100%` 直接加在洲按钮上——那会把它拉伸到屏宽，并把「顺序/重置」挤到第三行。占位元素随洲按钮一同显隐（`chromeSync.syncSegments`），否则非世界粒度时会凭空多出一个空行。
