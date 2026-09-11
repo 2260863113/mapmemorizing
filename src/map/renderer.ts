@@ -8,6 +8,15 @@ import { InsetMap } from './inset';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
 import { TIER_ZOOM_MIN, tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
 import {
+  WORLD_BOUNDING_COORDS,
+  WORLD_PROJECTED_CENTER_LNGLAT,
+  fitZoomForLngLatBox,
+  pixelsPerProjectedUnit,
+  robinsonProject,
+  robinsonProjection,
+  robinsonUnproject,
+} from './projection';
+import {
   CITY_LABEL_SIZE,
   PRICE_LABEL_SIZE,
   PROVINCE_LABEL_SIZE,
@@ -46,11 +55,13 @@ const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> 
   'china-provinces-pro': { center: [104.3, 28.5], zoom: 1 },
   'china-provinces-plus': { center: [104.3, 28.5], zoom: 1 },
   'china-provinces-raw': { center: [104.3, 28.5], zoom: 1 }, // 省级无损档同数据范围
-  world: { center: [0, -3.2], zoom: 1 },
+  // 世界图中心：Robinson 投影下「投影后正好居中」的纬度（约 -1.378°），见 projection.ts 的推导。
+  // 不能用 [0, -3.2]（那是等距圆柱时代的取值）：非线性投影下投影包围盒的纵向中点不在赤道上。
+  world: { center: [WORLD_PROJECTED_CENTER_LNGLAT[0], WORLD_PROJECTED_CENTER_LNGLAT[1]], zoom: 1 },
 };
 
 /**
- * 固定投影范围（geo.boundingCoords 的 [左上, 右下] lng/lat）。
+ * 中国图的固定投影范围（geo.boundingCoords 的 [左上, 右下] lng/lat）。
  *
  * 为什么必需：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影范围，
  * 而同一地区不同简化档的 bbox 并不严格相同 —— 实测 ultra 档与省级粗档把南海诸岛
@@ -61,17 +72,13 @@ const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> 
  * 用 boundingCoords 把投影范围钉成常量后，地级五档与省级五档共用同一投影，
  * 换档前后同一经纬度的像素位置完全一致（这也是「地图不因换档移动」的根本保证）。
  * 取值与中国族各档数据的实际并集一致，保证默认视野与钉死前完全相同。
+ *
+ * 世界图的对应常量是 projection.ts 的 WORLD_BOUNDING_COORDS（它需要与 Robinson 投影配套推导）。
  */
-const MAP_PROJECTION_BBOX: Record<'china' | 'world', [[number, number], [number, number]]> = {
-  china: [
-    [73.5, 3.4],
-    [135.1, 53.6],
-  ],
-  world: [
-    [-180, -90],
-    [180, 83.6],
-  ],
-};
+const CHINA_PROJECTION_BBOX: [[number, number], [number, number]] = [
+  [73.5, 3.4],
+  [135.1, 53.6],
+];
 
 const STATUS_TXT: Record<UnitColor, string> = {
   green: t('map.status.green'),
@@ -128,8 +135,7 @@ export class MapRenderer {
   private viewProvince: string | null = null;
   /** 当前相机中心（数据坐标）。地图切换/复位时按 DEFAULT_VIEWS 回该地图 bbox 中心。 */
   private center: [number, number] = [104.3, 28.5];
-  private zoom = 1;
-  /** 下钻前全国视图快照：从全国下钻某省时记录 center/zoom，返回全国（backToNation）时恢复。 */
+  private zoom = 1;  /** 下钻前全国视图快照：从全国下钻某省时记录 center/zoom，返回全国（backToNation）时恢复。 */
   private savedNationView: { center: [number, number]; zoom: number } | null = null;
   /** 世界视图记忆：进入世界前记录世界地图上次的全国视野（center/zoom），切回世界时恢复。 */
   private savedWorldView: { center: [number, number]; zoom: number } | null = null;
@@ -328,21 +334,22 @@ export class MapRenderer {
       // 因此这里直接从 geo 坐标系读 ECharts 已经更新好的**权威** center/zoom，而非依赖 payload。
       // 注：georoam 事件在 geoRoam action 处理完（updateCenterAndZoom 已写回 geo center）之后才触发，
       // 故此刻读到的 getCenter() 是缩放后的最新值（实测 rc 与 geo 中心恒一致）。
-      const geoModel = (this.chart as unknown as {
-        getModel: () => { getComponent: (t: string) => { coordinateSystem?: { getCenter?: () => number[]; getZoom?: () => number } } | null };
-      }).getModel().getComponent('geo');
-      const geo = geoModel?.coordinateSystem;
+      const geo = this.geoCoordSys();
       if (geo?.getCenter && geo?.getZoom) {
         const c = geo.getCenter();
         if (c && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
-          this.center = [c[0], c[1]];
+          // 世界图启用投影后，geo 的 center 是**投影后坐标**；还原成经纬度存回内部相机，
+          // 与 this.center 的规范表示保持一致（否则下一次 toGeoCenter 会二次投影）。
+          this.center = this.fromGeoCenter([c[0], c[1]]);
         }
         this.zoom = clampZoom(geo.getZoom() || 1);
       } else {
-        // 兜底：geo 组件不可得时退回 payload 解析（旧路径，理论不可达）
+        // 兜底：geo 组件不可得时退回 payload 解析（旧路径，理论不可达）。
+        // payload 的 center 与 geo 的 center 同源（都是 ECharts 投影后的坐标），
+        // 故同样需要还原成经纬度，否则世界图下会被 toGeoCenter 二次投影。
         const params = p as { zoom?: number; totalZoom?: number; center?: number[] };
         if (Array.isArray(params.center) && typeof params.center[0] === 'number' && typeof params.center[1] === 'number') {
-          this.center = [params.center[0], params.center[1]];
+          this.center = this.fromGeoCenter([params.center[0], params.center[1]]);
         }
         if (typeof params.totalZoom === 'number') {
           this.zoom = clampZoom(params.totalZoom);
@@ -408,11 +415,70 @@ export class MapRenderer {
   /** 应用地图相机（含记忆恢复），并 setOption 生效。 */
   private applyMapCamera(mapName = this.currentMapName()) {
     const v = this.pickViewFor(mapName);
-    this.center = [v.center[0], v.center[1]];
+    this.setCenterLngLat(v.center);
     this.zoom = v.zoom;
-    this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+    this.chart.setOption({ geo: { map: mapName, center: this.toGeoCenter(this.center, mapName), zoom: this.zoom } });
     this.cullToViewport(); // 相机切换后视口范围变化（如省→全国）
     this.onZoomChange?.();
+  }
+
+  /**
+   * 该地图族的 geo 是否启用了自定义投影（目前只有世界图）。
+   *
+   * 为什么需要这个判断：ECharts 在提供 `geo.projection` 后，`geo.center` 的语义**从经纬度
+   * 变成投影后坐标**（见 node_modules/echarts/lib/action/roamHelper.js：
+   * 「Use projected coord as center because it's linear」）。
+   * 因此凡是「用经纬度常数写 center」或「把 center 当经纬度读」的地方都必须经过转换。
+   */
+  private usesProjection(mapName = this.currentMapName()): boolean {
+    return mapName === 'world';
+  }
+
+  /**
+   * 取当前 geo 的坐标系对象（ECharts 内部对象，故此处集中一处断言，避免各处重复强转）。
+   *
+   * 为什么不用 `chart.getCoordinateSystems()`：它返回的 geo 可能滞后于最新一次
+   * setOption/roam；而 `getModel().getComponent('geo').coordinateSystem` 始终是最新的。
+   * `getModel` 在 ECharts 的 TS 类型里是私有的，故需 `as unknown as` 强转。
+   */
+  private geoCoordSys(): {
+    getCenter?: () => number[];
+    getZoom?: () => number;
+    getBoundingRect?: () => { x: number; y: number; width: number; height: number };
+  } | null {
+    const model = (this.chart as unknown as {
+      getModel: () => {
+        getComponent: (t: string) => { coordinateSystem?: unknown } | null;
+      };
+    }).getModel();
+    const cs = model?.getComponent('geo')?.coordinateSystem;
+    return (cs as ReturnType<MapRenderer['geoCoordSys']>) ?? null;
+  }
+
+  /** 经纬度 center → 当前地图族 geo 所期望的 center 坐标空间。 */
+  private toGeoCenter(lngLat: [number, number], mapName = this.currentMapName()): [number, number] {
+    if (!this.usesProjection(mapName)) return [lngLat[0], lngLat[1]];
+    const p = robinsonProject(lngLat);
+    return [p[0], p[1]];
+  }
+
+  /**
+   * 把 geo 的回读 center（可能是投影后坐标）还原成经纬度。
+   *
+   * 为什么要还原：`savedWorldView` 只在世界族内复用，但 `this.center` 会被
+   * `snapshotViewBeforeLeave` 存快照、又被 `pickViewFor` 用于 `continentView`（那是经纬度框），
+   * 且 `currentGeoView()` 的返回值会喂给 `animateViewTo` 做线性插值。
+   * 统一以**经纬度**作为渲染器内部相机的规范表示，投影只在这一对转换里出现，边界最清晰。
+   */
+  private fromGeoCenter(center: [number, number], mapName = this.currentMapName()): [number, number] {
+    if (!this.usesProjection(mapName)) return [center[0], center[1]];
+    const p = robinsonUnproject(center);
+    return [p[0], p[1]];
+  }
+
+  /** 以经纬度设置内部相机（投影会在写 geo 时统一施加）。 */
+  private setCenterLngLat(lngLat: [number, number]) {
+    this.center = [lngLat[0], lngLat[1]];
   }
 
   setDarkMode(darkMode: boolean) {
@@ -536,14 +602,66 @@ export class MapRenderer {
     OC: [112, -48, 180, 2],
   };
 
-  /** 计算某大洲的聚焦 center/zoom（按标定框换算，见 CONTINENT_VIEWS 的说明）。 */
+  /**
+   * 计算某大洲的聚焦 center/zoom（按标定框换算，见 CONTINENT_VIEWS 的说明）。
+   *
+   * 投影相关（本方法在引入 Robinson 后曾算错，见下）：
+   * ① 不能用「360 / 经度跨度」反推 zoom —— 那只在等距圆柱下成立。Robinson 下同一段经度的
+   *    投影宽度随纬度收缩（X(φ)：赤道 1.0 → 60°N 0.80 → 80°N 0.62）。
+   * ② 也不能只按**宽度**反推。实测：只适配宽度时，南北跨度大的框会把画面纵向撑爆
+   *    （南美占画布高 228%、非洲 164%）—— 这是改动前就存在的老问题（旧公式同样只算宽度）。
+   *    故改为**宽高双适配**，取两个约束里更严格的那个。
+   * ③ pxPerUnit 必须由 ECharts **实际使用的投影矩形**推出，不能用真实投影宽度
+   *    （`WORLD_PROJECTED_WIDTH`）。两者实测相差 1.2447 倍：ECharts 采样 boundingCoords 时
+   *    把「Left」边走成对角线（见 boundingCoords 处的注释），算出的矩形偏窄。
+   *    用它自己的矩形反推，才与 ECharts 的 fit 语义一致。
+   */
   private continentView(c: Continent): { center: [number, number]; zoom: number } {
     const [x0, y0, x1, y1] = MapRenderer.CONTINENT_VIEWS[c];
     const center: [number, number] = [(x0 + x1) / 2, (y0 + y1) / 2];
-    // 世界图 zoom 1 时经度跨度约 360；按框经度跨度反推恰好铺满的 zoom，再留 12% 边距
-    const spanX = Math.max(x1 - x0, 1e-6);
-    const zoom = clampZoom((360 / spanX) * 0.88);
+    // 画布尺寸：优先取 chart 实尺寸，回退容器，再回退一个保守默认
+    const w = this.chart.getWidth() || this.el.clientWidth || 1200;
+    const h = this.chart.getHeight() || this.el.clientHeight || 700;
+    const rect = this.worldProjectedRect();
+    const pxPerUnit = pixelsPerProjectedUnit(rect.width, rect.height, w, h);
+    const zoom = clampZoom(fitZoomForLngLatBox(x0, y0, x1, y1, pxPerUnit, w, h, 0.12));
     return { center, zoom };
+  }
+
+  /**
+   * ECharts 当前为世界图算出的**投影矩形**（projected 空间）。
+   *
+   * 为什么要读它而不是自己算：ECharts 采样 boundingCoords 求投影包围盒时「Left」边走的是
+   * 对角线而非竖直线（`geoCreator.js` 的 sampleLine），非线性投影下会算得比真实值偏窄
+   * （实测 4.2843 vs 真实 5.3325）。既然 zoom 的语义是「相对这个矩形」，就必须用它的值，
+   * 否则一切按 zoom 换算的取景都会系统性偏大 1.24 倍。
+   * geo 组件尚未初始化时（如构造阶段）回退到按 boundingCoords 自行采样的等价结果。
+   */
+  private worldProjectedRect(): { width: number; height: number } {
+    const cs = this.geoCoordSys();
+    const br = cs?.getBoundingRect?.();
+    if (br && br.width > 0 && br.height > 0) return { width: br.width, height: br.height };
+    // 回退：复刻 ECharts 的四边采样（含它那条对角线的 Left 边），保证与主路径同解
+    const [[xMin, yMin], [xMax, yMax]] = WORLD_BOUNDING_COORDS;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const sample = (ax: number, ay: number, bx: number, by: number) => {
+      for (let i = 0; i <= 100; i += 1) {
+        const p = i / 100;
+        const [x, y] = robinsonProject([ax + (bx - ax) * p, ay + (by - ay) * p]);
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    };
+    sample(xMin, yMin, xMax, yMin); // Top
+    sample(xMax, yMin, xMax, yMax); // Right
+    sample(xMax, yMax, xMin, yMax); // Bottom
+    sample(xMin, yMax, xMax, yMin); // Left（ECharts 原样：对角线）
+    return { width: maxX - minX, height: maxY - minY };
   }
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
@@ -924,6 +1042,16 @@ export class MapRenderer {
         scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
         silent: false,
         selectedMode: false,
+        // 世界图用 Robinson 折中投影（中国图保持等距圆柱，见下方 boundingCoords 说明）。
+        // 为什么只给世界图：等距圆柱不保面积，高纬被急剧放大 —— 实测俄罗斯在图上面积
+        // 是真实的 2.15 倍、格陵兰 3.82 倍，以致「俄罗斯看起来比非洲还大」（真实只有 0.57 倍）。
+        // Robinson 把它收敛到 1.50 / 1.96 倍。中国图纬度跨度有限（3.4–53.6°N），
+        // 换投影收益很小，而它那套五档 + 视口裁剪 + 港澳放大框的联动很密，故不动。
+        //
+        // 注意：一旦提供 projection，ECharts 的 geo.center 语义即**从经纬度变为投影后坐标**
+        // （见 node_modules/echarts/lib/action/roamHelper.js），故本类所有 center 读写都经
+        // toGeoCenter/fromGeoCenter 转换；内部 this.center 恒为经纬度。
+        projection: this.worldMode ? robinsonProjection : undefined,
         tooltip: { show: false },
         label: { show: false },
         emphasis: {
@@ -945,7 +1073,15 @@ export class MapRenderer {
         // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
         // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
         // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
-        boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
+        //
+        // 世界图同样钉死（世界族只有一个数据档，故动机不是「换档不位移」，而是取景基准确定、可复核：
+        // 将来几何再变（例如回补南海岛礁）投影比例与居中位置都不跟着变）。
+        // 注：ECharts 采样 boundingCoords 取投影包围盒时，其「Left」边走的是对角线而非竖直线
+        // （geoCreator.js 的 sampleLine），非线性投影下会算得偏窄（实测 4.284 vs 真实 5.333）。
+        // 已实测该偏差不影响可见性：遍历全部 73,370 个顶点核对，最西/最东/最南/最北顶点
+        // 在各种配置下均落在画布内、左右留白对称（见 grill 轮次的探针结论）。
+        boundingCoords: this.worldMode ? WORLD_BOUNDING_COORDS : CHINA_PROJECTION_BBOX,
+        center: this.toGeoCenter(this.center, mapName),
       },
       series: [
         {
@@ -1063,14 +1199,14 @@ export class MapRenderer {
     this.chart.setOption(option, mapChanged || continentChanged ? { replaceMerge: ['geo', 'series'] } : undefined);
     // 大洲切换重建 geo 后同样需要写回相机（否则 replaceMerge 丢相机 → 回到默认全球视野）
     if (continentChanged && !mapChanged) {
-      this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+      this.chart.setOption({ geo: { map: mapName, center: this.toGeoCenter(this.center, mapName), zoom: this.zoom } });
     }
     if (mapChanged) {
       // 地图切换（世界↔省级↔地级）：replaceMerge 重建的 geo 不继承相机，
       // 需显式写回当前相机。this.center/zoom 由调用方（setWorldMode/setProvinceMode/backToNation/drill）
       // 在 render 前已按「跨族记忆恢复或默认居中」设置好，此处不得再强制复位默认，
       // 否则会覆盖刚恢复的切回位置（如世界→中国恢复上次视野）。
-      this.chart.setOption({ geo: { map: mapName, center: this.center, zoom: this.zoom } });
+      this.chart.setOption({ geo: { map: mapName, center: this.toGeoCenter(this.center, mapName), zoom: this.zoom } });
       this.onZoomChange?.();
     }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
@@ -1177,7 +1313,11 @@ export class MapRenderer {
       ];
       this.zoom = clampZoom(startZoom + (targetZoom - startZoom) * k);
       this.center = center;
-      this.chart.setOption({ geo: { map: animMap, center, zoom: this.zoom } }, { lazyUpdate: true, silent: true });
+      // 世界图 geo 走投影空间；China 族为经纬度。center 在两族内都是经纬度，写 geo 时统一转换。
+      this.chart.setOption(
+        { geo: { map: animMap, center: this.toGeoCenter(center, animMap), zoom: this.zoom } },
+        { lazyUpdate: true, silent: true },
+      );
       this.cullToViewport(); // 跟随动画每帧更新裁剪，避免动画中出现视口外的空档
       lastFrame = now;
       this.onZoomChange?.();
@@ -1202,7 +1342,8 @@ export class MapRenderer {
     const geo = Array.isArray(opt.geo) ? opt.geo[0] : opt.geo;
     const center = geo?.center;
     if (Array.isArray(center) && typeof center[0] === 'number' && typeof center[1] === 'number') {
-      this.center = [center[0], center[1]];
+      // 世界图 geo 的 center 是投影后坐标，须还原成经纬度再存回内部相机
+      this.center = this.fromGeoCenter([center[0], center[1]]);
     }
     return { center: this.center, zoom: this.zoom };
   }
@@ -1240,7 +1381,7 @@ export class MapRenderer {
     this.labelMode = this.desiredLabelMode();
     if (this.lastState) this.render(this.lastState);
     // 必须带上 map：首次渲染前调用时 geo 组件尚未初始化，缺 map 会加载空地图导致崩溃。
-    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom } });
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.toGeoCenter(this.center), zoom } });
     this.cullToViewport(); // 下钻改变相机与地图档，需在此刷新裁剪
     this.onZoomChange?.();
     this.onViewChange?.();
@@ -1256,7 +1397,7 @@ export class MapRenderer {
       this.zoom = def.zoom;
       this.labelMode = 'none';
       if (this.lastState) this.render(this.lastState);
-      this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+      this.chart.setOption({ geo: { map: this.currentMapName(), center: this.toGeoCenter(this.center), zoom: this.zoom } });
       this.onZoomChange?.();
       this.onViewChange?.();
       return;
@@ -1274,7 +1415,7 @@ export class MapRenderer {
     }
     this.labelMode = 'none';
     if (this.lastState) this.render(this.lastState);
-    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.center, zoom: this.zoom } });
+    this.chart.setOption({ geo: { map: this.currentMapName(), center: this.toGeoCenter(this.center), zoom: this.zoom } });
     this.cullToViewport(); // 直接写相机不走 georoam，需在此刷新裁剪
     this.onZoomChange?.();
     this.onViewChange?.();

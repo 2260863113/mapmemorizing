@@ -17,9 +17,15 @@
  * 因此拖动时**不会**产生重建卡顿，也不会出现「改了数据但图上没变」的过渡态。
  */
 
-/** geo 坐标系（只取裁剪需要的两个方法，避免依赖 ECharts 未导出的内部类型）。 */
+/** geo 坐标系（只取裁剪需要的方法，避免依赖 ECharts 未导出的内部类型）。 */
 type GeoCoordSys = {
   pointToData?: (point: number[]) => number[];
+  /**
+   * 像素 → 投影后坐标（只做逆 roam 变换，**不再** unproject）。
+   * 投影模式下必须用它与 `projection.unproject` 组合，见 viewportBox 的说明。
+   */
+  pointToProjected?: (point: number[]) => number[];
+  projection?: { unproject: (point: number[]) => number[] } | null;
   getRegion?: (name: string) => { getBoundingRect: () => { x: number; y: number; width: number; height: number } } | undefined;
 };
 
@@ -77,9 +83,31 @@ function findMapDraw(chart: unknown, geoModel: unknown): { _regionsGroupByName?:
 /**
  * 把当前视口换算成数据坐标 bbox 并外扩 margin 倍。
  * 投影经 `boundingCoords` 钉死后 lng/lat → 像素是线性映射，取画布四角即可覆盖整个视口。
+ *
+ * 注意这里「四角即可」的前提是**线性映射**，故本函数只对中国图成立
+ * （`renderer.cullToViewport()` 在世界模式下直接 early-return）。
+ * 世界图在 Robinson 投影下映射非线性，画布四角并不对应数据坐标的极值，
+ * 四角法会算漏；且世界族只有一个数据档、不需要靠裁剪省渲染开销。
+ * 若将来真要开世界图裁剪，除了下面的投影修正，还必须改成多采样而非只取四角。
  */
 function viewportBox(chart: { getWidth: () => number; getHeight: () => number }, cs: GeoCoordSys, margin: number): CullBox | null {
   if (typeof cs.pointToData !== 'function') return null;
+  /**
+   * 像素 → 经纬度。
+   *
+   * 为什么不能直接 `cs.pointToData(px)`：ECharts 5.6 在**启用 projection 时这个方法是坏的**
+   * （`lib/coord/geo/Geo.js` 的 pointToData 先 `projection.unproject(point)` 再
+   * `this.pointToProjected(point)`，顺序反了 —— 它把**原始像素**直接喂给了 unproject）。
+   * 实测往返 0/6 正确（纬度恒塌缩成常数）。正确顺序是先逆 roam 变换、再 unproject。
+   * 中国图没有 projection，故 pointToData 正常，走原路径即可。
+   */
+  const toLngLat = (px: number[]): number[] | null => {
+    if (cs.projection && typeof cs.pointToProjected === 'function') {
+      const proj = cs.pointToProjected(px);
+      return proj ? cs.projection.unproject(proj) : null;
+    }
+    return cs.pointToData!(px);
+  };
   const w = chart.getWidth();
   const h = chart.getHeight();
   if (!(w > 0) || !(h > 0)) return null;
@@ -94,7 +122,7 @@ function viewportBox(chart: { getWidth: () => number; getHeight: () => number },
   let x1 = -Infinity;
   let y1 = -Infinity;
   for (const p of corners) {
-    const d = cs.pointToData(p);
+    const d = toLngLat(p);
     if (!d || !Number.isFinite(d[0]) || !Number.isFinite(d[1])) return null;
     if (d[0] < x0) x0 = d[0];
     if (d[0] > x1) x1 = d[0];

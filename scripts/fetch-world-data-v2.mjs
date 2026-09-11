@@ -46,43 +46,61 @@ const OUT_DIR = path.join(ROOT, 'public', 'data');
 const OUT_TOPO = path.join(OUT_DIR, 'world_v2.topojson');
 
 // jsDelivr 的 gh 镜像：本机 raw.githubusercontent.com 经代理返回 502，故用镜像。
-const SRC_URL = 'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@v5.1.2/geojson/ne_50m_admin_0_countries.geojson';
-const SOURCE_NOTE = 'https://www.naturalearthdata.com/ (Natural Earth 50m admin_0 countries v5.1.2, 公有领域)；'
-  + '经 mapshaper dp 50% keep-shapes 简化 + TopoJSON 量化；中国含台港澳合并为单一面；'
-  + '本管线冻结入库、运行时零网络依赖。';
+//
+// **必须使用 _chn（中国视角）变体**，不能用标准版：
+//   NE 标准版把藏南（阿鲁纳恰尔，中印东段争议区）划给印度。实测 98 个藏南格点：
+//     旧档 Surbowl 归中国 59、归印度 21；NE 50m 标准版归中国 36、归印度 45 —— **藏南整块丢失**。
+//   NE 官方为中国用户提供 _chn 变体（字段 ADM0_A3_CN），实测藏南归中国 60 格点（比旧档还多），
+//   且中国面最南到 9.68°N，自带大部分南海岛礁。
+//   注意 _chn 变体只有 10m 档，没有 50m 档（实测 50m_chn 为 404）。
+const SRC_URL = 'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@v5.1.2/geojson/ne_10m_admin_0_countries_chn.geojson';
+const SOURCE_NOTE = 'https://www.naturalearthdata.com/ (Natural Earth 10m admin_0 countries, **China viewpoint variant `_chn`**, v5.1.2, 公有领域)；'
+  + '经 mapshaper dp 简化 + TopoJSON 量化；该变体已按中国口径处理藏南（阿鲁纳恰尔）与台湾；'
+  + '本管线另从旧档回补其未覆盖的最南端南海岛礁；运行时零网络依赖。';
 
-/** 简化档：dp 50%（保留过半顶点）。见文件头「中位线段」推导。 */
-const SIMPLIFY_DP = '50%';
+/** 简化档：dp 12%（保留 12% 顶点）。在 _chn 10m 源上实测中位线段 0.162°。 */
+const SIMPLIFY_DP = '12%';
 
 // ---------------------------------------------------------------------------
 // 中国合并：把台湾/香港/澳门并进中国面
 // ---------------------------------------------------------------------------
-// 旧档是「政治上预合并」的：Surbowl 全图根本没有名为台湾/香港/澳门的 feature，
-// 中国是一个 23 面的 MultiPolygon（其中 #2 的 bbox 120.13,21.93,121.93,25.28 就是台湾）。
-// Natural Earth 则默认把 TWN / HKG / MAC 作为独立面输出。
+// **以下规则在 _chn 变体下的实测结论与标准版不同**：
+//   _chn 变体**已经**把台湾并进中国面（全图不存在 ADM0_A3=TWN 的 feature，实测 count=0），
+//   但香港（HKG）与澳门（MAC）仍是独立面。因此 MERGE_INTO_CHN 实际只需并入港澳。
+//   清单里仍保留 TWN：若将来换档/换版本时 TWN 又出现，它能被自动并回，属幂等防御
+//   （找不到该面时只打印一行提示，不算失败）。
 //
-// 为保持「中国在世界图上是单一面」这一不变量（答题/着色/标签/熟练度都按国家为单位），
-// 这里用**显式清单**合并，而不是「bbox 封套吞并」：
-//   bbox 封套还会把锡亚琴冰川（KAS，iso 为 -99 的非答题争议面）一并吞进中国，
-//   从而把一块争议领土静默并进答题国面 —— 这不是我们要的语义。
-// 显式清单只收台港澳三个，语义精确、可审计。
+// 为什么用**显式清单**而不是「bbox 封套吞并」：封套会把中国 bbox 内的其他争议面一并吞进中国
+// （标准版下实测会吞掉锡亚琴冰川 KAS 等），把争议领土静默并进答题国面。显式清单语义精确、可审计。
 const MERGE_INTO_CHN = ['TWN', 'HKG', 'MAC'];
 const CHN_ADM0 = 'CHN';
 
 // ---------------------------------------------------------------------------
-// 南海诸岛回补（换源的副作用，必须显式修补）
+// 南海诸岛回补（_chn 变体仍不完整，必须显式修补）
 // ---------------------------------------------------------------------------
-// 旧档的中国面最南伸到北纬 3.4°，含曾母暗沙/南沙/西沙/中沙等岛礁。
-// Natural Earth 50m 的中国面只到北纬 18.2°（海南岛），**南海岛礁整个不存在**；
-// 10m 把南沙放在一个独立面里（PGA "Spratly Is."）而不在中国面内；110m 完全不画。
-//
-// 这些面在 1000px 宽的世界图上只有 0.06–3.0 像素，视觉上几乎不可见，
-// 但南海诸岛在中国地图上有主权含义，「看不见」不等于「可以没有」。
-// 因此从旧档移植这 15 个多边形（共仅 113 个顶点，约 +1KB）。
-//
-// 判据：旧档中国面中**最南纬度低于 18.3°**（海南岛下界）的多边形即为南海岛礁。
-// 几何沿用旧源低精度（它们本就只有几个像素，看不出与精细源的区别）。
-const SCS_LAT_BELOW = 18.3;
+// _chn 变体把中国面最南推到 9.68°N，自带约 20 个南海岛礁多边形（西沙/南沙部分岛礁），
+// 但**仍缺最南端**：实测曾母暗沙（约 3.4°N）、琼台礁（约 7.0°N）等不在中国面内。
+// 旧档 Surbowl 的中国面南伸至 3.40°N，故从旧档移植**最南纬度低于 9.6°**（即 _chn 变体覆盖不到的部分）
+// 的多边形补上。这些面在 1000px 宽的世界图上都只有几个像素，但南海诸岛在中国地图上有主权含义，
+// 「看不见」不等于「可以没有」。
+const SCS_GRAFT_BELOW = 9.6;
+
+// 领土断言（防止主权相关回归静默复现；上一版只断言了「数量守恒」，事实证明不够）
+// 藏南（阿鲁纳恰尔）**真实城镇坐标**，必须全部落在中国面内。
+// 用真实城镇而非随意格点：初版曾用估算点 91.6,27.7，实测该点本就在争议线以南的印度侧，
+// 造成误报。以下 8 个点是达旺/邦迪拉/德让宗/瓦弄等实际城镇（NE50 标准版下其中 4 个会判给印度）。
+const ZANGNAN_PROBES = [
+  [91.87, 27.59], // 达旺 Tawang
+  [92.42, 27.27], // 邦迪拉 Bomdila
+  [92.24, 27.36], // 德让宗 Dirang
+  [96.75, 28.14], // 瓦弄 Walong
+  [95.33, 29.33], // 墨脱 Medog
+  [97.47, 28.66], // 察隅 Zayu
+  [92.75, 28.60], // 隆子 Lhunze
+  [91.96, 27.99], // 错那 Cona
+];
+/** 南海最南端：中国面最南纬度必须低于此值（曾母暗沙约 3.4°N）。 */
+const SCS_MIN_LAT_MAX = 5.0;
 
 // ---------------------------------------------------------------------------
 // iso 取值规则（两处都实测过，结论与子代理报告不同，以实测为准）
@@ -165,11 +183,11 @@ const NAME_BY_ISO = new Map(countries.map((c) => [c.iso, c.name]));
 const FULLNAME_BY_ISO = new Map(countries.map((c) => [c.iso, c.fullName]));
 console.log(`  答题池: ${POOL.size} 国（iso 唯一: ${POOL.size === countries.length}）`);
 
-console.log('[2/5] 下载 Natural Earth 50m admin_0 ...');
+console.log('[2/5] 下载 Natural Earth 10m admin_0（_chn 中国视角变体）...');
 const ne = await fetchJson(SRC_URL);
 console.log(`  源 feature 数: ${ne.features.length}`);
 
-console.log('[3/5] 剥属性 + 分类（白名单）+ 中国合并 ...');
+console.log('[3/5] 剥属性 + 分类（白名单）+ 中国合并（_chn 变体已含台湾，仅需并入港澳）...');
 const outFeatures = [];
 const seenIso = new Map(); // 答题 iso → 已出现次数（应为 1）
 const seenName = new Map(); // 面名 → 次数（ECharts 按 name 建 region，必须唯一）
@@ -212,7 +230,8 @@ for (const f of ne.features) {
   for (const code of MERGE_INTO_CHN) {
     const extra = ne.features.find((f) => String(f.properties?.ADM0_A3 ?? '') === code);
     if (!extra) {
-      console.warn(`  ⚠ 源数据缺 ${code}，未合并`);
+      // TWN 缺失是 _chn 变体的**预期状态**（它已把台湾并进中国面），不算问题。
+      if (code !== 'TWN') console.log(`  注：源数据缺 ${code}，未合并`);
       continue;
     }
     for (const ring of polygonsOf(extra.geometry)) polys.push(round3(ring));
@@ -248,13 +267,13 @@ for (const f of ne.features) {
       let grafted = 0;
       let verts = 0;
       for (const ring of polygonsOf(oldChn.geometry)) {
-        if (bbox(ring)[1] >= SCS_LAT_BELOW) continue; // 只取南海岛礁，不动大陆/台湾/海南
+        if (bbox(ring)[1] >= SCS_GRAFT_BELOW) continue; // 只取 _chn 变体覆盖不到的最南端岛礁
         chn.geometry.coordinates.push(round3(ring));
         grafted++;
         const count = (c) => { if (typeof c[0] === 'number') { verts++; return; } for (const x of c) count(x); };
         count(ring);
       }
-      console.log(`  南海诸岛回补: ${grafted} 个多边形 / ${verts} 个顶点（源自旧档）`);
+      console.log(`  南海诸岛回补: ${grafted} 个多边形 / ${verts} 个顶点（源自旧档，_chn 变体未覆盖的最南端）`);
     }
   }
 }
@@ -274,24 +293,54 @@ console.log(`  并入中国的面: ${mergedIntoChn.join(',') || '(无)'}`);
   if (missing.length) errs.push(`缺答题国: ${missing.join(',')}`);
   if (dup.length) errs.push(`答题 iso 重复: ${dup.map(([k, v]) => k + 'x' + v).join(',')}`);
   if (dupName.length) errs.push(`面名重复（ECharts 会静默合并 region）: ${dupName.map(([k, v]) => k + 'x' + v).join(',')}`);
-  if (decorative.length !== 44) errs.push(`装饰面 ${decorative.length} ≠ 44`);
-  // 南海诸岛必须存在：换源后若中国面最南纬度不低于 18.3°，说明回补失效（主权含义，不许静默回归）
+  if (decorative.length === 0) errs.push('装饰面为 0（分类失效）');
+  // 装饰面必须全部是「非答题 iso」：若某个装饰面拿到了池内 iso，说明分类或 iso 规则漏了
+  {
+    const leaked = decorative.filter((f) => POOL.has(String(f.properties.iso_a3)));
+    if (leaked.length) errs.push(`装饰面泄漏答题 iso: ${leaked.map((f) => f.properties.iso_a3).join(',')}`);
+  }
+  // 注：装饰面**数量**不做硬断言。旧档是 44，改用 _chn 变体后为 49
+  // （该变体多为出了 Dhekelia/Akrotiri/Bir Tawil/Clipperton/Scarborough Reef/Gibraltar 等争议面，
+  //  且不再提供 KAS/PGA/KOS/SOL/CYN）。数量本身不是契约，真正的契约是上面这几条语义断言。
+  // ---- 领土断言（主权口径，绝不允许静默回归）----
   {
     const chn = outFeatures.find((x) => x.properties.iso_a3 === CHN_ADM0);
+    const chnPolys = polygonsOf(chn.geometry);
+
+    // ① 南海最南端：中国面必须含曾母暗沙一带（最南纬度 < SCS_MIN_LAT_MAX）
     let minLat = Infinity;
     const w = (c) => {
       if (typeof c[0] === 'number') { if (c[1] < minLat) minLat = c[1]; return; }
       for (const x of c) w(x);
     };
     w(chn.geometry.coordinates);
-    if (!(minLat < SCS_LAT_BELOW)) errs.push(`中国面最南纬度 ${minLat.toFixed(2)}° 未含南海诸岛（回补失效）`);
+    if (!(minLat < SCS_MIN_LAT_MAX)) {
+      errs.push(`南海诸岛缺失：中国面最南纬度 ${minLat.toFixed(2)}° 未低于 ${SCS_MIN_LAT_MAX}°（应含曾母暗沙一带）`);
+    }
+
+    // ② 藏南：关键点必须落在中国面内（用射线法判定，与渲染器同一套几何代码）
+    const inRing = ([x, y], ring) => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+        const [xi, yi] = ring[i];
+        const [xj, yj] = ring[j];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    const inChn = (pt) => chnPolys.some((poly) => inRing(pt, poly[0]) && !poly.slice(1).some((hole) => inRing(pt, hole)));
+    const lost = ZANGNAN_PROBES.filter((pt) => !inChn(pt));
+    if (lost.length) {
+      errs.push(`藏南丢失：${lost.length}/${ZANGNAN_PROBES.length} 个藏南格点不在中国面内（${lost.map((p) => p.join(',')).join(' ')}）—— 当前源可能不是 _chn 中国视角变体`);
+    }
+    console.log(`  ✓ 领土：南海最南 ${minLat.toFixed(2)}°（<${SCS_MIN_LAT_MAX}）| 藏南 ${ZANGNAN_PROBES.length - lost.length}/${ZANGNAN_PROBES.length} 格点在中国面内`);
   }
   if (errs.length) {
     console.error('\n✗ 守恒断言失败：');
     for (const e of errs) console.error('  - ' + e);
     process.exit(1);
   }
-  console.log('  ✓ 守恒：195 答题国 / 44 装饰面 / iso 无重复 / 面名无重复');
+  console.log('  ✓ 守恒：195 答题国 / iso 无重复 / 面名无重复 / 装饰面无 iso 泄漏');
 }
 
 // 磁盘交换：mapshaper 读 GeoJSON 写 TopoJSON（量化 + 共享弧）

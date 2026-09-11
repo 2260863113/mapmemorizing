@@ -3,8 +3,11 @@
 // 用途：把旧档 public/data/world.geojson 与新档 public/data/world_v2.topojson
 // 用**完全相同的投影**渲染成 PNG，供人眼比对边线精细度。
 //
-// 投影：与 renderer 的 MAP_PROJECTION_BBOX.world 一致 —— [-180,-90] 到 [180,83.6]，
-// 等距圆柱（equirectangular），即 ECharts geo 显式给 boundingCoords 后的线性映射：
+// 注意：这里刻意用等距圆柱（不是运行时实际使用的 Robinson），因为本脚本只回答
+// 「同样的图上，哪个源的边线更细」，两种源走同一映射才能隔离出几何本身的差异。
+// 投影本身的改动由 scripts/shot-world-projection.mjs 单独出图。
+//
+// 投影：等距圆柱（equirectangular），即 ECharts geo 显式给 boundingCoords 后的线性映射：
 //   x = (lng + 180) / 360 * W
 //   y = (TOP - lat) / (TOP - BOTTOM) * H
 // 两边同投影、同尺寸、同线宽，因此图上任何差别都只来自几何本身。
@@ -112,7 +115,7 @@ async function renderPair(view) {
     .composite([
       { input: label(`旧档 Surbowl —— ${view.title}（中位线段 0.733°，1000px 下 2.04px）`, view.w), top: 0, left: 0 },
       { input: oldPng, top: labelH, left: 0 },
-      { input: label(`新档 Natural Earth 50m dp50 —— ${view.title}（中位线段 0.179°，0.50px，4.1 倍精细）`, view.w), top: labelH + view.h + gap, left: 0 },
+      { input: label(`新档 Natural Earth 10m _chn 中国视角 dp12 —— ${view.title}（中位线段 0.163°，0.45px，4.5 倍精细）`, view.w), top: labelH + view.h + gap, left: 0 },
       { input: newPng, top: labelH + view.h + gap + labelH, left: 0 },
     ])
     .png()

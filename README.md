@@ -45,21 +45,31 @@ npm run dev
 npm run build:data
 ```
 
-- 世界边界数据来自 [Natural Earth 50m admin_0 countries](https://www.naturalearthdata.com/)（公有领域），经 `scripts/fetch-world-data-v2.mjs` 简化为 `public/data/world_v2.topojson`
-  - 中位线段 0.179°（1000px 世界图下约 0.50px），旧档为 0.733°（约 2.04px），精细度提升 4.1 倍
-  - 面数与旧档一致：195 答题国 + 44 装饰面；答题国 iso 集合与 `countries.json` 逐字相同
-  - 中国在世界图上仍是**一个合并面**（含台湾/香港/澳门），并由旧档回补 15 个南海岛礁多边形
+- 世界边界数据来自 [Natural Earth 10m admin_0 countries 中国视角变体 `_chn`](https://www.naturalearthdata.com/)（公有领域），经 `scripts/fetch-world-data-v2.mjs` 简化为 `public/data/world_v2.topojson`
+  - 中位线段 0.163°（1000px 世界图下约 0.45px），旧档为 0.733°（约 2.04px），精细度提升 4.5 倍
+  - **必须用 `_chn` 变体**：标准版把**藏南**划给印度（实测 8 个藏南城镇旧档归中国 8/8、NE50 标准版 4/8、`_chn` 8/8）。该变体由 Natural Earth 官方完成边界处理，本管线无需任何多边形布尔运算
+  - 答题国 iso 集合与 `countries.json` 逐字相同（195 个，零重复）；装饰面数量随源变化（现 49 个），故**不作为契约**——契约是「装饰面不得持有答题池内的 iso」
+  - 中国在世界图上仍是**一个合并面**（含台湾/香港/澳门，`_chn` 变体已预合并台湾），并由旧档回补 5 个最南端南海岛礁多边形（曾母暗沙约 3.4°N）
+  - 领土口径有语义断言守护：藏南 8 个真实城镇必须全落在中国面内、中国面最南纬度必须低于 5°N
   - 重新生成：`node scripts/fetch-world-data-v2.mjs`
   - 旧档 `world.geojson` 与旧管线 `scripts/fetch-world-data.mjs` **保留在库中但不再加载**（回滚路径：把 `src/data.ts` 的 `world_v2.topojson` 换回 `world.geojson`）
+- **世界地图投影为 Robinson 折中投影**（中国地图仍用等距圆柱，未改）
+  - 动机：等距圆柱不保面积，高纬被急剧放大——俄罗斯在图上面积是真实的 2.15 倍、格陵兰 3.82 倍，以致「俄罗斯看起来比非洲还大」（真实比值只有 0.574）；Robinson 收敛到 1.50 / 1.96 倍，俄非比值回到 0.83
+  - 实现见 `src/map/projection.ts`；数学由 `src/map/projection.test.ts` 的 23 条断言钉死（官方系数表端点、往返一致性、面积失真必须小于等距圆柱）
+  - 接入要点：提供 `geo.projection` 后 ECharts 的 `geo.center` **语义从经纬度变为投影后坐标**，故渲染器内部相机恒为经纬度，只在 `toGeoCenter`/`fromGeoCenter` 一对转换处出现投影
+  - 注：中国地图纬度跨度有限（3.4–53.6°N），换投影收益小，而它与「五档换档 + 视口裁剪 + 港澳放大框 + 下钻」联动很密，故不动
 - 邻接关系（输入模式 BFS 扩张用）由构建脚本用 turf 自动计算，存在 `units.json` 的 `neighbors` 字段；国家邻接在 `countries.json` 的 `neighbors`
-- 换源前后对比图（人工验收用）：`node scripts/shot-world-compare.mjs` → `shot-world/`（5 组，每组上=旧档、下=新档）
+- 世界地图对比图（人工验收用）：
+  - `node scripts/shot-world-compare.mjs` → `shot-world/`（5 组，同投影对比两个几何源，每组上=旧档、下=新档）
+  - `node scripts/shot-world-projection.mjs` → `shot-world/projection-compare.png`（同几何对比两种投影，上=改动前、下=改动后）
 
 ## 项目结构
 
 ```
 scripts/fetch-cn-atlas.mjs # 数据管线：下载 cn-atlas TopoJSON → 拓扑保持简化（双档）→ 输出
-scripts/fetch-world-data-v2.mjs # 世界数据管线：Natural Earth 50m → 合并中国面 → dp50 TopoJSON
-scripts/shot-world-compare.mjs  # 世界换源前后对比出图（人工验收用）
+scripts/fetch-world-data-v2.mjs # 世界数据管线：Natural Earth 10m _chn → 合并中国面 → dp12 TopoJSON
+scripts/shot-world-compare.mjs  # 世界换源前后对比出图（同投影对比两源，人工验收用）
+scripts/shot-world-projection.mjs # 世界投影对比出图（同几何对比两投影，人工验收用）
 scripts/check-data.mjs     # 数据校验：逐面几何有效性 + 单位覆盖
 public/data/             # 构建产物：china_units.json / china_units_coarse.json（TopoJSON 双档）+ units.json + world_v2.topojson
 src/
