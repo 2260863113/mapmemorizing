@@ -41,6 +41,32 @@ export const CONTINENTS: readonly { id: Continent; name: string; short: string }
   { id: 'OC', name: '大洋洲', short: '大洋洲' },
 ] as const;
 
+/**
+ * 次区域 id（世界粒度第二层下钻范围；subregions.json 的 subregions[].id）。
+ * 元数据与 iso → 次区域映射同源于 public/data/subregions.json（见 scripts/build-subregions.mjs）。
+ */
+export type SubregionId =
+  | 'EAS' | 'SEA' | 'SAS' | 'WAS' | 'CAS'
+  | 'NEU' | 'WEU' | 'CEU' | 'EEU' | 'SEU'
+  | 'NAF' | 'WAF' | 'MAF' | 'EAF' | 'SAF'
+  | 'NAM' | 'CAM' | 'CAR'
+  | 'SAM'
+  | 'ANZ' | 'MEL' | 'MIC' | 'POL';
+
+/**
+ * 次区域 id 全集（运行期数组，用于 scope 哨兵白名单校验）。
+ * 与 SubregionId 联合类型**必须同步**：新增次区域时两处都要加，且 subregions.json 也要重建。
+ * 与 public/data/subregions.json 的 subregions[].id 逐字一致（由 scripts/check-subregions 断言）。
+ */
+export const SUBREGION_IDS: readonly SubregionId[] = [
+  'EAS', 'SEA', 'SAS', 'WAS', 'CAS',
+  'NEU', 'WEU', 'CEU', 'EEU', 'SEU',
+  'NAF', 'WAF', 'MAF', 'EAF', 'SAF',
+  'NAM', 'CAM', 'CAR',
+  'SAM',
+  'ANZ', 'MEL', 'MIC', 'POL',
+] as const;
+
 /** 世界“国家”元数据（public/data/countries.json 生成；iso_a3 为答题 id）。 */
 export interface CountryMeta {
   iso: string;
@@ -72,6 +98,16 @@ export interface AppData {
   hkmacGeoJson: unknown; // 港澳放大框无压缩面（广东+香港+澳门，始终最精细不简化）
   countries: CountryMeta[]; // 世界 195 答题国
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
+  subregions: SubregionMeta[]; // 世界 23 个次区域（方位式粗分，见 docs/adr/0004）
+  isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（195 条全覆盖）
+}
+
+/** 次区域元数据（public/data/subregions.json 生成）。 */
+export interface SubregionMeta {
+  id: SubregionId;
+  name: string; // 中文名（如 东亚）
+  continent: Continent; // 所属大洲（次区域 ⊆ 大洲，由构建期断言保证）
+  count: number; // 该次区域内的答题国数量
 }
 
 export interface PracticeRecord {

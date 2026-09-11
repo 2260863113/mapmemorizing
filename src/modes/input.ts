@@ -120,10 +120,10 @@ export class InputMode extends MapQuizMode {
       this.ctx.toast(t('common.underTestNoDrill'));
       return true;
     }
-    // 世界粒度：未开始时单击国家 → 下钻其所属大洲（已在大洲内则保持）
+    // 世界粒度：未开始时单击国家 → 逐层下钻（世界→大洲→次区域；已在本范围内则保持）
     if (this.isWorldNation()) {
       const c = this.ctx.data.countries.find((x) => x.iso === adcode);
-      if (c) this.drillFromWorldNation(c.continent);
+      if (c) this.drillFromWorldNation(c.continent, c.iso);
       return true;
     }
     // 省级全国：未开始时单击某省 → 下钻该省（变成该省地级输入练习；返回全国后回省级全国）

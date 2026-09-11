@@ -1,4 +1,4 @@
-import type { AppData, Continent, Mode, RoundResult, Settings, Unit } from '../types';
+import type { AppData, Continent, Mode, RoundResult, Settings, SubregionId, Unit } from '../types';
 import type { MapRenderer } from '../map/renderer';
 import type { Matcher } from '../matcher';
 import type { MemoryStore } from '../store';
@@ -80,6 +80,10 @@ export interface ModeController {
   getWorldContinent?(): Continent | null;
   /** 切换世界粒度下的大洲范围（仅世界粒度且未开始测试时生效）。 */
   setWorldContinent?(c: Continent | null): void;
+  /** 世界粒度下的当前次区域范围（null=全洲；非世界粒度或无大洲时返回 null）。 */
+  getWorldSubregion?(): SubregionId | null;
+  /** 切换世界粒度下的次区域范围（null=全洲；仅当该大洲分区数 > 1 时生效）。 */
+  setWorldSubregion?(s: SubregionId | null): void;
   /** 当前出题顺序（输入/点击用；其它模式返回 null）。 */
   getOrderMode?(): OrderMode | ClickOrderMode | null;
 }

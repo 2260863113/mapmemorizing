@@ -66,11 +66,11 @@ export class ClickMode extends MapQuizMode {
 
   onUnitClick(adcode: string) {
     if (this.paused || this.rollbacking) return true;
-    // 世界粒度：未开始点击国家 → 下钻其所属大洲；已开始 → 直接判题（国家为最小单元）
+    // 世界粒度：未开始点击国家 → 逐层下钻（世界→大洲→次区域）；已开始 → 直接判题（国家为最小单元）
     if (this.isWorldNation()) {
       if (!this.started || !this.question) {
         const c = this.ctx.data.countries.find((x) => x.iso === adcode);
-        if (c) this.drillFromWorldNation(c.continent);
+        if (c) this.drillFromWorldNation(c.continent, c.iso);
         return true;
       }
       this.answer(adcode === this.question, true);

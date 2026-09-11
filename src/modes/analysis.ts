@@ -1,8 +1,13 @@
-import type { Mode, UnitColor } from '../types';
+import type { Continent, Mode, SubregionId, UnitColor } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t, type MessagesKey } from '../i18n';
 import type { Granularity } from '../province';
+import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
+import { CONTINENTS } from '../types';
+
+/** 大洲 id → 中文名（侧栏「地图范围」说明用）。 */
+const CONTINENT_NAMES: Record<string, string> = Object.fromEntries(CONTINENTS.map((c) => [c.id, c.name]));
 
 /** 熟练度分析：按累计答题分数只读着色（地级市/省名/国家名熟练度），不响应输入。 */
 export class AnalysisMode extends BaseMode {
@@ -10,6 +15,10 @@ export class AnalysisMode extends BaseMode {
   title = t('mode.free.title');
   /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）| 'world'（世界，国家名熟练度分析）。 */
   private granularity: Granularity = this.loadGranularity();
+  /** 世界档的大洲范围：null=全世界（Q21：给分析模式的世界档也加上大洲/次区域行）。 */
+  private worldContinent: Continent | null = null;
+  /** 世界档的次区域范围：null=全洲（必然属于 worldContinent）。 */
+  private worldSubregion: SubregionId | null = null;
   /** 省级档双击下钻到某省地级视图后，返回全国时恢复省级档。 */
   private returnToProvince = false;
   private unsubscribe: (() => void) | null = null;
@@ -29,9 +38,50 @@ export class AnalysisMode extends BaseMode {
     return this.granularity;
   }
 
+  /** 世界档的大洲范围（null=全世界；非世界档返回 null）。 */
+  getWorldContinent(): Continent | null {
+    return this.granularity === 'world' ? this.worldContinent : null;
+  }
+
+  /** 世界档的次区域范围（null=全洲；非世界档或无大洲时返回 null）。 */
+  getWorldSubregion(): SubregionId | null {
+    if (this.granularity !== 'world' || !this.worldContinent) return null;
+    return this.worldSubregion;
+  }
+
+  /** 切换世界档大洲范围（熟练度分析无「答题进行中」，故无 started 守卫）。 */
+  setWorldContinent(c: Continent | null) {
+    if (this.granularity !== 'world' || this.worldContinent === c) return;
+    this.worldContinent = c;
+    this.worldSubregion = null;
+    this.enter();
+  }
+
+  /** 切换世界档次区域范围（null=全洲；需该大洲确有次区域）。 */
+  setWorldSubregion(s: SubregionId | null) {
+    if (this.granularity !== 'world' || !this.worldContinent) return;
+    const target = s && subregionOfContinent(this.ctx.data, s) === this.worldContinent ? s : null;
+    if (this.worldSubregion === target) return;
+    this.worldSubregion = target;
+    this.enter();
+  }
+
+  /** 当前世界范围的可读名（供侧栏「地图范围」说明用，见 Q29）。 */
+  private worldScopeLabel(): string {
+    if (!this.worldContinent) return t('common.world');
+    const continentName = CONTINENT_NAMES[this.worldContinent] ?? t('common.world');
+    if (!this.worldSubregion) return continentName;
+    return subregionById(this.ctx.data, this.worldSubregion)?.name ?? continentName;
+  }
+
   setAnalysisGranularity(g: Granularity) {
     if (this.granularity === g) return;
     this.granularity = g;
+    // 离开世界档即清除大洲/次区域范围
+    if (g !== 'world') {
+      this.worldContinent = null;
+      this.worldSubregion = null;
+    }
     this.persistGranularity();
     this.returnToProvince = false;
     // 仅当处于钻省视图时先返回全国（清除钻省态并恢复钻省前全国视野）；
@@ -78,14 +128,16 @@ export class AnalysisMode extends BaseMode {
   refresh() {
     if (this.granularity === 'world') {
       // 世界熟练度分析：世界地图，七档着色（同一套 scoreColor 阈值），
-      // 不常显国名标签（放大过阈值后经渲染器显示）；悬停国家经 onUnitHover 显示卡片；双击不钻取。
-      this.ctx.renderer.setWorldMode(true);
+      // 不常显国名标签（放大过阈值后经渲染器显示）；悬停国家经 onUnitHover 显示卡片；
+      // 大洲/次区域范围非空时聚焦并只渲染该范围（Q21）。
+      this.ctx.renderer.setWorldMode(true, this.worldContinent, this.worldSubregion);
       this.ctx.renderer.render({
         colorOf: (iso) => worldColor(this.ctx.store, iso),
         disableTooltip: true,
         worldShowAllLabels: true,
       });
-      this.ctx.stats.refreshWorldLevel();
+      // 侧栏聚合仍统计全世界（国家熟练度是共享分区），只加一行「地图范围」说明（Q29）
+      this.ctx.stats.refreshWorldLevel(this.worldScopeLabel());
       return;
     }
     if (this.granularity === 'province') {
@@ -118,8 +170,23 @@ export class AnalysisMode extends BaseMode {
   }
 
   onUnitDblClick(adcode: string) {
-    // 世界档双击国家：国家为最小单元，不钻取
-    if (this.granularity === 'world') return;
+    // 世界档双击国家：逐层下钻（世界→大洲→次区域），与地图测验模式同一套语义（Q12/Q21）
+    if (this.granularity === 'world') {
+      const c = this.ctx.data.countries.find((x) => x.iso === adcode);
+      if (!c) return;
+      if (this.worldContinent !== c.continent) {
+        this.worldContinent = c.continent;
+        this.worldSubregion = null;
+        this.enter();
+        return;
+      }
+      if (!hasSubregions(this.ctx.data, c.continent)) return;
+      const sr = subregionOfIso(this.ctx.data, adcode);
+      if (!sr || this.worldSubregion === sr) return;
+      this.worldSubregion = sr;
+      this.enter();
+      return;
+    }
     // 省级档双击省：显示该省地级熟练度（切到地级档并下钻）；返回全国后恢复省级档
     if (this.granularity === 'province') {
       this.granularity = 'city';
@@ -137,9 +204,15 @@ export class AnalysisMode extends BaseMode {
     /* 地级档保持现状：不响应双击下钻 */
   }
 
-  /** 地图空白返回全国：若从省级档下钻而来则恢复省级档。世界档无需处理（无下钻）。 */
+  /**
+   * 地图空白返回：世界档退一级（次区域 → 大洲 → 世界，Q13）；
+   * 若从省级档下钻而来则恢复省级档。熟练度分析无「答题进行中」，故不拦截。
+   */
   onBackToNation() {
     if (this.granularity === 'world') {
+      if (this.worldSubregion) this.worldSubregion = null;
+      else if (this.worldContinent) this.worldContinent = null;
+      else return; // 已在世界层，无上级可退
       this.enter();
       return;
     }

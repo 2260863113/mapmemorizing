@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title 中国行政区记忆 - 一键启动
+title 地图记忆 - 一键启动
 cd /d "%~dp0"
 
 where node >nul 2>nul

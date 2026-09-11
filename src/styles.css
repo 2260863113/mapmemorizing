@@ -119,7 +119,20 @@ body.theme-dark {
   display: flex; align-items: center; gap: 16px;
   padding: 8px 16px; background: var(--topbar-bg); color: var(--topbar-text); flex-wrap: wrap;
 }
-.brand { font-weight: 700; font-size: 16px; white-space: nowrap; }
+.brand { font-weight: 700; font-size: 16px; white-space: nowrap; margin: 0; }
+/* noscript 兜底块：仅在禁用 JS 时可见，是给搜索蜘蛛的静态正文。
+   不使用 display:none 之类的隐藏手段——那是作弊，会被判低质。 */
+.noscript-intro {
+  max-width: 720px;
+  margin: 12px auto;
+  padding: 16px 20px;
+  line-height: 1.8;
+  border: 1px solid var(--floating-border);
+  border-radius: 12px;
+  background: var(--floating-bg);
+}
+.noscript-intro ul { padding-left: 20px; }
+.noscript-intro li { margin: 6px 0; }
 #mode-tabs { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
 #mode-tabs button {
   border: 1px solid var(--tab-border); background: transparent; color: var(--tab-text);
@@ -486,6 +499,24 @@ body.theme-dark .mode-segmented button.active {
   min-width: 0;
   padding: 0 9px;
   font-size: 13px;
+}
+/* 次区域分段按钮：按大洲动态重建（首项「全亚洲/全欧洲/…」+ 该洲次区域），
+   项目数最多 6（如亚洲：全亚洲+东亚+东南亚+南亚+西亚+中亚），比洲按钮再紧一档。 */
+#subregion-toggle {
+  height: 33px;
+}
+#subregion-toggle button {
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+/* 侧栏「地图范围」说明行（Q29）：地图被过滤到某大洲/次区域时，
+   显式说明侧栏聚合仍统计全世界，消除「地图 5 国、侧栏 195 国」的困惑。 */
+.stat-scope-note {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  opacity: 0.72;
 }
 /* 零尺寸换行占位：宽度 100% 触发行折断行，高度 0 不占纵向空间。
    它随 #continent-toggle 一同 hidden（见 chromeSync.syncSegments），

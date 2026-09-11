@@ -1,7 +1,17 @@
-name = "china-admin-memory"
+# Pages 项目名 = 线上真实项目「mapmemorizing」（域名 mapmemory.cn / mapmemorizing.pages.dev）。
+#
+# 为什么不是 china-admin-memory：那是账户下另一个同名陈旧项目（Git Provider=No，已停更），
+# 且**不是**线上生产站。原值会让 `npm run deploy` 静默部署到错误项目——
+# 本地看着成功、线上毫无变化，是最难排查的一类事故。
+#
+# 注意：项目名是**既有真名**，不是「改名」的一部分；品牌改名不涉及部署基础设施，
+# 见 docs/adr/0004 的改名边界说明。
+name = "mapmemorizing"
 compatibility_date = "2026-08-30"
 pages_build_output_dir = "dist"
 
+# D1 库名/ID 保持不动：库名对用户不可见，而 database_id 已固定，
+# 改库名需新建库 + 导出导入，有丢数据风险却零收益。
 [[d1_databases]]
 binding = "DB"
 database_name = "china-admin-memory-db"

@@ -1,0 +1,22 @@
+# 地图记忆 - 中国行政区和世界国家记忆助手
+# 允许全部主流蜘蛛抓取（含百度、Google、Bing、搜狗、360）
+User-agent: *
+Allow: /
+Disallow: /api/
+
+User-agent: Baiduspider
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Sogou web spider
+Allow: /
+
+User-agent: 360Spider
+Allow: /
+
+Sitemap: https://mapmemory.cn/sitemap.xml

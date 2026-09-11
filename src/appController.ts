@@ -20,8 +20,8 @@ import { InputMode } from './modes/input';
 import { EndlessMode } from './modes/endless';
 import { FreeBrowseMode } from './modes/freeBrowse';
 import { ClickMode } from './modes/click';
-import { continentFromScope, isNationLikeScope, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE, type Granularity } from './province';
-import { CONTINENTS, type Continent } from './types';
+import { continentFromScope, isNationLikeScope, isWorldScope, PROVINCE_NATION_SCOPE, subregionFromScope, WORLD_NATION_SCOPE, type Granularity } from './province';
+import { CONTINENTS, type Continent, type SubregionId } from './types';
 import { BoardMode } from './modes/board';
 import { BoardStore } from './boardStore';
 import { BoardPanel } from './ui/boardPanel';
@@ -33,6 +33,7 @@ import { IntroCard } from './ui/introCard';
 import { api } from './api';
 import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
+import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
@@ -163,6 +164,7 @@ export class AppController {
       current: () => this.current,
       sidePanel: this.sidePanel,
       zoom: () => this.zoomDisplay,
+      data,
     });
 
     this.scoreSubmitter = new ScoreSubmitter(
@@ -176,6 +178,17 @@ export class AppController {
     );
   }
 
+  /**
+   * 当前模式的「世界范围」目标（大洲/次区域按钮的作用对象）。
+   * 修掉了旧代码的隐患：它写的是 `current === selfMode ? selfMode : clickMode`，
+   * 对任何非 self 模式都回落到 clickMode —— 熟练度分析（free）加了大洲行后这会改错模式。
+   */
+  private worldScopeTarget(): ModeController | null {
+    const current = this.current;
+    if (!current) return null;
+    return current.getWorldContinent ? current : null;
+  }
+
   /** 启动：后台会话恢复、访问日志、公告/管理员/介绍卡片入口，再接线 DOM 并进入默认模式。 */
   start() {
     void this.authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
@@ -187,7 +200,27 @@ export class AppController {
     };
     void this.introCard.maybeShow();
     this.wireDom();
+    this.applyScopeQuery(); // 落地页深链参数（Q26）：必须在 enter 之前应用
     this.switchMode('click'); // 默认展示点击模式
+  }
+
+  /**
+   * 应用 URL 范围参数（Q26）。SEO 落地页上的地名深链到这里，例如
+   *   /?g=world&c=AS&s=EAS   → 点击模式 + 世界粒度 + 亚洲 + 东亚
+   *   /?g=city&p=440000      → 点击模式 + 市级粒度 + 下钻广东省
+   *
+   * 非法/过期参数已被 parseScopeQuery 静默丢弃，这里只负责把合法结果灌进点击模式。
+   * 不引入 router：地址栏保持 `/`，故与 404 修复（Q27）完全兼容。
+   */
+  private applyScopeQuery() {
+    let q: ScopeQuery;
+    try {
+      q = parseScopeQuery(window.location.search, this.data);
+    } catch {
+      return; // 解析失败绝不阻塞启动
+    }
+    if (!q.granularity && !q.province) return;
+    this.clickMode.applyScopeQuery(q);
   }
 
   // ==================== 确认按钮（二次确认） ====================
@@ -265,12 +298,17 @@ export class AppController {
       this.current.onBackToNation();
       this.updateProgress();
       this.syncPauseOverlay();
+      // Q13：空白返回会改变世界范围（次区域→大洲→全世界），分段按钮的高亮必须跟着回退。
+      // 以前这里不调 syncSegments 也没问题——那时只有省级下钻会走这条路径，
+      // 而省级下钻本来就会隐藏整组粒度按钮；现在次区域层是可见的答题层，不刷新就会「按钮说东亚、地图是世界」。
+      this.syncSegments();
       return;
     }
     this.current?.exit();
     this.renderer.backToNation();
     this.current?.enter();
     this.updateProgress();
+    this.syncSegments();
   }
 
   // ==================== 帮助 / 悬停统计 ====================
@@ -386,6 +424,8 @@ export class AppController {
     if (scopeProvince === WORLD_NATION_SCOPE) return t('common.world');
     const cont = continentFromScope(scopeProvince);
     if (cont) return CONTINENTS.find((c) => c.id === cont)?.name ?? t('common.world');
+    const sr = subregionFromScope(scopeProvince);
+    if (sr) return this.data.subregions.find((s) => s.id === sr)?.name ?? t('common.world');
     return scopeProvince ? this.data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
   }
 
@@ -409,7 +449,7 @@ export class AppController {
       `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${
         result.scopeProvince === PROVINCE_NATION_SCOPE
           ? t('main.settlementNoteProvince')
-          : result.scopeProvince === WORLD_NATION_SCOPE || continentFromScope(result.scopeProvince) !== null
+          : isWorldScope(result.scopeProvince)
             ? t('main.settlementNoteWorld')
             : t('main.settlementNote')
       }</div></div>`,
@@ -515,18 +555,30 @@ export class AppController {
       });
     });
 
-    // 世界粒度下的「全世界/各大洲」范围切换（仅世界粒度、全国视图、未开始测试时可操作）
+    // 世界粒度下的「全世界/各大洲」范围切换
+    // （测验模式仅世界粒度、全国视图、未开始测试时可操作；熟练度分析世界档无「开始」概念，随时可切）
     document.querySelectorAll<HTMLButtonElement>('#continent-toggle button').forEach((btn) => {
       btn.addEventListener('click', () => {
         const raw = btn.dataset.continent ?? '';
         const c = raw ? (raw as Continent) : null;
-        const target = this.current === this.selfMode ? this.selfMode : this.clickMode;
-        if (target.setWorldContinent) target.setWorldContinent(c);
+        this.worldScopeTarget()?.setWorldContinent?.(c);
         this.syncSegments();
         this.syncModeChrome();
         this.updateProgress();
         void this.refreshSidePanel();
       });
+    });
+
+    // 次区域行的按钮由 chromeSync 按当前大洲**动态重建**，故用事件委托而非逐按钮接线。
+    $('subregion-toggle').addEventListener('click', (event) => {
+      const btn = (event.target as HTMLElement | null)?.closest?.('button[data-subregion]') as HTMLButtonElement | null;
+      if (!btn) return;
+      const raw = btn.dataset.subregion ?? '';
+      this.worldScopeTarget()?.setWorldSubregion?.(raw ? (raw as SubregionId) : null);
+      this.syncSegments();
+      this.syncModeChrome();
+      this.updateProgress();
+      void this.refreshSidePanel();
     });
 
     // 熟练度分析的省级/地级切换

@@ -215,6 +215,7 @@
   "stats.nationOverview": "全国概览",
   "stats.provinceOverview": "省级概览（省名熟练度）",
   "stats.worldOverview": "世界概览（国家熟练度）",
+  "stats.worldScopeNote": "地图范围：{scope}／全世界（{total} 国）",
   "stats.scoreSummary": "熟练：<span class=\"stat-num\">{mastered}</span> 未知：<span class=\"stat-num\">{unknown}</span> 陌生：<span class=\"stat-num\">{unfamiliar}</span>",
   "stats.levelTerrible": "糟糕",
   "stats.levelPoor": "较差",

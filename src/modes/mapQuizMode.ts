@@ -1,4 +1,4 @@
-import type { Continent, Mode, RoundResult, Unit } from '../types';
+import type { Continent, Mode, RoundResult, SubregionId, Unit } from '../types';
 import { CONTINENTS } from '../types';
 import type { ModeCtx, OrderMode, ProgressSegment } from './types';
 import { BaseMode } from './baseMode';
@@ -14,10 +14,12 @@ import {
   provinceShortName,
   provinceUnits,
   PROVINCE_NATION_SCOPE,
+  subregionScope,
   WORLD_NATION_SCOPE,
   type Granularity,
 } from '../province';
 import { countryUnits } from '../world';
+import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
 
 /**
  * 地图测验模式共享基类（输入模式 / 点击模式）：
@@ -37,6 +39,8 @@ export abstract class MapQuizMode extends BaseMode {
   protected scopeProvince: string | null = null;
   /** 世界粒度的大洲范围：null=全世界，非空=该洲（会话状态，不跨刷新恢复）。 */
   protected worldContinent: Continent | null = null;
+  /** 世界粒度的次区域范围：null=全洲，非空=该次区域（必然属于 worldContinent；会话状态）。 */
+  protected worldSubregion: SubregionId | null = null;
   /** 全国层粒度：'province'（省级全国，默认）| 'city'（市级全国）。下钻单省不改变它（返回全国后回到原全国粒度）。 */
   protected granularity: Granularity = this.loadGranularity();
   protected started = false;
@@ -150,10 +154,36 @@ export abstract class MapQuizMode extends BaseMode {
     return this.granularity === 'world' ? this.worldContinent : null;
   }
 
-  /** 切换世界粒度下的大洲范围（仅世界粒度且未开始时生效）。 */
+  /** 世界粒度下的次区域范围（null = 全洲；非世界粒度或无大洲时返回 null）。 */
+  getWorldSubregion(): SubregionId | null {
+    if (this.granularity !== 'world' || !this.worldContinent) return null;
+    return this.worldSubregion;
+  }
+
+  /**
+   * 切换世界粒度下的大洲范围（仅世界粒度且未开始时生效）。
+   *
+   * Q31 守卫：以前只靠 UI 隐藏（chromeSync）保证「未开始时才可切换」，代码本身没有判断；
+   * 「单击国家下钻」与「点空白返回」都会走这条路径，故把守卫下沉到代码里。
+   */
   setWorldContinent(c: Continent | null) {
-    if (this.granularity !== 'world' || this.worldContinent === c) return;
+    if (this.granularity !== 'world' || this.started || this.worldContinent === c) return;
     this.worldContinent = c;
+    // 换洲必须清空次区域（次区域 ⊆ 大洲，跨洲保留会渲染出空地图）
+    this.worldSubregion = null;
+    this.enter();
+  }
+
+  /**
+   * 切换世界粒度下的次区域范围（null = 全洲）。
+   * 仅当该大洲确实提供次区域（分区数 > 1）时生效；跨洲或未选洲时忽略。
+   */
+  setWorldSubregion(s: SubregionId | null) {
+    if (this.granularity !== 'world' || this.started) return;
+    if (!this.worldContinent) return;
+    const target = s && subregionOfContinent(this.ctx.data, s) === this.worldContinent ? s : null;
+    if (this.worldSubregion === target) return;
+    this.worldSubregion = target;
     this.enter();
   }
 
@@ -161,12 +191,40 @@ export abstract class MapQuizMode extends BaseMode {
     return this.granularity;
   }
 
+  /**
+   * 应用 SEO 落地页深链参数（Q26）。仅启动时调用一次，故无需 started 守卫
+   * （启动时不可能已有会话开始）。
+   *
+   * 参数已在 parseScopeQuery 中校验过合法性，这里只按序落状态：
+   * 粒度 → 省下钻（仅 city）→ 大洲/次区域（仅 world）。
+   */
+  applyScopeQuery(q: { granularity: Granularity | null; continent: Continent | null; subregion: SubregionId | null; province: string | null }) {
+    if (q.granularity && q.granularity !== this.granularity) {
+      this.granularity = q.granularity;
+      this.persistGranularity();
+      this.worldContinent = null;
+      this.worldSubregion = null;
+    }
+    if (this.granularity === 'city' && q.province) {
+      // 省下钻：只接受真实存在的省，且该省确有地级单位
+      const exists = this.ctx.data.provinces.some((p) => p.adcode === q.province);
+      if (exists) this.setScopeProvince(q.province);
+    }
+    if (this.granularity === 'world' && q.continent) {
+      this.worldContinent = q.continent;
+      this.worldSubregion = q.subregion;
+    }
+  }
+
   /** 全国层切换省级/市级/世界（仅全国视图且未开始时可调用）。 */
   setGranularity(g: Granularity) {
-    if (this.granularity === g) return;
+    if (this.granularity === g || this.started) return;
     this.granularity = g;
-    // 离开世界粒度即清除大洲范围（大洲仅在世界粒度语义下有效）
-    if (g !== 'world') this.worldContinent = null;
+    // 离开世界粒度即清除大洲与次区域范围（二者仅在世界粒度语义下有效）
+    if (g !== 'world') {
+      this.worldContinent = null;
+      this.worldSubregion = null;
+    }
     this.persistGranularity();
     this.enter();
   }
@@ -328,20 +386,7 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   /** 地图空白点击返回全国：按当前全国粒度恢复（省级全国或市级全国）。 */
-  onBackToNation() {
-    if (this.started) {
-      this.ctx.toast(t('common.backToNationBlocked'));
-      return;
-    }
-    this.setScopeProvince(null);
-    this.onScopeChanged();
-    this.order = this.activePool().map((u) => u.adcode);
-    this.restore();
-    this.syncScopeView();
-    this.showStartHint();
-    this.refresh();
-    this.ctx.updateProgress();
-  }
+  // （世界层级内的「退一级」见下方的 onBackToNation 实现）
 
   // ==================== 内部：作用域 ====================
 
@@ -376,10 +421,14 @@ export abstract class MapQuizMode extends BaseMode {
     return scopedUnits(this.ctx.data, this.scopeProvince);
   }
 
-  /** 世界池按大洲范围过滤（worldContinent=null 时返回全部 195 国）。 */
+  /** 世界池按大洲/次区域范围过滤（两级都为 null 时返回全部 195 国）。 */
   protected worldScopedPool(): Unit[] {
     if (!this.worldContinent) return this.worldPool;
-    return this.worldPool.filter((u) => this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent === this.worldContinent);
+    const isoToContinent = new Map(this.ctx.data.countries.map((c) => [c.iso, c.continent]));
+    if (this.worldSubregion) {
+      return this.worldPool.filter((u) => subregionOfIso(this.ctx.data, u.adcode) === this.worldSubregion);
+    }
+    return this.worldPool.filter((u) => isoToContinent.get(u.adcode) === this.worldContinent);
   }
 
   /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池或地级池）。 */
@@ -401,8 +450,8 @@ export abstract class MapQuizMode extends BaseMode {
         return;
       }
       if (this.isWorldNation()) {
-        // 世界全国：世界地图视图；无放大框、不下钻。大洲范围非空时聚焦该洲并隐藏其他洲。
-        this.ctx.renderer.setWorldMode(true, this.worldContinent);
+        // 世界全国：世界地图视图；无放大框、无省级下钻。大洲/次区域范围非空时聚焦并隐藏其他面。
+        this.ctx.renderer.setWorldMode(true, this.worldContinent, this.worldSubregion);
         return;
       }
       // 市级（全国或单省）：地级地图
@@ -414,13 +463,54 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   /**
-   * 世界粒度未开始时点击某国：下钻其所属大洲（出题范围缩到该洲，地图聚焦该洲并隐藏其他洲）。
-   * 已是该洲范围内则不重复下钻（避免无谓重进会话）。
+   * 世界粒度未开始时点击某国：逐层下钻 —— 世界层 → 该洲；已在大洲层 → 该国所属次区域。
+   * （Q12：世界 → 大洲 → 次区域（叶子）；次区域内点国家不再下钻。）
+   * 已是当前范围则不重复下钻（避免无谓重进会话）。
    */
-  protected drillFromWorldNation(continent: Continent) {
-    if (this.granularity !== 'world') return;
-    if (this.worldContinent === continent) return;
-    this.worldContinent = continent;
+  protected drillFromWorldNation(continent: Continent, iso: string) {
+    if (this.granularity !== 'world' || this.started) return;
+    if (this.worldContinent !== continent) {
+      this.worldContinent = continent;
+      this.worldSubregion = null;
+      this.enter();
+      return;
+    }
+    // 已在该洲内：若该洲有次区域且该国所属次区域与当前不同，则再下一层
+    if (!hasSubregions(this.ctx.data, continent)) return;
+    const sr = subregionOfIso(this.ctx.data, iso);
+    if (!sr || this.worldSubregion === sr) return;
+    this.worldSubregion = sr;
+    this.enter();
+  }
+
+  /**
+   * 地图空白点击：返回上一级（Q13）。
+   * 次区域内 → 回大洲；大洲内 → 回世界；中国钻省 → 回全国。
+   * 答题进行中不生效（Q7）——大洲/次区域常常正是答题层，故此处必须拦。
+   */
+  onBackToNation() {
+    if (this.started) {
+      this.ctx.toast(t('common.backToNationBlocked'));
+      return;
+    }
+    if (this.scopeProvince === null && this.granularity === 'world') {
+      return this.backWorldLevel();
+    }
+    this.setScopeProvince(null);
+    this.onScopeChanged();
+    this.order = this.activePool().map((u) => u.adcode);
+    this.restore();
+    this.syncScopeView();
+    this.showStartHint();
+    this.refresh();
+    this.ctx.updateProgress();
+  }
+
+  /** 世界层级内退一级：次区域 → 大洲 → 世界（按钮状态随之回退，见 Q13）。 */
+  private backWorldLevel() {
+    if (this.worldSubregion) this.worldSubregion = null;
+    else if (this.worldContinent) this.worldContinent = null;
+    else return; // 已在世界层，无上级
     this.enter();
   }
 
@@ -446,7 +536,9 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.granularity === 'province')
       return 'china-admin-mode-progress:' + this.storagePrefix() + ':province-nation';
     if (this.granularity === 'world') {
-      // 大洲范围独立进度键（全世界 :world-nation，某洲 :world-continent-XX）
+      // 大洲/次区域范围各自独立进度键（全世界 :world-nation，某洲 :world-continent-XX，某次区域 :world-subregion-XXX）
+      if (this.worldSubregion)
+        return 'china-admin-mode-progress:' + this.storagePrefix() + ':world-subregion-' + this.worldSubregion;
       return this.worldContinent
         ? 'china-admin-mode-progress:' + this.storagePrefix() + ':world-continent-' + this.worldContinent
         : 'china-admin-mode-progress:' + this.storagePrefix() + ':world-nation';
@@ -623,12 +715,20 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   getScopeProvince() {
-    // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；大洲范围用大洲哨兵；市级沿用 scopeProvince
+    // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；大洲/次区域范围各自哨兵；市级沿用 scopeProvince
     if (this.scopeProvince === null && this.granularity === 'province') return PROVINCE_NATION_SCOPE;
     if (this.scopeProvince === null && this.granularity === 'world') {
+      if (this.worldSubregion) return subregionScope(this.worldSubregion);
       return this.worldContinent ? continentScope(this.worldContinent) : WORLD_NATION_SCOPE;
     }
     return this.scopeProvince;
+  }
+
+  /** 当前世界范围的排行榜哨兵（无世界范围时返回 null）。 */
+  private worldScope(): string | null {
+    if (this.scopeProvince !== null || this.granularity !== 'world') return null;
+    if (this.worldSubregion) return subregionScope(this.worldSubregion);
+    return this.worldContinent ? continentScope(this.worldContinent) : WORLD_NATION_SCOPE;
   }
 
   /** 快照当前会话结果（全国排行榜结算卡片用）。 */
@@ -643,11 +743,7 @@ export abstract class MapQuizMode extends BaseMode {
       scopeProvince:
         this.scopeProvince === null && this.granularity === 'province'
           ? PROVINCE_NATION_SCOPE
-          : this.scopeProvince === null && this.granularity === 'world'
-            ? this.worldContinent
-              ? continentScope(this.worldContinent)
-              : WORLD_NATION_SCOPE
-            : this.scopeProvince,
+          : (this.worldScope() ?? this.scopeProvince),
       scopeLabel: this.scopeLabel(),
       totalUnits: this.order.length,
       correct: this.ok,
@@ -660,8 +756,12 @@ export abstract class MapQuizMode extends BaseMode {
   protected scopeLabel() {
     if (this.scopeProvince === null && this.granularity === 'province') return t('common.provinceNation');
     if (this.scopeProvince === null && this.granularity === 'world') {
-      if (!this.worldContinent) return t('common.world');
-      return CONTINENTS.find((c) => c.id === this.worldContinent)?.name ?? t('common.world');
+      const continentName = this.worldContinent
+        ? CONTINENTS.find((c) => c.id === this.worldContinent)?.name ?? t('common.world')
+        : t('common.world');
+      if (!this.worldSubregion) return continentName;
+      const sr = subregionById(this.ctx.data, this.worldSubregion);
+      return sr ? sr.name : continentName;
     }
     if (this.scopeProvince) return this.ctx.data.provinces.find((p) => p.adcode === this.scopeProvince)?.name ?? t('common.currentProvince');
     return t('common.nation');

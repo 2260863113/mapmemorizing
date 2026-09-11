@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ApiError } from './http';
-import { cleanUsername, isContinentScope, normalizePasswordHash, validMode, validateScore, isBetter } from './validate';
+import { cleanUsername, isContinentScope, isSubregionScope, isWorldScope, normalizePasswordHash, validMode, validateScore, isBetter, SUBREGION_IDS } from './validate';
 
 describe('cleanUsername', () => {
   it('trims, collapses whitespace, and truncates to 24', () => {
@@ -92,6 +92,41 @@ describe('validateScore', () => {
     expect(isContinentScope('__world_nation__')).toBe(false);
     expect(isContinentScope(null)).toBe(false);
     expect(isContinentScope(undefined)).toBe(false);
+  });
+
+  it('accepts subregion scopes and treats them like world-nation (Q10：次区域独立榜)', () => {
+    for (const id of SUBREGION_IDS) {
+      const scope = `__subregion_${id}__`;
+      expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 11, correct: 3, wrong: 0 })).toMatchObject({ scopeProvince: scope });
+    }
+    // 与世界/大洲榜同语义：不要求答完，但必须全对
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion_EAS__', totalUnits: 5, correct: 3, wrong: 1 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion_EAS__', totalUnits: 5, correct: 0, wrong: 0 })).toThrow(ApiError);
+  });
+
+  it('rejects malformed subregion-like scopes', () => {
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion_XXX__' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion_EAS_' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion___' })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '__subregion_eas__' })).toThrow(ApiError); // 大小写敏感
+  });
+
+  it('subregion and continent prefixes do not shadow each other', () => {
+    // 两个前缀互不为前缀，且都以 __ 结尾 —— 解析器必须走各自的分支
+    expect(isContinentScope('__subregion_EAS__')).toBe(false);
+    expect(isSubregionScope('__continent_AS__')).toBe(false);
+    expect(isWorldScope('__subregion_EAS__')).toBe(true);
+    expect(isWorldScope('__continent_AS__')).toBe(true);
+    expect(isWorldScope('__world_nation__')).toBe(true);
+    expect(isWorldScope('__province_nation__')).toBe(false);
+    expect(isWorldScope('520000')).toBe(false);
+  });
+
+  it('ranks subregion scopes by correct count, like the world board', () => {
+    const existingRow = { coins: 0, level: 1, correct: 5, elapsed_ms: 1000 };
+    expect(isBetter({ mode: 'click', scopeProvince: '__subregion_EAS__', correct: 6, elapsedMs: 9999 } as never, existingRow)).toBe(true);
+    expect(isBetter({ mode: 'click', scopeProvince: '__subregion_EAS__', correct: 5, elapsedMs: 999 } as never, existingRow)).toBe(true);
+    expect(isBetter({ mode: 'click', scopeProvince: '__subregion_EAS__', correct: 5, elapsedMs: 1001 } as never, existingRow)).toBe(false);
   });
 
   it('accepts 6-digit province scope fully correct', () => {

@@ -38,7 +38,7 @@ export async function loadData(): Promise<AppData> {
   const [
     meta, ultraTopo, proTopo, fineTopo, plusTopo, losslessTopo,
     provUltraTopo, provProTopo, provFineTopo, provPlusTopo, provRawTopo,
-    hkmacGeo, worldMeta, worldGeo,
+    hkmacGeo, worldMeta, worldGeo, subMeta,
   ] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units_ultra.json'),
@@ -54,6 +54,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<unknown>('data/hkmac.geojson'),
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
     fetchJson<Topology>('data/world_v2.topojson'),
+    fetchJson<{ subregions: AppData['subregions']; byIso: AppData['isoSubregion'] }>('data/subregions.json'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
@@ -89,6 +90,8 @@ export async function loadData(): Promise<AppData> {
     // 旧档 data/world.geojson 与旧管线 scripts/fetch-world-data.mjs 保留在库中但不再加载（回滚路径）。
     // 展开后契约与旧档逐字一致：properties 为 { iso_a3, name, full_name, decorative }。
     worldGeoJson: topoWorldToGeoJson(worldGeo),
+    subregions: subMeta.subregions,
+    isoSubregion: subMeta.byIso,
   };
   return cache;
 }

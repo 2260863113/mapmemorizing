@@ -88,11 +88,11 @@ const CONTINENT_OF = {
   UZB: 'AS', VNM: 'AS', YEM: 'AS', ARM: 'AS', AZE: 'AS', GEO: 'AS',
   // ===== 欧洲（46）=====
   ALB: 'EU', AND: 'EU', AUT: 'EU', BLR: 'EU', BEL: 'EU', BIH: 'EU', BGR: 'EU', HRV: 'EU',
-  CYP: 'EU', CZE: 'EU', DNK: 'EU', EST: 'EU', FIN: 'EU', FRA: 'EU', DEU: 'EU', GRC: 'EU',
+  CYP: 'AS', CZE: 'EU', DNK: 'EU', EST: 'EU', FIN: 'EU', FRA: 'EU', DEU: 'EU', GRC: 'EU',
   HUN: 'EU', ISL: 'EU', IRL: 'EU', ITA: 'EU', LVA: 'EU', LIE: 'EU', LTU: 'EU', LUX: 'EU',
   MLT: 'EU', MDA: 'EU', MCO: 'EU', MNE: 'EU', NLD: 'EU', MKD: 'EU', NOR: 'EU', POL: 'EU',
   PRT: 'EU', ROU: 'EU', RUS: 'EU', SMR: 'EU', SRB: 'EU', SVK: 'EU', SVN: 'EU', ESP: 'EU',
-  SWE: 'EU', CHE: 'EU', TUR: 'EU', UKR: 'EU', GBR: 'EU', VAT: 'EU',
+  SWE: 'EU', CHE: 'EU', TUR: 'AS', UKR: 'EU', GBR: 'EU', VAT: 'EU',
   // ===== 非洲（54）=====
   DZA: 'AF', AGO: 'AF', BEN: 'AF', BWA: 'AF', BFA: 'AF', BDI: 'AF', CPV: 'AF', CMR: 'AF',
   CAF: 'AF', TCD: 'AF', COM: 'AF', COG: 'AF', COD: 'AF', CIV: 'AF', DJI: 'AF', EGY: 'AF',

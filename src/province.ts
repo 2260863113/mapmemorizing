@@ -1,5 +1,5 @@
-import type { AppData, Continent, Province, Unit } from './types';
-import { CONTINENTS } from './types';
+import type { AppData, Continent, Province, SubregionId, Unit } from './types';
+import { CONTINENTS, SUBREGION_IDS } from './types';
 import { normalizeProvince } from './matcher';
 
 /**
@@ -25,10 +25,38 @@ export function continentFromScope(scope: string | null): Continent | null {
   const id = scope.slice(CONTINENT_SCOPE_PREFIX.length, -2);
   return CONTINENTS.some((c) => c.id === id) ? (id as Continent) : null;
 }
-/** 是否任意「全国/大洲」级作用域（不含某省地级榜）。 */
+/** 次区域榜哨兵前缀（后接次区域 id，如 __subregion_EAS__）：世界粒度下钻某次区域时的独立榜作用域。 */
+export const SUBREGION_SCOPE_PREFIX = '__subregion_';
+/** 次区域榜哨兵（如 EAS → '__subregion_EAS__'）。 */
+export function subregionScope(s: SubregionId): string {
+  return `${SUBREGION_SCOPE_PREFIX}${s}__`;
+}
+/**
+ * 从 scope 值解析次区域（非次区域榜返回 null）。
+ * 注意前缀与 CONTINENT_SCOPE_PREFIX 互不为前缀（'__subregion_' vs '__continent_'），
+ * 但两者都以 '__' 结尾，故必须先判前缀再切后缀。
+ */
+export function subregionFromScope(scope: string | null): SubregionId | null {
+  if (!scope || !scope.startsWith(SUBREGION_SCOPE_PREFIX) || !scope.endsWith('__')) return null;
+  const id = scope.slice(SUBREGION_SCOPE_PREFIX.length, -2);
+  return SUBREGION_IDS.includes(id as SubregionId) ? (id as SubregionId) : null;
+}
+/** 是否任意「世界范围」榜作用域（世界全国 / 大洲 / 次区域）。 */
+export function isWorldScope(scope: string | null | undefined): boolean {
+  if (scope === undefined) return false;
+  return scope === WORLD_NATION_SCOPE || continentFromScope(scope) !== null || subregionFromScope(scope) !== null;
+}
+
+/** 是否任意「全国/大洲/次区域」级作用域（不含某省地级榜）。 */
 export function isNationLikeScope(scope: string | null | undefined): boolean {
   if (scope === undefined) return false;
-  return scope === null || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE || continentFromScope(scope) !== null;
+  return (
+    scope === null ||
+    scope === PROVINCE_NATION_SCOPE ||
+    scope === WORLD_NATION_SCOPE ||
+    continentFromScope(scope) !== null ||
+    subregionFromScope(scope) !== null
+  );
 }
 
 /** 测验/分析粒度：省级全国（省名）/ 市级全国或单省（地级市）/ 世界全国（国家名）。 */

@@ -1,12 +1,13 @@
 {
-  "name": "china-admin-memory",
+  "name": "map-memory",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "中国行政区记忆助手 - 记忆全国地级行政区（自由/自测BFS/挑战/记忆 四模式）",
+  "description": "地图记忆 - 中国行政区和世界国家记忆助手（输入/点击/无尽闯关/熟练度分析 多模式）",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run build:seo && tsc && vite build",
+    "build:seo": "node scripts/build-subregions.mjs && node scripts/gen-seo-pages.mjs",
     "preview": "vite preview",
     "build:data": "node scripts/fetch-cn-atlas.mjs",
     "dev:api": "wrangler pages dev dist",

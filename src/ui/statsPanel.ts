@@ -63,8 +63,14 @@ export class StatsPanel {
     })), false);
   }
 
-  /** 世界档：全部 195 国按国家熟练度七档统计 + 每行「国名 + 档位词」，熟练度降序（0 分/未答的国沉底）。 */
-  refreshWorldLevel() {
+  /**
+   * 世界档：全部 195 国按国家熟练度七档统计 + 每行「国名 + 档位词」，熟练度降序（0 分/未答的国沉底）。
+   *
+   * scopeLabel 非空时在标题后附一行「地图范围：东亚（5 国）／全世界（195 国）」（Q29）：
+   * 侧栏聚合**始终统计全世界**（国家熟练度是共享分区，用户需要全局参照），
+   * 但地图可能只显示某个大洲/次区域 —— 用这一行把两个数字的关系显式说出来，避免困惑。
+   */
+  refreshWorldLevel(scope?: string | null) {
     const countries = this.countryList;
     const sorted = [...countries].sort((a, b) => {
       const sa = this.store.getWorldPractice(a.iso).score;
@@ -74,11 +80,11 @@ export class StatsPanel {
     this.renderLevelList(t('stats.worldOverview'), sorted.map((c) => ({
       name: c.name,
       score: this.store.getWorldPractice(c.iso).score,
-    })), true);
+    })), true, scope ? t('stats.worldScopeNote', { scope: scope, total: countries.length }) : null);
   }
 
   /** 通用：按 score 计算七档徽标，渲染「标题 + 七档计数概览 + 每行（名称 + 档位词）」。按名称排序显示；worldDesc=true 时按分数降序（等分再按名）。 */
-  private renderLevelList(label: string, rows: { name: string; score: number }[], worldDesc = false) {
+  private renderLevelList(label: string, rows: { name: string; score: number }[], worldDesc = false, scopeNote: string | null = null) {
     const sorted = worldDesc ? rows : [...rows].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     const total: ProvinceLevelStats = { terrible: 0, poor: 0, unfamiliar: 0, neutral: 0, beginner: 0, skilled: 0, master: 0 };
     const items = sorted.map((r) => {
@@ -92,7 +98,8 @@ export class StatsPanel {
     });
     const summaryParts = LEVEL_ORDER.map((level) => `${t(PROVINCE_LEVEL_WORD_KEY[level])}：<span class="stat-num">${total[level]}</span>`).join(' ');
     const head = `<div class="stat-head">${label} <span class="pct">${summaryParts}</span></div>`;
-    this.el.innerHTML = head + '<div class="prov-list">' + items.join('') + '</div>';
+    const note = scopeNote ? `<div class="stat-scope-note">${scopeNote}</div>` : '';
+    this.el.innerHTML = head + note + '<div class="prov-list">' + items.join('') + '</div>';
   }
 
   private statsOf(units: Unit[]): ProvinceStats {

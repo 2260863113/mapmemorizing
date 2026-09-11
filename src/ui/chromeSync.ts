@@ -3,12 +3,16 @@ import { t } from '../i18n';
 import { isNationLikeScope, type Granularity } from '../province';
 import type { ModeController, OrderMode } from '../modes/types';
 import type { SidePanelController } from './sidePanelController';
+import { CONTINENTS, type AppData, type Continent, type SubregionMeta } from '../types';
+import { hasSubregions, subregionsOf } from '../subregions';
 
 /** ChromeSync 读取的「当前应用状态」快照。current 与 zoom 会随运行变化，故用函数取值。 */
 export interface ChromeState {
   current(): ModeController | null;
   sidePanel: SidePanelController;
   zoom(): number;
+  /** 应用数据（次区域行按大洲动态取分区列表用）。 */
+  data: AppData;
 }
 
 /**
@@ -84,11 +88,47 @@ export class ChromeSync {
 
   syncSegmentedToggle(containerId: string, current: string) {
     document.querySelectorAll<HTMLButtonElement>('#' + containerId + ' button').forEach((btn) => {
-      const value = btn.dataset.order ?? btn.dataset.granularity ?? btn.dataset.analysisGranularity ?? btn.dataset.continent ?? btn.dataset.mode;
+      const value =
+        btn.dataset.order ??
+        btn.dataset.granularity ??
+        btn.dataset.analysisGranularity ??
+        btn.dataset.subregion ??
+        btn.dataset.continent ??
+        btn.dataset.mode;
       const active = value === current;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-checked', String(active));
     });
+  }
+
+  /**
+   * 次区域行按当前大洲**动态重建**按钮（各大洲的次区域列表不同，无法静态写死在 HTML 里）。
+   *
+   * 首项是「全亚洲/全欧洲/…」（Q23）——与「全世界」同构，给用户一个明确的「回到全洲」出口，
+   * 不用去猜「再点一次亚洲」。只在按钮集合变化时重建，避免每次 sync 都重排 DOM。
+   */
+  private renderSubregionButtons(continent: Continent, subregions: SubregionMeta[]) {
+    const el = $('subregion-toggle');
+    const signature = continent + ':' + subregions.map((s) => s.id).join(',');
+    if (el.dataset.signature === signature) return;
+    el.dataset.signature = signature;
+    const continentName = CONTINENTS.find((c) => c.id === continent)?.name ?? '';
+    el.innerHTML = [
+      `<button type="button" data-subregion="" role="radio" aria-checked="false">全${continentName}</button>`,
+      ...subregions.map(
+        (s) => `<button type="button" data-subregion="${s.id}" role="radio" aria-checked="false">${s.name}</button>`,
+      ),
+    ].join('');
+  }
+
+  /** 当前模式的世界范围状态（大洲 + 次区域）；不支持时返回 null。 */
+  private worldScope(): { continent: Continent | null; subregion: string | null } | null {
+    const current = this.s.current();
+    if (!current?.getWorldContinent && !current?.getWorldSubregion) return null;
+    return {
+      continent: (current?.getWorldContinent?.() ?? null) as Continent | null,
+      subregion: (current?.getWorldSubregion?.() ?? null) as string | null,
+    };
   }
 
   updateProgress() {
@@ -132,13 +172,28 @@ export class ChromeSync {
       this.syncSegmentedToggle('granularity-toggle', g);
     }
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
-    const isWorldGranularity = granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world';
+    // 熟练度分析（free）世界档无「开始测试」概念，故单独放行（Q21）。
+    const isAnalysisWorld = mode === 'free' && (current?.getGranularity?.() ?? 'city') === 'world';
+    const isWorldGranularity = isAnalysisWorld || (granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world');
     $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
     // 换行占位随洲按钮一同显隐，否则非世界粒度时会凭空多出一个空行
     $('continent-break').classList.toggle('hidden', !isWorldGranularity);
     if (isWorldGranularity) {
       const c = (current?.getWorldContinent?.() ?? null) as string | null;
       this.syncSegmentedToggle('continent-toggle', c ?? '');
+    }
+    // 「次区域行」：已选大洲、该洲分区数 > 1、且未开始测试（分析模式无此限制）时显示。
+    const worldScope = this.worldScope();
+    const subregionVisible =
+      isWorldGranularity &&
+      worldScope?.continent != null &&
+      (!testStarted || isAnalysisWorld) &&
+      hasSubregions(this.s.data, worldScope.continent);
+    $('subregion-toggle').classList.toggle('hidden', !subregionVisible);
+    $('subregion-break').classList.toggle('hidden', !subregionVisible);
+    if (subregionVisible && worldScope?.continent) {
+      this.renderSubregionButtons(worldScope.continent, subregionsOf(this.s.data, worldScope.continent));
+      this.syncSegmentedToggle('subregion-toggle', worldScope.subregion ?? '');
     }
     // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）
     $('self-order-toggle').classList.toggle('hidden', mode !== 'self' || testStarted);

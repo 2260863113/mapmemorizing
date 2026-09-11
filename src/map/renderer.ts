@@ -1,5 +1,5 @@
 import * as echarts from 'echarts';
-import type { AppData, BoundaryTone, Continent, RenderState, Unit, UnitColor } from '../types';
+import type { AppData, BoundaryTone, Continent, RenderState, SubregionId, Unit, UnitColor } from '../types';
 import { t } from '../i18n';
 import { normalizeProvince } from '../matcher';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
@@ -148,15 +148,17 @@ export class MapRenderer {
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
   private worldMode = false; // 世界模式：只渲染世界地图（答题国 + 装饰面），无放大框、无下钻
   private worldContinent: Continent | null = null; // 世界模式下的洲范围（null = 全世界；非空 = 只渲染该洲 + 聚焦）
+  private worldSubregion: SubregionId | null = null; // 世界模式下的次区域范围（null = 全洲；非空 = 只渲染该次区域 + 聚焦）
   /** 最近一次 render 实际应用到的 geo 地图名（用于检测地图切换，切换时强制重建 geo 组件）。 */
   private appliedMapName = '';
-  /** 最近一次的「地图名|大洲」签名（大洲变化需 replaceMerge 重建 geo.regions）。 */
+  /** 最近一次的「地图名|大洲|次区域」签名（洲/次区域变化需 replaceMerge 重建 geo.regions）。 */
   private appliedContinentKey = '';
   private worldNameToIso = new Map<string, string>(); // 世界面 name → iso_a3
   private worldIsoToName = new Map<string, string>(); // iso_a3 → 世界面 name（答题国）
   private worldDecorativeNames = new Set<string>(); // 装饰面 name（灰显、不响应）
   private worldLabelAnchors = new Map<string, GeoPoint>(); // iso → 标签锚点（按主面质心）
   private isoContinent = new Map<string, Continent>(); // iso → 大洲（世界大洲视图过滤用）
+  private isoSubregion = new Map<string, SubregionId>(); // iso → 次区域（世界次区域视图过滤用）
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   /** 省界折线各元素的数据坐标 bbox（下标与 'province-lines' 系列 data 对齐，供逐帧视口裁剪用）。 */
@@ -192,6 +194,7 @@ export class MapRenderer {
     this.inset.registerMap(); // 港澳放大框：香港+澳门+广东沿海
     this.chart = echarts.init(el);
     for (const c of data.countries) this.isoContinent.set(c.iso, c.continent); // 大洲视图过滤表
+    for (const [iso, sr] of Object.entries(data.isoSubregion)) this.isoSubregion.set(iso, sr); // 次区域视图过滤表
     this.units = data.allUnits;
     for (const u of this.units) {
       this.nameToUnit.set(u.name, u);
@@ -227,11 +230,13 @@ export class MapRenderer {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       const isUnitHit = params.componentType === 'series' && params.seriesType === 'map';
       if (!isUnitHit) {
-        if (this.viewProvince) this.handlers.onBlankClick();
+        // 命中 geo 层（非 map series）时的兜底；真正的「什么都没点中」走下面的 zr handler
+        // （ECharts 的 _initEvents 只在 params 存在时才 trigger，故空点根本不会进这个回调）。
+        if (this.hasDrillLevel()) this.handlers.onBlankClick();
         return;
       }
       const hitName = params.name ?? '';
-      // 世界模式：命中答题国 → 按 iso 回传；装饰面（属地/南极等）静默忽略；空白返回不适用（世界无下钻）
+      // 世界模式：命中答题国 → 按 iso 回传；装饰面（属地/南极等）静默忽略
       if (this.worldMode) {
         const iso = this.worldNameToIso.get(hitName);
         if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitClick(iso);
@@ -258,8 +263,12 @@ export class MapRenderer {
       this.handlers.onUnitClick(u.adcode);
     });
 
+    // 真正的「什么都没点中」判定：zrender 的 event.target 为空即未命中任何图形。
+    // 上面的 chart.on('click') 在空点时不会触发（ECharts 的 _initEvents 只在命中
+    // 图形、能构造出 params 时才 trigger），所以空点必须靠这里。
+    // 中国钻省时返回全国；世界层大洲/次区域下钻时返回上一级（见 hasDrillLevel）。
     this.chart.getZr().on('click', (event) => {
-      if (!event.target && this.viewProvince) this.handlers.onBlankClick();
+      if (!event.target && this.hasDrillLevel()) this.handlers.onBlankClick();
     });
 
     this.chart.on('mouseover', (p) => {
@@ -287,7 +296,15 @@ export class MapRenderer {
 
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
-      if (this.worldMode) return; // 世界粒度：国家为最小单元，双击不钻取
+      // 世界模式：双击答题国 → 交给模式层「逐层下钻」（熟练度分析世界档靠这条下钻；
+      // 测验模式未开始时单击已能下钻，双击只是把同样的下钻再走一遍，模式层有幂等守卫）。
+      // 双击空白处不是下钻语义——空点返回上一层由上面的 zr click handler 负责。
+      if (this.worldMode) {
+        const hitName = params.name ?? '';
+        const iso = this.worldNameToIso.get(hitName);
+        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitDblClick(iso);
+        return;
+      }
       if (this.provinceMode) {
         if (!this.provinceModeDrill) return; // 省级模式：默认不支持下钻
         // 省级浏览（熟练度分析省级档）：双击省级面 → 回传省 adcode 交给模式下钻
@@ -393,7 +410,8 @@ export class MapRenderer {
   /** 进入某地图族时应用记忆：有记忆则恢复，无则默认居中。仅设字段，不 setOption。 */
   private pickViewFor(mapName: string): { center: [number, number]; zoom: number } {
     if (mapName === 'world') {
-      // 大洲视图优先于世界记忆：切洲必须聚焦该洲，不能被「上次世界视野」覆盖
+      // 次区域/大洲视图优先于世界记忆：切范围必须聚焦该范围，不能被「上次世界视野」覆盖
+      if (this.worldSubregion) return this.subregionView(this.worldSubregion);
       if (this.worldContinent) return this.continentView(this.worldContinent);
       if (this.savedWorldView) {
         return { center: [this.savedWorldView.center[0], this.savedWorldView.center[1]], zoom: this.savedWorldView.zoom };
@@ -471,16 +489,20 @@ export class MapRenderer {
   }
 
   /**
-   * 世界模式：只渲染世界地图（195 答题国 + 44 装饰面），无放大框、无下钻；退出时复位到全国视图。
+   * 世界模式：只渲染世界地图（195 答题国 + 装饰面），无放大框、无省级下钻；退出时复位到全国视图。
    * continent 非空时进入「大洲视图」：聚焦该洲 bbox，且只渲染该洲国家（其他洲隐藏）。
+   * subregion 非空时进入「次区域视图」：在该洲内进一步只渲染该次区域国家并聚焦之（次区域 ⊆ 大洲）。
+   * 传入的 subregion 若不属于该洲会被忽略（视为全洲）——避免状态不一致时渲染出空地图。
    */
-  setWorldMode(on: boolean, continent: Continent | null = null) {
-    if (this.worldMode === on && !this.provinceMode && this.worldContinent === continent) return;
+  setWorldMode(on: boolean, continent: Continent | null = null, subregion: SubregionId | null = null) {
+    const nextSub = on && continent && subregion && this.subregionContinent(subregion) === continent ? subregion : null;
+    if (this.worldMode === on && !this.provinceMode && this.worldContinent === continent && this.worldSubregion === nextSub) return;
     const wasWorld = this.worldMode;
     // 跨越世界/中国边界：先把当前族（离开方）的全国视野存入其记忆槽
     if (on !== wasWorld) this.snapshotViewBeforeLeave();
     this.worldMode = on;
     this.worldContinent = on ? continent : null;
+    this.worldSubregion = nextSub;
     this.provinceMode = false;
     this.provinceModeInset = false;
     this.provinceModeDrill = false;
@@ -491,7 +513,12 @@ export class MapRenderer {
       this.viewProvince = null;
       this.labelMode = 'none';
     }
-    if (on && this.worldContinent) {
+    if (on && nextSub) {
+      // 次区域视图：聚焦该次区域 bbox（比大洲更近）
+      const v = this.subregionView(nextSub);
+      this.center = [v.center[0], v.center[1]];
+      this.zoom = v.zoom;
+    } else if (on && this.worldContinent) {
       // 大洲视图：聚焦该洲 bbox
       const v = this.continentView(this.worldContinent);
       this.center = [v.center[0], v.center[1]];
@@ -509,6 +536,30 @@ export class MapRenderer {
   /** 当前大洲视图（null = 全世界）。 */
   currentContinent(): Continent | null {
     return this.worldContinent;
+  }
+
+  /** 当前次区域视图（null = 全洲或全世界）。 */
+  currentSubregion(): SubregionId | null {
+    return this.worldSubregion;
+  }
+
+  /** 世界层是否有可返回的上级（大洲或次区域下钻中）。 */
+  hasWorldDrill(): boolean {
+    return this.worldMode && (this.worldContinent !== null || this.worldSubregion !== null);
+  }
+
+  /**
+   * 当前视图是否有「上一级」可返回（点空白返回的判定）。
+   * 中国：钻省（viewProvince）；世界：大洲或次区域下钻中。
+   * 注意这是**视图能力**判定，不代表允许执行——答题进行中的拦截在模式层（Q7/Q13）。
+   */
+  private hasDrillLevel(): boolean {
+    return this.viewProvince !== null || this.hasWorldDrill();
+  }
+
+  /** 次区域 → 所属大洲（由 data.subregions 元数据查；无命中返回 null）。 */
+  private subregionContinent(id: SubregionId): Continent | null {
+    return this.data.subregions.find((s) => s.id === id)?.continent ?? null;
   }
 
   /**
@@ -538,12 +589,61 @@ export class MapRenderer {
 
   /** 计算某大洲的聚焦 center/zoom（按标定框换算，见 CONTINENT_VIEWS 的说明）。 */
   private continentView(c: Continent): { center: [number, number]; zoom: number } {
-    const [x0, y0, x1, y1] = MapRenderer.CONTINENT_VIEWS[c];
+    return this.viewFromBox(MapRenderer.CONTINENT_VIEWS[c]);
+  }
+
+  /**
+   * 次区域聚焦框（手工标定，lng0/lat0/lng1/lat1；与 CONTINENT_VIEWS 同一套道理）。
+   *
+   * 为什么同样手标：
+   *   - 「东欧」含俄罗斯 → 自动 bbox 会从 20°E 拉到 180°E，把视角推成半个北半球；
+   *   - 「波利尼西亚/密克罗尼西亚/美拉尼西亚」跨 180° 经线，自动 bbox 直接撑成 360°；
+   *   - 「加勒比」是弧状群岛，自动 bbox 会把大西洋一起框进来。
+   * 框外的远端岛屿仍可通过拖动到达（roam 已开启），取景是 UI 决策而非数据推导。
+   */
+  private static readonly SUBREGION_VIEWS: Record<SubregionId, [number, number, number, number]> = {
+    // 亚洲
+    EAS: [73, 18, 146, 54], // 中国 → 日本，南海 → 蒙古/黑龙江
+    SEA: [92, -11, 141, 24], // 缅甸 → 菲律宾，印尼 → 中南半岛北缘
+    SAS: [60, 5, 93, 37], // 阿富汗 → 孟加拉，斯里兰卡 → 喜马拉雅北麓
+    WAS: [25, 12, 64, 43], // 土耳其 → 阿曼湾，也门 → 高加索
+    CAS: [46, 35, 88, 56], // 里海 → 中国西界，土库曼 → 哈萨克北缘
+    // 欧洲
+    NEU: [-25, 53, 32, 72], // 冰岛 → 芬兰东界，波罗的海三国 → 北角
+    WEU: [-11, 42, 10, 61], // 爱尔兰 → 德国西界，伊比利亚 → 苏格兰
+    CEU: [5, 42, 25, 55], // 德国 → 波兰东界，阿尔卑斯 → 波罗的海
+    EEU: [20, 40, 60, 70], // 波兰东界 → 乌拉尔，巴尔干 → 北冰洋沿岸
+    SEU: [-10, 34, 29, 46], // 葡萄牙 → 希腊/罗马尼亚南缘，地中海 → 阿尔卑斯南麓
+    // 非洲
+    NAF: [-18, 15, 36, 38], // 摩洛哥 → 埃及，萨赫勒 → 地中海
+    WAF: [-18, 4, 16, 25], // 佛得角 → 尼日利亚东界，几内亚湾 → 撒哈拉南缘
+    MAF: [6, -8, 32, 12], // 喀麦隆 → 刚果东界，安哥拉 → 乍得北缘
+    EAF: [28, -27, 52, 18], // 苏丹 → 塞舌尔，莫桑比克 → 厄立特里亚
+    SAF: [11, -35, 41, -16], // 纳米比亚 → 莫桑比克东岸，好望角 → 博茨瓦纳北缘
+    // 北美
+    NAM: [-170, 24, -50, 74], // 阿拉斯加 → 纽芬兰，墨西哥北缘 → 加拿大北极群岛
+    CAM: [-93, 7, -77, 19], // 危地马拉 → 巴拿马，巴拿马 → 墨西哥南缘
+    CAR: [-85, 9, -59, 28], // 古巴西端 → 巴巴多斯，特立尼达 → 巴哈马
+    // 南美（单一分区，UI 不显示次区域行；保留映射以维持数据完整性）
+    SAM: [-82, -56, -34, 13],
+    // 大洋洲
+    ANZ: [110, -48, 179, -9], // 澳大利亚 → 新西兰，塔斯马尼亚 → 巴布亚新几内亚北缘
+    MEL: [140, -23, 172, 1], // 巴布亚新几内亚 → 所罗门/瓦努阿图，斐济 → 赤道
+    MIC: [130, -2, 175, 15], // 帕劳 → 马绍尔，瑙鲁 → 关岛北缘
+    POL: [-180, -28, -130, 12], // 图瓦卢/萨摩亚 → 复活节岛方向，汤加 → 赤道北
+  };
+
+  /** 按标定框换算 center/zoom（世界图 zoom 1 时经度跨度约 360，留 12% 边距）。 */
+  private viewFromBox(box: [number, number, number, number]): { center: [number, number]; zoom: number } {
+    const [x0, y0, x1, y1] = box;
     const center: [number, number] = [(x0 + x1) / 2, (y0 + y1) / 2];
-    // 世界图 zoom 1 时经度跨度约 360；按框经度跨度反推恰好铺满的 zoom，再留 12% 边距
     const spanX = Math.max(x1 - x0, 1e-6);
-    const zoom = clampZoom((360 / spanX) * 0.88);
-    return { center, zoom };
+    return { center, zoom: clampZoom((360 / spanX) * 0.88) };
+  }
+
+  /** 计算某次区域的聚焦 center/zoom（按标定框换算）。 */
+  private subregionView(id: SubregionId): { center: [number, number]; zoom: number } {
+    return this.viewFromBox(MapRenderer.SUBREGION_VIEWS[id]);
   }
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
@@ -746,10 +846,12 @@ export class MapRenderer {
       .map((f) => ({ name: f.properties.name ?? '' }));
   }
 
-  /** 世界模式下某国家面是否属于当前洲范围（worldContinent=null 时全部可见）。 */
+  /** 世界模式下某国家面是否属于当前范围（全空时全部可见；次区域优先于大洲）。 */
   private worldFeatureVisible(iso: string, isDecorative: boolean): boolean {
-    if (!this.worldContinent) return true;
-    if (isDecorative || !iso) return false; // 大洲视图下装饰面（南极洲/属地等）一并隐藏
+    if (!this.worldSubregion && !this.worldContinent) return true;
+    if (isDecorative || !iso) return false; // 大洲/次区域视图下装饰面（南极洲/属地等）一并隐藏
+    // 次区域视图：只保留本次区域国家（次区域 ⊆ 大洲，故无需再判大洲）
+    if (this.worldSubregion) return this.isoSubregion.get(iso) === this.worldSubregion;
     return this.isoContinent.get(iso) === this.worldContinent;
   }
 
@@ -787,7 +889,10 @@ export class MapRenderer {
     if (!this.worldMode) return [];
     const theme = this.theme();
     const out: LabelPoint[] = [];
-    const visible = (iso: string) => !this.worldContinent || this.isoContinent.get(iso) === this.worldContinent;
+    const visible = (iso: string) =>
+      this.worldSubregion
+        ? this.isoSubregion.get(iso) === this.worldSubregion
+        : !this.worldContinent || this.isoContinent.get(iso) === this.worldContinent;
     // 测验档：仅已作答国显示绿/红简称
     if (state.worldLabel) {
       for (const c of this.data.countries) {
@@ -1054,9 +1159,9 @@ export class MapRenderer {
     // 普通 setOption 合并会让 geo 停留在上一次绘制状态 → 切回后中国地图整片空白。
     // 检测到 geo 地图名变化时用 replaceMerge 强制重建 geo（与同级 series/map），确保重绘新地图面。
     const mapChanged = mapName !== this.appliedMapName;
-    // 大洲切换时地图名不变（同为 world），但 geo.regions 数组整体变化（隐藏其他洲）：
-    // 普通合并可能残留上一洲的 region 样式，故与地图切换同样走 replaceMerge。
-    const continentKey = `${mapName}|${this.worldContinent ?? ''}`;
+    // 大洲/次区域切换时地图名不变（同为 world），但 geo.regions 数组整体变化（隐藏其他面）：
+    // 普通合并可能残留上一范围的 region 样式，故与地图切换同样走 replaceMerge。
+    const continentKey = `${mapName}|${this.worldContinent ?? ''}|${this.worldSubregion ?? ''}`;
     const continentChanged = continentKey !== this.appliedContinentKey;
     this.appliedContinentKey = continentKey;
     this.appliedMapName = mapName;
