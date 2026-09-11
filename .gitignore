@@ -9,8 +9,10 @@ public/data/*.precise.bak
 shot-compare
 shot-tier
 shot-seam
+shot-world
 .cnatlas-probe
 .cnatlas-tmp
+.world-src-probe
 
 # 一次性 CDP 探针脚本（本地性能/几何验证用，不入库；见 grill-rounds.log 的实测记录）
 probe-*.mjs

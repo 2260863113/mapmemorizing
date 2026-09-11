@@ -509,3 +509,37 @@ TopoJSON→GeoJSON 每次都要重新展开全部弧，重复转换白费一次 
 heapUsed 增 **34.5MB**（约 **85 字节/顶点**，用 --expose-gc + global.gc() 前后取差测得）。
 相对上一版三档（地级 214k 顶点）多约 **9.4MB**。这个代价是刻意接受的吗？
 是 —— 五档常驻换取「跨阈值换档零解析抖动」，且单帧绘制量仍由视口裁剪限制（见 4.4）。
+
+
+================================================================================
+## 2026-02-19 18:00 — 世界地图换源：Surbowl → Natural Earth 50m（TopoJSON）
+================================================================================
+**改动**：scripts/fetch-world-data-v2.mjs（新增，现役世界管线）、public/data/world_v2.topojson（新增，430KB）、
+src/data.ts（fetch 目标改 world_v2.topojson，经 topoWorldToGeoJson 展开）、README.md / DESIGN.md / CONTEXT.md、
+docs/adr/0003-world-map-geometry-source-switch.md（新增）、.gitignore（忽略 .world-src-probe / shot-world）、
+scripts/shot-world-compare.mjs（新增，前后对比出图）。
+
+**效果**：中位线段 0.733° → **0.179°**（1000px 世界图下 2.04px → **0.50px**，4.1 倍精细）；p90 1.909° → 0.496°。
+文件 298KB → 430KB（首屏 3114KB → 3246KB，+132KB）。面数守恒：195 答题国 + 44 装饰面；countries.json 一行未改。
+
+**关键决策**（详见 ADR-0003）：
+- 弃用「换 Natural Earth 110m」：实测 10,654 顶点 / 中位 0.709°，比现用源**更粗**且面数 239→177，负收益。
+- 弃用 10m：中位可到 0.276° 且体积更小，但装饰面 44→60，多出 16 个争议飞地需逐个决定归类。
+- 必须存 **TopoJSON**：同一份 dp50 几何存 GeoJSON 是 1,645KB，TopoJSON 仅 430KB（3.8 倍）。
+- iso 取值 = ISO_A3（为 '-99' 时回退 ADM0_A3）：单独 ADM0_A3 漏 SSD/PSE（193/195）；
+  用 ISO_A3_EH 会让澳属印度洋领地与阿什莫尔群岛都拿到 AUS，三面同名被 ECharts **静默合并 region**。
+- 装饰面判定由黑名单改**白名单**：黑名单失效模式是「多一个答题国」并静默污染排行榜/熟练度。
+- 中国保持单一合并面（显式清单并入 TWN/HKG/MAC，不用 bbox 封套——后者会把锡亚琴冰川一并吞进中国）。
+- 输出文件中文名**一律由 countries.json 反查**，从结构上杜绝 NE 给台湾的 NAME_ZH「中华民国」流入界面。
+
+⚠ **换源副作用（已修补，勿回退）**：NE 50m 中国面最南仅到北纬 18.2°，**南海诸岛整个不存在**
+（10m 放独立 PGA 面、110m 不画），而旧档南伸至 3.4°。管线已从旧档移植 15 个岛礁多边形（113 顶点、+1KB），
+并加守恒断言「中国面最南纬度必须 < 18.3°」防止该主权相关回归静默复现。
+
+**验证**：tsc 0；vitest **130/130**；build 通过（1,223.60 kB / gzip 393.90 kB）。
+输出契约实测：195/195 iso 匹配 countries.json、答题国 name 与 countries.json 逐字相同、面名唯一、装饰面无 iso 泄漏。
+Q14 标签锚点探针：**195/195 仍落在本国面上**（漂移中位 0.053° / 0.1px，最大 1.959° / 5.4px）。
+对比图 5 组（全球/中国周边/欧洲/加勒比/挪威峡湾）在 shot-world/（上=旧、下=新）。
+
+**回滚路径**：旧档 public/data/world.geojson 与旧管线 scripts/fetch-world-data.mjs 原封保留、仅停止加载；
+src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需联网重下外网 CDN）。

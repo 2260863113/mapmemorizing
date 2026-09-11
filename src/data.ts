@@ -25,6 +25,13 @@ function provTopoToGeoJson(topo: Topology): unknown {
   return feature(topo, obj);
 }
 
+/** 世界 TopoJSON 档 → GeoJSON（objects.china 含答题国 + 装饰面；与地级/省级同一读法）。 */
+function topoWorldToGeoJson(topo: Topology): unknown {
+  const obj = topo.objects?.china as GeometryCollection | undefined;
+  if (!obj) throw new Error('世界 TopoJSON 缺 objects.china');
+  return feature(topo, obj);
+}
+
 /** 加载数据（public/data 下的构建产物）。 */
 export async function loadData(): Promise<AppData> {
   if (cache) return cache;
@@ -46,7 +53,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<Topology>('data/china_provinces_raw.json'),
     fetchJson<unknown>('data/hkmac.geojson'),
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
-    fetchJson<unknown>('data/world.geojson'),
+    fetchJson<Topology>('data/world_v2.topojson'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
@@ -78,7 +85,10 @@ export async function loadData(): Promise<AppData> {
     provincesRawGeoJson: provTopoToGeoJson(provRawTopo), // 省级无损档（zoom ≥ 14）
     hkmacGeoJson: hkmacGeo, // 港澳放大框无压缩面（广东+香港+澳门）
     countries: worldMeta.countries,
-    worldGeoJson: worldGeo,
+    // 世界地图：Natural Earth 50m（dp 50% + TopoJSON 量化），中位线段 0.179°（旧档 0.733°，4.1 倍精细）。
+    // 旧档 data/world.geojson 与旧管线 scripts/fetch-world-data.mjs 保留在库中但不再加载（回滚路径）。
+    // 展开后契约与旧档逐字一致：properties 为 { iso_a3, name, full_name, decorative }。
+    worldGeoJson: topoWorldToGeoJson(worldGeo),
   };
   return cache;
 }

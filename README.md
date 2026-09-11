@@ -38,21 +38,30 @@ npm run dev
 
 ## 数据说明
 
-- 边界数据来自[阿里云 DataV.GeoAtlas](https://geodataviewer.com/datasets/boundaries/chinese-admin-boundaries/)（免费、无 Key），已打包进 `public/data/`，运行时不依赖网络
+- 地级/省级边界数据来自[阿里云 DataV.GeoAtlas](https://geodataviewer.com/datasets/boundaries/chinese-admin-boundaries/)（免费、无 Key），已打包进 `public/data/`，运行时不依赖网络
 - 重新生成数据（需网络，可加 `--no-simplify` 关闭几何简化）：
 
 ```bash
 npm run build:data
 ```
 
-- 邻接关系（输入模式 BFS 扩张用）由构建脚本用 turf 自动计算，存在 `units.json` 的 `neighbors` 字段
+- 世界边界数据来自 [Natural Earth 50m admin_0 countries](https://www.naturalearthdata.com/)（公有领域），经 `scripts/fetch-world-data-v2.mjs` 简化为 `public/data/world_v2.topojson`
+  - 中位线段 0.179°（1000px 世界图下约 0.50px），旧档为 0.733°（约 2.04px），精细度提升 4.1 倍
+  - 面数与旧档一致：195 答题国 + 44 装饰面；答题国 iso 集合与 `countries.json` 逐字相同
+  - 中国在世界图上仍是**一个合并面**（含台湾/香港/澳门），并由旧档回补 15 个南海岛礁多边形
+  - 重新生成：`node scripts/fetch-world-data-v2.mjs`
+  - 旧档 `world.geojson` 与旧管线 `scripts/fetch-world-data.mjs` **保留在库中但不再加载**（回滚路径：把 `src/data.ts` 的 `world_v2.topojson` 换回 `world.geojson`）
+- 邻接关系（输入模式 BFS 扩张用）由构建脚本用 turf 自动计算，存在 `units.json` 的 `neighbors` 字段；国家邻接在 `countries.json` 的 `neighbors`
+- 换源前后对比图（人工验收用）：`node scripts/shot-world-compare.mjs` → `shot-world/`（5 组，每组上=旧档、下=新档）
 
 ## 项目结构
 
 ```
 scripts/fetch-cn-atlas.mjs # 数据管线：下载 cn-atlas TopoJSON → 拓扑保持简化（双档）→ 输出
+scripts/fetch-world-data-v2.mjs # 世界数据管线：Natural Earth 50m → 合并中国面 → dp50 TopoJSON
+scripts/shot-world-compare.mjs  # 世界换源前后对比出图（人工验收用）
 scripts/check-data.mjs     # 数据校验：逐面几何有效性 + 单位覆盖
-public/data/             # 构建产物：china_units.json / china_units_coarse.json（TopoJSON 双档）+ units.json
+public/data/             # 构建产物：china_units.json / china_units_coarse.json（TopoJSON 双档）+ units.json + world_v2.topojson
 src/
   matcher.ts             # 地名规范化 + 模糊匹配 + 消歧
   map/renderer.ts        # ECharts 渲染：着色/标签/下钻/高亮动画

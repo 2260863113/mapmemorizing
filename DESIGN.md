@@ -127,7 +127,9 @@ cn-atlas 的 `prefectures` 在新疆有两个面**不在** `units.json` 白名�
 
 ### 4.3 运行时加载
 - 地级五档与省级五档**全部以 TopoJSON 存储**，运行时 `topojson-client` 转 GeoJSON 后 `registerMap`（ECharts 不吃 TopoJSON）。**装饰面已并入拓扑，运行时不再单独请求 `china_decorative.geojson`**。
-- 运行期实际同步加载 14 个文件（`Promise.all` 并行）：地级五档（124 / 158 / 215 / 416 / 908KB）+ 省级五档（43 / 58 / 84 / 174 / 396KB）+ `hkmac.geojson` 125KB + 元数据 `units.json` 84KB / `countries.json` 30KB / `world.geojson` 298KB。合计 **3114KB**。
+- 运行期实际同步加载 14 个文件（`Promise.all` 并行）：地级五档（124 / 158 / 215 / 416 / 908KB）+ 省级五档（43 / 58 / 84 / 174 / 396KB）+ `hkmac.geojson` 125KB + 元数据 `units.json` 84KB / `countries.json` 30KB / `world_v2.topojson` 430KB。合计 **3246KB**。
+  - **世界图于 ADR-0003 换源**：旧档 `world.geojson`（298KB，Surbowl，中位线段 0.733° / 1000px 下 2.04px）→ 新档 `world_v2.topojson`（430KB，Natural Earth 50m + mapshaper dp 50% + TopoJSON 量化，中位线段 0.179° / 0.50px，4.1 倍精细），首屏净增 132KB。
+  - 世界图**单文件单档**，不参与上面「五档精细度阶梯」的换档逻辑（`renderer.ts` 世界模式直接 `return`）：只有 239 个面、且国名标签需常显，加档要改 renderer/data/tiers 与相关测试，而世界粒度无高倍缩放场景（国家为最小单元、无下钻）。
   - 对比：上一版（三档 + 省级两档 GeoJSON）为 3852KB —— 本轮**反而小了 738KB**，因为省级改用 TopoJSON。新增两档的净增量（地级 +574KB、省级 +232KB）远小于格式优化省下的量。
   - **内存代价（实测，非估算）**：五档全部展开后地级 304,311 顶点 + 省级 121,729 顶点 = 426,040 顶点，`heapUsed` 增 **34.5MB**（约 85 字节/顶点）。相对上一版三档（地级 214k 顶点）多约 9.4MB。这些顶点常驻是刻意的取舍 —— 换档时不重新解析 JSON，缩放跨阈值无网络/解析抖动；单档顶点数仍由视口裁剪限制（见 4.4）。
 - 无损档 `china_units_lossless.json`（908KB）与其他档一样**同步加载**；卡顿由**视口裁剪**解决而非异步加载（详见 4.4）。
@@ -243,7 +245,9 @@ interface MemoryState {
   index.html
   scripts/
     fetch-cn-atlas.mjs    # 抓取 cn-atlas TopoJSON → explode+拓扑保持简化四档 + 无损档 + 重建元数据 + 源拓扑闸门（一次性）
-    fetch-world-data.mjs  # 世界数据（含 CONTINENT_OF 大洲归属表 → countries.json 的 continent）
+    fetch-world-data.mjs  # 【legacy，不再运行】旧世界数据（含 CONTINENT_OF 大洲归属表 → countries.json 的 continent）
+    fetch-world-data-v2.mjs # 现役世界数据：Natural Earth 50m → 白名单分类 + 中国合并 + 南海回补 → dp50 TopoJSON
+    shot-world-compare.mjs  # 世界换源前后对比出图（人工验收用，非运行时依赖）
     check-data.mjs        # 数据校验（逐面几何 + 单位覆盖 + 邻接零共享 + 空洞是否被填）
   public/
     data/
@@ -265,7 +269,9 @@ interface MemoryState {
       china_provinces.geojson       # 省级 fine 档展开成 GeoJSON（历史文件名）
       china_provinces_coarse.geojson # 省级 ultra 档展开成 GeoJSON（历史文件名）
       hkmac.geojson                 # 港澳放大框无压缩面（广东+香港+澳门，始终不简化）
-      countries.json                # 195 国元数据（含 continent 大洲字段）
+      countries.json                # 195 国元数据（含 continent 大洲字段；换源未改动，仍是权威清单）
+      world_v2.topojson             # 世界图：Natural Earth 50m dp50（TopoJSON，239 面 = 195 答题国 + 44 装饰面）
+      world.geojson                 # 【legacy，不再加载】旧世界图（Surbowl，298KB）；保留为回滚路径
       units.json
   src/
     matcher/
