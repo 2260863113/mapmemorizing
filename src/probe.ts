@@ -267,6 +267,54 @@ export function installProbe(app: AppController) {
       };
     },
 
+    /**
+     * 5b. 世界自动跟随的**集成**验证：真的调用 renderer.focusWorldCountry，
+     * 看相机是否按面积落位。
+     *
+     * 与 worldFollowZoom()（纯函数）互补：那个只证明映射单调，这个证明
+     * 「输入模式 ask() 真正走到的那条路径」能驱动相机、且落点正确。
+     */
+    async worldAutoFollow() {
+      renderer.setWorldMode(true, null, null);
+      const r = renderer as unknown as {
+        zoom: number;
+        center: number[];
+        worldLabelAnchors: Map<string, [number, number]>;
+      };
+      const readView = () =>
+        (renderer.currentGeoView as unknown as () => { center: number[]; zoom: number })?.() ?? {
+          center: r.center,
+          zoom: r.zoom,
+        };
+      const shoot = async (iso: string) => {
+        // 断言基准取**实际使用的目标点**（标签锚点，主面质心），
+        // 而不是 countries.json 的 center —— 对俄罗斯这类大国两者相差很远，
+        // 拿 center 断言会误报（曾因此踩过一次）。
+        const anchor = r.worldLabelAnchors.get(iso) ?? null;
+        renderer.focusWorldCountry(iso);
+        await new Promise((res) => setTimeout(res, 1000)); // 等镜头动画结束
+        const view = readView();
+        const landed = anchor ? Math.hypot(view.center[0] - anchor[0], view.center[1] - anchor[1]) : Number.NaN;
+        return { view, anchor, landed };
+      };
+      const sgp = await shoot('SGP'); // 极小：新加坡
+      const rus = await shoot('RUS'); // 极大：俄罗斯
+      const chn = await shoot('CHN'); // 中等：中国
+      const inRange = (z: number) => z >= 1.5999 && z <= 9.0001;
+      const close = (s: { landed: number }) => Number.isFinite(s.landed) && s.landed < 1.5; // 度
+      return {
+        sgpZoom: sgp.view.zoom,
+        rusZoom: rus.view.zoom,
+        chnZoom: chn.view.zoom,
+        sgpLanded: sgp.landed,
+        rusLanded: rus.landed,
+        chnLanded: chn.landed,
+        cameraMovedOnEach: close(sgp) && close(rus) && close(chn),
+        inverse: sgp.view.zoom > chn.view.zoom && chn.view.zoom > rus.view.zoom,
+        allInRange: [sgp.view.zoom, rus.view.zoom, chn.view.zoom].every(inRange),
+      };
+    },
+
     /** 还原：把视图切回世界全图（探针之间互不污染）。 */
     reset() {
       renderer.setWorldMode(true, null, null);

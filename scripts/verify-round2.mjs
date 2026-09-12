@@ -155,6 +155,12 @@ try {
   check('缩放落在设计区间 [1.6, 9]', zoom.small <= 9.0001 && zoom.big >= 1.5999, `${zoom.small.toFixed(2)} / ${zoom.big.toFixed(2)}`);
   check('全池严格单调（面积↑ ⇒ 缩放↓）', zoom.monotonic === true, `${zoom.countries} 国`);
 
+  // 集成：真的调 renderer，证明「输入模式 ask() 走的那条路径」能驱动相机
+  const af = await evaluate('window.__probe.worldAutoFollow()');
+  check('集成：相机真的落到目标点（标签锚点，误差<1.5°）', af.cameraMovedOnEach === true, `sgp=${af.sgpLanded.toFixed(2)}° chn=${af.chnLanded.toFixed(2)}° rus=${af.rusLanded.toFixed(2)}°`);
+  check('集成：缩放随面积反比（新>中>俄）', af.inverse === true, `sgp=${af.sgpZoom.toFixed(2)} chn=${af.chnZoom.toFixed(2)} rus=${af.rusZoom.toFixed(2)}`);
+  check('集成：三档缩放都在设计区间内', af.allInRange === true);
+
   console.log('\n=== 6. 答错后镜头平移到正确答案且缩放不变 ===');
   const pan = await evaluate('window.__probe.panOnWrong()');
   check('镜头中心已移动', pan.moved === true, `${pan.fromCenter} → ${pan.toCenter}`);
