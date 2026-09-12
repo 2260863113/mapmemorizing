@@ -6,6 +6,7 @@ import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
 import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
 import { InsetMap } from './inset';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
+import { worldFaceInteractive, worldFeatureVisible, type WorldFaceContext } from './worldFaces';
 import { TIER_ZOOM_MIN, tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
 import {
   CITY_LABEL_SIZE,
@@ -98,6 +99,37 @@ function clampZoom(zoom: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
+/** 世界自动跟随的缩放区间：面积最小 → 放得最大；面积最大 → 缩得最小。 */
+export const WORLD_FOLLOW_MIN_ZOOM = 1.6;
+export const WORLD_FOLLOW_MAX_ZOOM = 9;
+
+/**
+ * 面积 → 跟随缩放（面积越小放得越大，严格反比单调）。
+ *
+ * 用 log 插值把面积映射到 [MIN, MAX]：`t=0` 对应最小面积 → `MAX_ZOOM`，
+ * `t=1` 对应最大面积 → `MIN_ZOOM`。面积缺失/退化时取区间中值。
+ */
+export function worldFollowZoom(area: number, range: { min: number; max: number }): number {
+  const mid = (WORLD_FOLLOW_MIN_ZOOM + WORLD_FOLLOW_MAX_ZOOM) / 2;
+  // 面积必须是有限正数；区间必须有限正数且 max > min（min=0 会让 log 分母发散）
+  const ok =
+    Number.isFinite(area) &&
+    area > 0 &&
+    Number.isFinite(range.min) &&
+    Number.isFinite(range.max) &&
+    range.min > 0 &&
+    range.max > range.min;
+  if (!ok) return mid;
+  // area 已被上面校验为有限正数，故 log 比值必为有限值；仍夹一次以吸收浮点误差
+  const t = Math.log(area / range.min) / Math.log(range.max / range.min);
+  const k = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0;
+  // 端点直接返回常量：线性插值在 k=1 时会算出 1.5999999999999996，破坏
+  // 「区间闭包」这条可断言的性质（调用方与测试都会依赖它）。
+  if (k <= 0) return WORLD_FOLLOW_MAX_ZOOM;
+  if (k >= 1) return WORLD_FOLLOW_MIN_ZOOM;
+  return WORLD_FOLLOW_MAX_ZOOM - k * (WORLD_FOLLOW_MAX_ZOOM - WORLD_FOLLOW_MIN_ZOOM);
+}
+
 function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -159,6 +191,10 @@ export class MapRenderer {
   private worldLabelAnchors = new Map<string, GeoPoint>(); // iso → 标签锚点（按主面质心）
   private isoContinent = new Map<string, Continent>(); // iso → 大洲（世界大洲视图过滤用）
   private isoSubregion = new Map<string, SubregionId>(); // iso → 次区域（世界次区域视图过滤用）
+  /** 被设置排除出答题的极小国家 iso（灰显、完全无交互；未开启该设置时为空集）。 */
+  private excludedIso = new Set<string>();
+  /** 排除国名 → iso：这些面按装饰面处理（silent + 灰色）。 */
+  private worldExcludedNames = new Set<string>();
   private flashAdcode: string | null = null;
   private flashTimer: number | null = null;
   /** 省界折线各元素的数据坐标 bbox（下标与 'province-lines' 系列 data 对齐，供逐帧视口裁剪用）。 */
@@ -236,10 +272,15 @@ export class MapRenderer {
         return;
       }
       const hitName = params.name ?? '';
-      // 世界模式：命中答题国 → 按 iso 回传；装饰面（属地/南极等）静默忽略
+      // 世界模式：命中答题国 → 按 iso 回传；装饰面/被排除的极小国/当前范围外的面一律静默
       if (this.worldMode) {
+        if (!this.worldFaceInteractive(hitName)) {
+          // 命中的是不可交互的面（大洲视图下其他洲、被排除的极小国等）：等价于点了空白
+          if (this.hasDrillLevel()) this.handlers.onBlankClick();
+          return;
+        }
         const iso = this.worldNameToIso.get(hitName);
-        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitClick(iso);
+        if (iso) this.handlers.onUnitClick(iso);
         return;
       }
       // 省级模式：命中省级面 → 按省全名查省 adcode 回传，不支持下钻
@@ -276,8 +317,13 @@ export class MapRenderer {
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
       const hitName = params.name ?? '';
       if (this.worldMode) {
-        const iso = this.worldNameToIso.get(hitName);
-        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitHover?.(iso);
+        if (this.worldFaceInteractive(hitName)) {
+          const iso = this.worldNameToIso.get(hitName);
+          if (iso) this.handlers.onUnitHover?.(iso);
+        } else {
+          // 空白/其他洲/被排除的极小国：显式结束悬停，防止残留高亮
+          this.handlers.onUnitHoverEnd?.();
+        }
         return;
       }
       // 省级模式：命中省级面 → 按省全名查省 adcode
@@ -301,8 +347,12 @@ export class MapRenderer {
       // 双击空白处不是下钻语义——空点返回上一层由上面的 zr click handler 负责。
       if (this.worldMode) {
         const hitName = params.name ?? '';
-        const iso = this.worldNameToIso.get(hitName);
-        if (iso && !this.worldDecorativeNames.has(hitName)) this.handlers.onUnitDblClick(iso);
+        if (this.worldFaceInteractive(hitName)) {
+          const iso = this.worldNameToIso.get(hitName);
+          if (iso) this.handlers.onUnitDblClick(iso);
+        } else if (this.hasDrillLevel()) {
+          this.handlers.onBlankClick();
+        }
         return;
       }
       if (this.provinceMode) {
@@ -541,6 +591,25 @@ export class MapRenderer {
   /** 当前次区域视图（null = 全洲或全世界）。 */
   currentSubregion(): SubregionId | null {
     return this.worldSubregion;
+  }
+
+  /**
+   * 设置被「忽略面积极小的国家」排除的 iso 集合。
+   *
+   * 这些国家**保留灰色面**（而不是删除几何）：
+   *  1. 无交互靠 `silent: true` 实现，与装饰面同一套机制；
+   *  2. 梵蒂冈嵌在意大利的一个内部环（空洞）里，删掉它的面会在意大利上留下缺口，
+   *     灰色面正好填住这个洞，地图完整性不受影响。
+   * 集合变化时若正在世界模式则立即重渲染。
+   */
+  setExcludedCountries(isos: Iterable<string>) {
+    const next = new Set(isos);
+    const same = next.size === this.excludedIso.size && [...next].every((i) => this.excludedIso.has(i));
+    if (same) return;
+    this.excludedIso = next;
+    this.worldExcludedNames.clear();
+    for (const [name, iso] of this.worldNameToIso) if (next.has(iso)) this.worldExcludedNames.add(name);
+    if (this.worldMode && this.lastState) this.render(this.lastState);
   }
 
   /** 世界层是否有可返回的上级（大洲或次区域下钻中）。 */
@@ -848,14 +917,47 @@ export class MapRenderer {
 
   /** 世界模式下某国家面是否属于当前范围（全空时全部可见；次区域优先于大洲）。 */
   private worldFeatureVisible(iso: string, isDecorative: boolean): boolean {
-    if (!this.worldSubregion && !this.worldContinent) return true;
-    if (isDecorative || !iso) return false; // 大洲/次区域视图下装饰面（南极洲/属地等）一并隐藏
-    // 次区域视图：只保留本次区域国家（次区域 ⊆ 大洲，故无需再判大洲）
-    if (this.worldSubregion) return this.isoSubregion.get(iso) === this.worldSubregion;
-    return this.isoContinent.get(iso) === this.worldContinent;
+    return worldFeatureVisible(this.worldFaceContext(), iso, isDecorative);
   }
 
-  /** 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。大洲视图下非本洲面不渲染。 */
+  private worldFaceContext(): WorldFaceContext {
+    return {
+      continent: this.worldContinent,
+      subregion: this.worldSubregion,
+      isoContinent: this.isoContinent,
+      isoSubregion: this.isoSubregion,
+    };
+  }
+
+  /**
+   * 世界面是否可交互（悬停高亮 / 点击 / tooltip）。
+   *
+   * 不可交互的三种面：
+   *  1. 当前范围之外的面——下钻到大洲/次区域后，其余洲的国面**仍在几何上存在**，
+   *     若不判范围，悬停空白处会高亮一个看不见的国家、点击还会跳到它的上级区域；
+   *  2. 被「忽略面积极小的国家」排除的面；
+   *  3. 装饰面（属地/南极等）。
+   *
+   * 三者都由 buildWorldRegionData 渲染成 `silent: true` 的几何面（ECharts 对 silent
+   * region 既不派发事件也不做 emphasis 高亮），这里的判断用于 name→iso 回传的兜底。
+   */
+  private worldFaceInteractive(name: string): boolean {
+    return worldFaceInteractive(this.worldFaceContext(), name, {
+      nameToIso: this.worldNameToIso,
+      decorativeNames: this.worldDecorativeNames,
+      excludedNames: this.worldExcludedNames,
+    });
+  }
+
+  /**
+   * 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。
+   *
+   * 大洲/次区域视图下**非本范围的面不渲染外观但仍登记为 `silent` 透明面**：
+   * 只 continue 跳过外观会让这些面回落到 geo 层默认样式——几何依然参与命中测试、
+   * 且 geo.emphasis 的悬停遮罩照常生效，于是「空白处悬停高亮看不见的国家、点击
+   * 跳到它的上级区域」。登记为 silent 后 ECharts 既不派发鼠标事件也不做 emphasis，
+   * 空白区因此彻底无交互。
+   */
   private buildWorldRegionData(state: RenderState): GeoRegion[] {
     const theme = this.theme();
     const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
@@ -863,19 +965,31 @@ export class MapRenderer {
     for (const f of geo.features ?? []) {
       const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
       const isDecorative = f.properties.decorative === 1 || !iso;
-      // 大洲视图：只保留本洲国家，其余面（含装饰面）不渲染 → 视觉上「其他洲隐藏」
-      if (!this.worldFeatureVisible(iso, isDecorative)) continue;
-      const color: UnitColor = isDecorative ? 'gray' : state.colorOf(iso);
+      const excluded = !isDecorative && this.excludedIso.has(iso);
+      const gray = isDecorative || excluded; // 装饰面与被排除的极小国：灰显
+      if (!this.worldFeatureVisible(iso, isDecorative)) {
+        // 范围外：保留几何（否则 ECharts 会把它当默认面处理）但不可见、不可交互
+        out.push({
+          name: f.properties.name ?? '',
+          silent: true,
+          itemStyle: { areaColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
+          emphasis: { disabled: true, itemStyle: { areaColor: 'rgba(0,0,0,0)' }, label: { show: false } },
+          label: { show: false },
+        });
+        continue;
+      }
+      const color: UnitColor = gray ? 'gray' : state.colorOf(iso);
       out.push({
         name: f.properties.name ?? '',
-        silent: isDecorative,
+        silent: gray,
         itemStyle: {
           areaColor: theme.fill[color],
           borderColor: theme.boundary.mid, // 国家细边界
-          borderWidth: 0.4,
+          borderWidth: excluded ? 0.2 : 0.4,
         },
         emphasis: {
-          itemStyle: { areaColor: isDecorative ? theme.fill.gray : theme.emphasis[color] },
+          disabled: gray,
+          itemStyle: { areaColor: gray ? theme.fill.gray : theme.emphasis[color] },
           label: { show: false },
         },
         label: { show: false },
@@ -1007,7 +1121,8 @@ export class MapRenderer {
               const hitName = params.name ?? '';
               if (this.worldMode) {
                 const iso = this.worldNameToIso.get(hitName);
-                if (!iso || this.worldDecorativeNames.has(hitName)) return String(hitName);
+                // 不可交互的面（其他洲 / 被排除的极小国 / 装饰面）不显示答题态 tooltip
+                if (!iso || !this.worldFaceInteractive(hitName)) return String(hitName);
                 const color: UnitColor = state.colorOf(iso);
                 return t('map.tooltip.worldBody', { name: hitName, status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }) });
               }
@@ -1251,6 +1366,50 @@ export class MapRenderer {
       if (this.lastState) this.render(this.lastState);
     }
     this.animateViewTo(u.center, this.followZoomFor(u.provinceAdcode));
+  }
+
+  /**
+   * 世界模式自动跟随：镜头移到某国，**缩放倍率与国家面积成反比**（面积越小放得越大）。
+   *
+   * 面积取自 `data.countryArea`（度²，构建期算好的），这里只做对数插值：
+   * 世界最大国（俄罗斯）↔ 最小答题国之间映射到 [WORLD_FOLLOW_MIN_ZOOM, WORLD_FOLLOW_MAX_ZOOM]。
+   * 用对数而非线性：面积跨 6 个数量级，线性插值会让九成国家挤在同一档。
+   */
+  focusWorldCountry(iso: string) {
+    if (!this.worldMode) return;
+    const center = this.worldLabelAnchors.get(iso);
+    if (!center) return;
+    this.animateViewTo([center[0], center[1]], worldFollowZoom(this.countryArea(iso), this.areaRange()));
+  }
+
+  /** 把镜头移到某国**但不改变缩放**（所有模式答错时跟随到正确答案位置用）。 */
+  panWorldCountry(iso: string) {
+    if (!this.worldMode) return;
+    const center = this.worldLabelAnchors.get(iso);
+    if (center) this.animateViewTo([center[0], center[1]], this.zoom);
+  }
+
+  /** 把镜头移到某地级单位**但不改变缩放**（中国族答错时跟随）。 */
+  panUnit(adcode: string) {
+    const u = this.units.find((item) => item.adcode === adcode);
+    if (u) this.animateViewTo(u.center, this.zoom);
+  }
+
+  private countryArea(iso: string): number {
+    return this.data.countryArea?.[iso] ?? 0;
+  }
+
+  /** 答题池里的面积极值（用于把面积映射到缩放区间）。 */
+  private areaRange(): { min: number; max: number } {
+    let min = Number.POSITIVE_INFINITY;
+    let max = 0;
+    for (const c of this.data.countries) {
+      const a = this.countryArea(c.iso);
+      if (a <= 0) continue;
+      if (a < min) min = a;
+      if (a > max) max = a;
+    }
+    return Number.isFinite(min) && max > min ? { min, max } : { min: 1, max: 1 };
   }
 
   private followZoomFor(provinceAdcode: string) {

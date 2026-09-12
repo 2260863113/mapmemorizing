@@ -34,6 +34,7 @@ export function makeAppData(over: Partial<AppData> = {}): AppData {
     worldGeoJson: null,
     subregions: [],
     isoSubregion: {},
+    countryArea: {},
     ...over,
   };
 }

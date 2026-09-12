@@ -10,11 +10,13 @@ shot-compare
 shot-tier
 shot-seam
 shot-world
+docs/shots
 .cnatlas-probe
 .cnatlas-tmp
 .world-src-probe
 
 # 一次性 CDP 探针脚本（本地性能/几何验证用，不入库；见 grill-rounds.log 的实测记录）
+# 注意：verify-*.mjs 是长期防回归的验收脚本，**故意不匹配**本规则，需要入库。
 probe-*.mjs
 diag-*.mjs
 .probe-*-profile/

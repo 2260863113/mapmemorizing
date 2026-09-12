@@ -26,7 +26,7 @@
 //     - decorative 1 = 装饰面（灰显、不响应点击）；0 = 答题国
 //
 // 关键不变量（与 grill 轮次确认一致）：
-//   1. 答题池恰好 195 国，iso 集合与 countries.json 完全相同
+//   1. 答题池恰好 194 国，iso 集合与 countries.json 完全相同
 //   2. 装饰面 44 个，灰显且不响应点击
 //   3. 中国在世界图上是**一个合并面**（含台湾/香港/澳门），与旧档行为一致
 //   4. countries.json 一行不改（center / neighbors / continent / 中文名 全部沿用旧档）
@@ -44,6 +44,17 @@ import mapshaper from 'mapshaper';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = path.join(ROOT, 'public', 'data');
 const OUT_TOPO = path.join(OUT_DIR, 'world_v2.topojson');
+
+/** 经纬度平面上的环面积（shoelace，度²）。用于「与视觉面积一致」的国面面积。 */
+function ringArea(ring) {
+  let s = 0;
+  for (let i = 0, n = ring.length; i < n; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % n];
+    s += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(s / 2);
+}
 
 // jsDelivr 的 gh 镜像：本机 raw.githubusercontent.com 经代理返回 502，故用镜像。
 //
@@ -108,10 +119,10 @@ const SCS_MIN_LAT_MAX = 5.0;
 // 源数据里 ISO_A3 对 8 个面是字面字符串 '-99'（索马里兰/挪威/科索沃/法国/
 // 北塞浦路斯/澳属印度洋领地/阿什莫尔和卡捷群岛/锡亚琴冰川）。
 //
-//   规则                                  195 国匹配   重名冲突
-//   ISO_A3 → ADM0_A3                      195/195      无        ← 采用
-//   ADM0_A3 单独                          193/195      无        （漏 SSD/PSE：NE 标为 SDS/PSX）
-//   ISO_A3 → ISO_A3_EH → ADM0_A3          195/195      AUS × 3   （_EH 把 AUS 借给其属地）
+//   规则                                  匹配率       重名冲突
+//   ISO_A3 → ADM0_A3                      194/194      无        ← 采用
+//   ADM0_A3 单独                          192/194      无        （漏 SSD/PSE：NE 标为 SDS/PSX）
+//   ISO_A3 → ISO_A3_EH → ADM0_A3          194/194      AUS × 3   （_EH 把 AUS 借给其属地）
 //
 // 采用第一条：先取 ISO_A3，为 '-99' 时回退 ADM0_A3。
 // 特别地，不能用 ISO_A3_EH —— 它会让澳属印度洋领地与阿什莫尔和卡捷群岛都拿到 AUS，
@@ -127,7 +138,7 @@ function isoOf(p) {
 // ---------------------------------------------------------------------------
 // 旧管线用黑名单（列 44 个装饰 iso，其余都算答题国）—— 失效模式是「多出一个国家」，
 // 会静默污染 __continent_* 排行榜与熟练度分区。
-// 本管线反转为白名单：**只有明确对得上 countries.json 的 195 个 iso 才是答题国**，
+// 本管线反转为白名单：**只有明确对得上 countries.json 的答题国**才是答题国，
 // 其余一律装饰面。失效模式变成「少一个国家」，一眼可见。
 //
 // 实测：NE 50m 的非池内面共 47 个；其中 44 个恰好构成装饰面，
@@ -173,7 +184,7 @@ function polygonsOf(geom) {
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
-console.log('[1/5] 读取 countries.json（195 国权威清单，本脚本不改写它）...');
+console.log('[1/5] 读取 countries.json（答题国权威清单，本脚本不改写它）...');
 const countriesPath = path.join(OUT_DIR, 'countries.json');
 if (!fs.existsSync(countriesPath)) throw new Error('缺 public/data/countries.json（答题池权威清单）');
 const countriesDoc = JSON.parse(fs.readFileSync(countriesPath, 'utf8'));
@@ -289,7 +300,7 @@ console.log(`  并入中国的面: ${mergedIntoChn.join(',') || '(无)'}`);
   const dup = [...seenIso].filter(([, v]) => v > 1);
   const dupName = [...seenName].filter(([, v]) => v > 1);
   const errs = [];
-  if (answering.length !== 195) errs.push(`答题国 ${answering.length} ≠ 195`);
+  if (answering.length !== 194) errs.push(`答题国 ${answering.length} ≠ 194`);
   if (missing.length) errs.push(`缺答题国: ${missing.join(',')}`);
   if (dup.length) errs.push(`答题 iso 重复: ${dup.map(([k, v]) => k + 'x' + v).join(',')}`);
   if (dupName.length) errs.push(`面名重复（ECharts 会静默合并 region）: ${dupName.map(([k, v]) => k + 'x' + v).join(',')}`);
@@ -340,7 +351,7 @@ console.log(`  并入中国的面: ${mergedIntoChn.join(',') || '(无)'}`);
     for (const e of errs) console.error('  - ' + e);
     process.exit(1);
   }
-  console.log('  ✓ 守恒：195 答题国 / iso 无重复 / 面名无重复 / 装饰面无 iso 泄漏');
+  console.log('  ✓ 守恒：194 答题国 / iso 无重复 / 面名无重复 / 装饰面无 iso 泄漏');
 }
 
 // 磁盘交换：mapshaper 读 GeoJSON 写 TopoJSON（量化 + 共享弧）
@@ -410,3 +421,40 @@ console.log(`  精细度提升: ${(oldStats.med / newStats.med).toFixed(2)}x（�
 console.log(`\n  答题国 ${answering.length} | 装饰面 ${decorative.length} | 面名唯一 ${new Set(verify.features.map((f) => f.properties.name)).size === verify.features.length}`);
 console.log(`  中国面: ${verify.features.find((f) => f.properties.iso_a3 === 'CHN').geometry.type} / ${polygonsOf(verify.features.find((f) => f.properties.iso_a3 === 'CHN').geometry).length} 个多边形`);
 console.log(`\n  注意：countries.json 未被改写（center/neighbors/中文名 全部沿用旧档）。`);
+
+// ---------- 国面面积（度²）----------
+// 用途有两个，都要求**与视觉面积一致**：
+//   1. 「自动跟随缩放与国家面积成反比」——面积越小放得越大；
+//   2. 「忽略面积极小的国家」判定——按地图上看起来有多大来分。
+// 故用经纬度平面上的 shoelace 面积（外环减内环），而不是球面真实面积：
+// 球面面积会把高纬度国家折算得过小，与屏幕上看到的大小不符。
+// 单独写 world_area.json 而不塞进 topojson：topojson 只存几何，塞进去会在 mapshaper
+// 量化时被丢弃，且 ECharts registerMap 也不需要它。
+{
+  const areas = {};
+  const polyArea = (poly) => {
+    let a = ringArea(poly[0]);
+    for (let i = 1; i < poly.length; i++) a -= ringArea(poly[i]);
+    return Math.abs(a);
+  };
+  for (const f of verify.features) {
+    if (f.properties.decorative) continue;
+    const iso = String(f.properties.iso_a3 ?? '');
+    if (!iso) continue;
+    const g = f.geometry;
+    const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+    let a = 0;
+    for (const p of polys) a += polyArea(p);
+    areas[iso] = Number(a.toFixed(6));
+  }
+  const n = Object.keys(areas).length;
+  if (n !== 194) throw new Error(`面积表应为 194 国，实得 ${n}`);
+  const sorted = Object.entries(areas).sort((x, y) => x[1] - y[1]);
+  fs.writeFileSync(
+    path.join(OUT_DIR, 'world_area.json'),
+    JSON.stringify({ sourceNote: '由 scripts/fetch-world-data-v2.mjs 生成；度²（经纬度平面 shoelace，与视觉面积一致）。', area: Object.fromEntries(sorted) }) + '\n',
+    'utf8',
+  );
+  console.log(`  面积表: ${n} 国 → world_area.json（最小 ${sorted[0][0]} ${sorted[0][1]} / 最大 ${sorted[n - 1][0]} ${sorted[n - 1][1]}）`);
+}
+

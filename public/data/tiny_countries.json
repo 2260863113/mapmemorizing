@@ -1,0 +1,1 @@
+{"threshold":{"anchorIso":"MHL","anchorArea":0.003325,"unit":"deg^2"},"isos":["MCO","MDV","MHL","NRU","SMR","TUV"],"sourceNote":"由 scripts/build-subregions.mjs 依据 world_area.json 生成：面积 ≤ MHL（0.003325 度²）的答题国。开启「忽略面积极小的国家」后，这些国家不出题、不参与排行榜、地图上灰显且完全无交互。"}

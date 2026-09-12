@@ -96,10 +96,12 @@ export interface AppData {
   provincesPlusGeoJson: unknown; // 省界图层（plus 40%，10 ≤ zoom < 14）
   provincesRawGeoJson: unknown; // 省界图层（无损档 100%，zoom ≥ 14）
   hkmacGeoJson: unknown; // 港澳放大框无压缩面（广东+香港+澳门，始终最精细不简化）
-  countries: CountryMeta[]; // 世界 195 答题国
+  countries: CountryMeta[]; // 世界答题国（194 国，见 docs/adr/0005）
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
   subregions: SubregionMeta[]; // 世界 23 个次区域（方位式粗分，见 docs/adr/0004）
-  isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（195 条全覆盖）
+  isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（194 条全覆盖）
+  /** iso_a3 → 国面面积（度²，构建期算好）：供「自动跟随缩放与国家面积成反比」与「极小国家」判定用。 */
+  countryArea: Record<string, number>;
 }
 
 /** 次区域元数据（public/data/subregions.json 生成）。 */
@@ -127,6 +129,8 @@ export interface Settings {
   cityBoundaryTone: BoundaryTone;
   provinceBoundaryTone: BoundaryTone;
   darkMode: boolean;
+  /** 忽略面积极小的国家：不出题、不参与排行榜、地图上灰显且完全无交互。 */
+  ignoreTinyCountries: boolean;
 }
 
 export interface RoundResult {

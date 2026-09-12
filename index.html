@@ -6,13 +6,13 @@
 
   <!-- ===== SEO：标题与描述 =====
        百度对标题前段权重更高，故关键词「地图记忆」在前、「中国行政区」在后；
-       本站有两套题库（373 个中国地级单位 / 195 个国家），故标题与描述同时覆盖两类搜索意图。
+       本站有两套题库（373 个中国地级单位 / 194 个国家），故标题与描述同时覆盖两类搜索意图。
        注意：站点自定位为「助手/记忆/练习」，刻意不自称「游戏」——
        免费浏览器游戏在《网络出版服务管理规定》第二十七条下可能被认定为需版号的
        「网络游戏」（2009 年通知的适用范围明文含「网页游戏、休闲游戏」且无商业门槛），
        详见 docs/adr/0004。 -->
   <title>地图记忆 - 中国行政区和世界国家记忆助手</title>
-  <meta name="description" content="地图记忆：免费的中国行政区与世界国家地图记忆助记工具。覆盖 34 个省级行政区、373 个地级行政区与 195 个国家，支持输入、点击、闯关、熟练度分析等多种记忆练习方式，帮助快速记住中国省市与世界各国在地图上的位置。" />
+  <meta name="description" content="地图记忆：免费的中国行政区与世界国家地图记忆助记工具。覆盖 34 个省级行政区、373 个地级行政区与 194 个国家，支持输入、点击、闯关、熟练度分析等多种记忆练习方式，帮助快速记住中国省市与世界各国在地图上的位置。" />
   <meta name="keywords" content="地图记忆,中国行政区,中国地图记忆,省份记忆,地级市记忆,中国省份,世界国家,世界地图记忆,地理记忆,行政区划" />
   <meta name="author" content="地图记忆" />
   <meta name="robots" content="index,follow" />
@@ -24,7 +24,7 @@
   <meta property="og:site_name" content="地图记忆" />
   <meta property="og:locale" content="zh_CN" />
   <meta property="og:title" content="地图记忆 - 中国行政区和世界国家记忆助手" />
-  <meta property="og:description" content="免费的中国行政区与世界国家地图记忆助记工具：34 个省级行政区、373 个地级行政区、195 个国家，多种记忆练习方式。" />
+  <meta property="og:description" content="免费的中国行政区与世界国家地图记忆助记工具：34 个省级行政区、373 个地级行政区、194 个国家，多种记忆练习方式。" />
   <meta property="og:url" content="https://mapmemory.cn/" />
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="地图记忆 - 中国行政区和世界国家记忆助手" />
@@ -41,7 +41,7 @@
       "applicationCategory": "EducationalApplication",
       "operatingSystem": "Web",
       "inLanguage": "zh-CN",
-      "description": "免费的中国行政区与世界国家地图记忆助记工具，覆盖 34 个省级行政区、373 个地级行政区与 195 个国家。",
+      "description": "免费的中国行政区与世界国家地图记忆助记工具，覆盖 34 个省级行政区、373 个地级行政区与 194 个国家。",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
       "about": [
         { "@type": "Thing", "name": "中国行政区划" },
@@ -59,7 +59,7 @@
         <p>「地图记忆」是一个免费的中国行政区与世界国家地图记忆助记工具，帮助你在地图上记住中国省市与世界各国。</p>
         <ul>
           <li><strong>中国行政区</strong>：34 个省级行政区、373 个地级行政区（含自治州、地区、盟，以及北京/上海/天津/重庆/香港/澳门/台湾）。</li>
-          <li><strong>世界国家</strong>：195 个答题国家，可按亚洲、欧洲、非洲、北美洲、南美洲、大洋洲逐层下钻，并进一步按东亚、东南亚、南亚、西亚、中亚等次区域练习。</li>
+          <li><strong>世界国家</strong>：194 个答题国家，可按亚洲、欧洲、非洲、北美洲、南美洲、大洋洲逐层下钻，并进一步按东亚、东南亚、南亚、西亚、中亚等次区域练习。</li>
           <li><strong>练习方式</strong>：输入模式（键盘作答）、点击模式（地图上点选）、无尽闯关（限时收集）、熟练度分析（按掌握程度分层着色）。</li>
           <li><strong>目录</strong>：<a href="/china/">中国各省</a> · <a href="/world/">世界各大洲</a></li>
         </ul>
@@ -233,6 +233,8 @@
           <option value="dark">深灰色</option>
         </select>
       </label>
+      <div class="settings-section-title">答题范围</div>
+      <label class="row"><input type="checkbox" id="set-ignore-tiny" /> 忽略面积极小的国家<span class="row-hint" id="set-ignore-tiny-hint"></span></label>
       <div class="card-actions">
         <button id="set-save" class="primary">保存</button>
         <button id="set-cancel" class="ghost">取消</button>

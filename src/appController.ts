@@ -34,6 +34,7 @@ import { api } from './api';
 import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
 import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
+import { applyIgnoreTiny, ensureTinyCountries, ignoredIsos, loadTinyCountries } from './tinyCountries';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
 
@@ -200,8 +201,36 @@ export class AppController {
     };
     void this.introCard.maybeShow();
     this.wireDom();
-    this.applyScopeQuery(); // 落地页深链参数（Q26）：必须在 enter 之前应用
+    void this.initTinyCountrySetting(); // 全局设置：极小国家的清单是异步取的
+    void this.applyScopeQuery(); // 落地页深链参数（Q26）：必须在 enter 之前应用
     this.switchMode('click'); // 默认展示点击模式
+  }
+
+  /**
+   * 把「忽略面积极小的国家」这一全局设置灌进渲染器与出题池。
+   *
+   * 三条路径必须同时生效，否则会出现割裂体验（能出题却点不动 / 灰显却仍在池里）：
+   *   1. 渲染器：极小国家灰显且 `silent`，悬停不高亮、点击无响应；
+   *   2. 出题池：所有模式的 `worldScopedPool()` 都按 `ignoredIsos()` 过滤；
+   *   3. 排行榜范围：**不裁剪**——成绩单如实标注本次范围，排名池仍按全部答题国，
+   *      这样开与不开该设置的用户处在同一张榜上（用户确认的口径）。
+   */
+  private applyTinyCountrySetting() {
+    const on = this.settings.ignoreTinyCountries === true;
+    applyIgnoreTiny(on, loadTinyCountries());
+    this.renderer.setExcludedCountries(ignoredIsos());
+    // 池子变了，当前正在展示的题面/统计需要重算
+    this.current?.refresh();
+  }
+
+  /** 清单是异步取的：启动时就绪后再应用一次，避免首屏开着设置却没生效。 */
+  private async initTinyCountrySetting() {
+    try {
+      await ensureTinyCountries();
+    } catch {
+      /* 清单不可用时按「无极小国家」降级，不阻塞启动 */
+    }
+    this.applyTinyCountrySetting();
   }
 
   /**
@@ -599,13 +628,14 @@ export class AppController {
       if (target?.closest?.('.start-action')) this.syncSegments();
     });
 
-    // 导航栏设置：仅个性化（黑夜模式、边界）
+    // 导航栏设置：个性化（黑夜模式、边界）+ 答题范围（忽略面积极小的国家）
     ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
       openSettings(this.settings, (s) => {
         Object.assign(this.settings, s);
         applyTheme(this.settings.darkMode);
         this.renderer.setDarkMode(this.settings.darkMode);
         this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone);
+        this.applyTinyCountrySetting();
       });
     });
 

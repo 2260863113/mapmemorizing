@@ -270,8 +270,8 @@ interface MemoryState {
       china_provinces.geojson       # 省级 fine 档展开成 GeoJSON（历史文件名）
       china_provinces_coarse.geojson # 省级 ultra 档展开成 GeoJSON（历史文件名）
       hkmac.geojson                 # 港澳放大框无压缩面（广东+香港+澳门，始终不简化）
-      countries.json                # 195 国元数据（含 continent 大洲字段；换源未改动，仍是权威清单）
-      world_v2.topojson             # 世界图：Natural Earth 10m _chn dp12（TopoJSON，244 面 = 195 答题国 + 49 装饰面）
+      countries.json                # 194 国元数据（含 continent 大洲字段；换源未改动，仍是权威清单）
+      world_v2.topojson             # 世界图：Natural Earth 10m _chn dp12（TopoJSON，244 面 = 194 答题国 + 50 装饰面）
       world.geojson                 # 【legacy，不再加载】旧世界图（Surbowl，298KB）；保留为回滚路径
       units.json
   src/
@@ -377,7 +377,7 @@ interface MemoryState {
    - **换档 center 同步（georoam 读 geo 权威中心）**：缩放仍存在水平方向微移的**第二个独立根因**。ECharts 滚轮/捏合缩放以**鼠标为锚点**，缩放时 geo 中心会隐式移动（锚点缩放），但 zoom 事件的 payload 只含 `zoom`/`totalZoom`，**不含 center**（见 `MapDraw.js` 的 zoom dispatch：仅 `{totalZoom, zoom, originX, originY}`）。若 georoam 处理器只靠 payload 里的 `params.center` 同步，`this.center` 会在缩放期间停留在旧值 → 跨换档阈值 `render()` 用旧 center 重建 geo，地图朝缩放锚点方向跳十几像素。修法：georoam 里直接从 geo 坐标系读 ECharts 已更新好的权威 `getCenter()`/`getZoom()`（georoam 事件在 `geoRoam` action 处理完、`updateCenterAndZoom` 已写回 center 之后才触发，故此刻读到的必为缩放后最新值）。实测 pan/zoom/混合三种路径 rc 与 geo 中心 mismatch 恒 0，跨档锚点误差 0px。注意不能用 `chart.getCoordinateSystems()`（其返回的 geo 对象可能滞后），须用 `getModel().getComponent('geo').coordinateSystem`（TS 下 getModel 是私有，需 `as unknown as` 强转）。
 
 8. **世界粒度的大洲范围（六洲，不含南极洲）**：世界粒度下在「世界/省级/市级」按钮**下方**再出一行分段按钮「全世界 | 亚洲 | 欧洲 | 非洲 | 北美 | 南美 | 大洋洲」。
-   - 大洲归属由 `fetch-world-data.mjs` 的静态 `CONTINENT_OF` 表（iso_a3 → AS/EU/AF/NA/SA/OC）写入 `countries.json` 的 `continent` 字段，不引入额外几何数据。跨洲国家按地理教科书口径：俄罗斯/土耳其/塞浦路斯 → 欧洲，高加索三国/哈萨克斯坦 → 亚洲，埃及 → 非洲，巴拿马 → 北美。分布 AF 54 / AS 46 / EU 46 / NA 23 / SA 12 / OC 14 = 195。
+   - 大洲归属由 `fetch-world-data.mjs` 的静态 `CONTINENT_OF` 表（iso_a3 → AS/EU/AF/NA/SA/OC）写入 `countries.json` 的 `continent` 字段，不引入额外几何数据。跨洲国家按地理教科书口径：俄罗斯/土耳其/塞浦路斯 → 欧洲，高加索三国/哈萨克斯坦 → 亚洲，埃及 → 非洲，巴拿马 → 北美。分布 AF 54 / AS 48 / EU 43 / NA 23 / SA 12 / OC 14 = 194（土耳其/塞浦路斯按次区域口径归亚洲，见 ADR 0004）。
    - 选某洲后：出题池缩到该洲国家（`worldScopedPool`），地图只渲染该洲面（其他洲隐藏，`worldFeatureVisible` 同时过滤 region/事件/标签），并聚焦该洲。
    - **聚焦框为手工标定**（`CONTINENT_VIEWS`），不按成员国 bbox 自动计算：跨经线 180° 的海外领地（俄楚科奇、美阿留申、法属波利尼西亚）会让 bbox 撑成 360°，且俄罗斯按惯例归欧洲而主体横跨 20°E–180°E，「包含全部成员」必然把欧洲拉宽到 200°+。标定值确定可测；框外领地仍可拖动到达（roam 已开）。
    - 大洲用**独立排行榜哨兵** `__continent_<ID>__`（如 `__continent_AS__`，榜名「亚洲榜」），但**熟练度与世界数据集共享**（已答国家在大洲/全世界两种范围下都是绿色）。进度持久化也用独立键（`…:world-continent-AS`）。

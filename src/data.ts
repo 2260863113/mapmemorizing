@@ -38,7 +38,7 @@ export async function loadData(): Promise<AppData> {
   const [
     meta, ultraTopo, proTopo, fineTopo, plusTopo, losslessTopo,
     provUltraTopo, provProTopo, provFineTopo, provPlusTopo, provRawTopo,
-    hkmacGeo, worldMeta, worldGeo, subMeta,
+    hkmacGeo, worldMeta, worldGeo, subMeta, areaMeta,
   ] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units_ultra.json'),
@@ -55,6 +55,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<{ countries: CountryMeta[] }>('data/countries.json'),
     fetchJson<Topology>('data/world_v2.topojson'),
     fetchJson<{ subregions: AppData['subregions']; byIso: AppData['isoSubregion'] }>('data/subregions.json'),
+    fetchJson<{ area: AppData['countryArea'] }>('data/world_area.json'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
@@ -92,6 +93,7 @@ export async function loadData(): Promise<AppData> {
     worldGeoJson: topoWorldToGeoJson(worldGeo),
     subregions: subMeta.subregions,
     isoSubregion: subMeta.byIso,
+    countryArea: areaMeta.area,
   };
   return cache;
 }

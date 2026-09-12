@@ -1,4 +1,6 @@
-// 生成 public/data/subregions.json：195 个答题国 → 次区域（方位式粗分，不做北亚）。
+// 生成 public/data/subregions.json：答题国 → 次区域（方位式粗分，不做北亚）。
+//
+// 一并产出 public/data/tiny_countries.json（「忽略面积极小的国家」清单）。
 //
 // 口径（见 docs/adr/0004，用户逐条确认）：
 //   1. 方位式粗分，不做「北亚」——俄罗斯整体归东欧（避免切割国界几何）。
@@ -10,11 +12,13 @@
 //      并同步修正 scripts/fetch-world-data.mjs 的 CONTINENT_OF 表，保证管线可重跑。
 //
 // 断言（任一失败即中止，不产出文件）：
-//   A. 195 个 iso 恰好全覆盖，无遗漏、无多余、无重复。
+//   A. 答题国的 iso 恰好全覆盖，无遗漏、无多余、无重复。
 //   B. 每个次区域非空。
 //   C. 每个大洲内「其次区域成员并集」恰好等于该大洲的全部国家（次区域 ⊆ 大洲）。
-//   D. 洲际成员数守恒（50 洲前缀与 countries.json 的 continent 分布一致）。
+//   D. 洲际成员数守恒（与 countries.json 的 continent 分布一致）。
 //   E. 次区域总数与元数据条数一致。
+//   F. 极小国家清单均为答题国且含阈值锚点。
+//   G. 极小国家清单严格小于答题池的 1/3。
 //
 // 用法：node scripts/build-subregions.mjs
 
@@ -60,7 +64,7 @@ const SUBREGIONS = [
   { id: 'POL', name: '波利尼西亚', continent: 'OC' },
 ];
 
-/** iso_a3 → 次区域 id（195 条，逐条人工审定）。 */
+/** iso_a3 → 次区域 id（逐条人工审定）。 */
 const BY_ISO = {
   // ===== 亚洲 AS（48：含土耳其/塞浦路斯，见顶部口径 4）=====
   // 东亚 5
@@ -91,9 +95,9 @@ const BY_ISO = {
   HUN: 'CEU', SVN: 'CEU', LIE: 'CEU',
   // 东欧 6（俄罗斯整体归东欧，不拆北亚）
   RUS: 'EEU', UKR: 'EEU', BLR: 'EEU', MDA: 'EEU', ROU: 'EEU', BGR: 'EEU',
-  // 南欧 14
+  // 南欧 13
   ESP: 'SEU', PRT: 'SEU', ITA: 'SEU', GRC: 'SEU', MLT: 'SEU', AND: 'SEU',
-  SMR: 'SEU', VAT: 'SEU', SRB: 'SEU', HRV: 'SEU', BIH: 'SEU', MNE: 'SEU',
+  SMR: 'SEU', SRB: 'SEU', HRV: 'SEU', BIH: 'SEU', MNE: 'SEU',
   MKD: 'SEU', ALB: 'SEU',
 
   // ===== 非洲 AF（54）=====
@@ -164,7 +168,7 @@ const missing = [...isoSet].filter((iso) => !(iso in BY_ISO));
 if (missing.length) fail(`BY_ISO 遗漏 ${missing.length} 个答题国：` + missing.join(','));
 const extra = mapped.filter((iso) => !isoSet.has(iso));
 if (extra.length) fail('BY_ISO 含非答题国：' + extra.join(','));
-if (mapped.length !== 195) fail(`BY_ISO 应为 195 条，实际 ${mapped.length}`);
+if (mapped.length !== isoSet.size) fail(`BY_ISO 应为 ${isoSet.size} 条，实际 ${mapped.length}`);
 
 // 断言 A2：次区域 id 均已在元数据中声明
 for (const iso of mapped) {
@@ -209,6 +213,59 @@ if (total !== targetCount) fail(`洲际总数 ${total} ≠ ${targetCount}`);
 // 断言 E：元数据条数
 if (SUBREGIONS.length !== counts.size) fail('次区域元数据条数与映射不一致');
 
+// ==================== 极小国家清单（「忽略面积极小的国家」设置用）====================
+//
+// 判定线：面积 ≤ 马绍尔群岛（MHL）。这条线落在天然的尺寸断崖上——下一个国家
+// 科摩罗的面积是它的 1.7 倍，之后基本连续放大，所以阈值取多少都不会把「大国家」
+// 误判进来。清单不硬编码，而是从 world_area.json 现算，避免与几何数据脱节；
+// 硬编码的只有阈值锚点 MHL 这一个 iso。
+const TINY_ANCHOR_ISO = 'MHL';
+const AREA_FILE = path.join(ROOT, 'public', 'data', 'world_area.json');
+const TINY_OUT = path.join(ROOT, 'public', 'data', 'tiny_countries.json');
+
+let tinyIsos = [];
+if (!fs.existsSync(AREA_FILE)) {
+  // 面积表由联网的数据管线产出（npm run build 不跑它）。缺失时只警告不失败：
+  // 前端拿到空清单等价于「没有极小国家」，功能降级但不阻塞构建。
+  console.warn(`⚠ 缺 ${path.relative(ROOT, AREA_FILE)}，跳过极小国家清单生成（该设置将无效果）`);
+} else {
+  const areaRaw = JSON.parse(fs.readFileSync(AREA_FILE, 'utf8'));
+  const area = areaRaw.area ?? {};
+  const anchor = area[TINY_ANCHOR_ISO];
+  if (!(anchor > 0)) fail(`面积表缺锚点 ${TINY_ANCHOR_ISO}（无法确定「极小」判定线）`);
+  tinyIsos = Object.entries(area)
+    .filter(([iso, a]) => isoSet.has(iso) && a > 0 && a <= anchor)
+    .map(([iso]) => iso)
+    .sort();
+
+  // 断言 F：清单必须都是答题国，且锚点本身在清单内
+  const strayTiny = tinyIsos.filter((iso) => !isoSet.has(iso));
+  if (strayTiny.length) fail(`极小国家清单含非答题国：${strayTiny.join(',')}`);
+  if (!tinyIsos.includes(TINY_ANCHOR_ISO)) fail(`极小国家清单未含锚点 ${TINY_ANCHOR_ISO}（比较口径有误）`);
+
+  // 断言 G：清单必须严格小于答题池的三分之一（防止面积表口径错导致「全都极小」）
+  if (tinyIsos.length > Math.floor(isoSet.size / 3)) {
+    fail(`极小国家 ${tinyIsos.length} 个，超过答题池的 1/3（面积口径可能出错）`);
+  }
+
+  fs.writeFileSync(
+    TINY_OUT,
+    JSON.stringify(
+      {
+        threshold: { anchorIso: TINY_ANCHOR_ISO, anchorArea: anchor, unit: 'deg^2' },
+        isos: tinyIsos,
+        sourceNote:
+          `由 scripts/build-subregions.mjs 依据 world_area.json 生成：面积 ≤ ${TINY_ANCHOR_ISO}（${anchor} 度²）的答题国。` +
+          '开启「忽略面积极小的国家」后，这些国家不出题、不参与排行榜、地图上灰显且完全无交互。',
+      },
+      null,
+      0,
+    ) + '\n',
+    'utf8',
+  );
+  console.log(`✓ 写出 ${path.relative(ROOT, TINY_OUT)}：${tinyIsos.length} 个极小国家（${tinyIsos.join(',')}）`);
+}
+
 // ==================== 产出 ====================
 
 const out = {
@@ -216,7 +273,7 @@ const out = {
   byIso: Object.fromEntries(mapped.slice().sort().map((iso) => [iso, BY_ISO[iso]])),
   sourceNote:
     '方位式粗分（不做北亚，俄罗斯整体归东欧）；波罗的海三国归北欧；高加索三国/塞浦路斯/土耳其归西亚。' +
-    '由 scripts/build-subregions.mjs 生成，195 条全覆盖并带「次区域 ⊆ 大洲」断言（见 docs/adr/0004）。',
+    '由 scripts/build-subregions.mjs 生成，全覆盖并带「次区域 ⊆ 大洲」断言（见 docs/adr/0004）。',
 };
 fs.writeFileSync(OUT, JSON.stringify(out, null, 0) + '\n', 'utf8');
 console.log(`✓ 写出 ${path.relative(ROOT, OUT)}：${SUBREGIONS.length} 个次区域，${mapped.length} 条映射`);

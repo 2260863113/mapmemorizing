@@ -256,6 +256,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cityBoundaryTone: 'light',
   provinceBoundaryTone: 'dark',
   darkMode: false,
+  ignoreTinyCountries: false,
 };
 export function loadSettings(): Settings {
   try {
@@ -267,6 +268,8 @@ export function loadSettings(): Settings {
         ...parsed,
         cityBoundaryTone: boundaryToneOf(parsed.cityBoundaryTone, DEFAULT_SETTINGS.cityBoundaryTone),
         provinceBoundaryTone: boundaryToneOf(parsed.provinceBoundaryTone, DEFAULT_SETTINGS.provinceBoundaryTone),
+        // 旧档没有该字段：显式归一为布尔，避免 undefined 透传到开关与判定
+        ignoreTinyCountries: parsed.ignoreTinyCountries === true,
       };
     }
   } catch {

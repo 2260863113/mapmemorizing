@@ -1,16 +1,24 @@
 import { $ } from './dom';
 import type { BoundaryTone, Settings } from '../types';
 import { saveSettings } from '../store';
+import { loadTinyCountries } from '../tinyCountries';
+import { t } from '../i18n';
 
-/** 导航栏设置面板：仅保留个性化设置（黑夜模式、地级市/省级边界）。 */
+/** 导航栏设置面板：个性化设置 + 答题范围。 */
 export function openSettings(current: Settings, onSave: (s: Settings) => void) {
   const panel = $('settings-panel');
   const darkMode = $('set-dark-mode') as HTMLInputElement;
   const cityBoundaryTone = $('set-city-boundary-tone') as HTMLSelectElement;
   const provinceBoundaryTone = $('set-province-boundary-tone') as HTMLSelectElement;
+  const ignoreTiny = $('set-ignore-tiny') as HTMLInputElement;
   darkMode.checked = current.darkMode;
   cityBoundaryTone.value = current.cityBoundaryTone;
   provinceBoundaryTone.value = current.provinceBoundaryTone;
+  ignoreTiny.checked = current.ignoreTinyCountries;
+  // 清单在数据加载时已就绪（同步读缓存）；数量写进标签，让用户知道开关影响范围
+  const tiny = loadTinyCountries();
+  const hint = $('set-ignore-tiny-hint');
+  hint.textContent = tiny.length ? t('settings.ignoreTinyHint', { count: tiny.length }) : t('settings.ignoreTinyUnavailable');
   panel.classList.remove('hidden');
 
   const close = () => panel.classList.add('hidden');
@@ -20,6 +28,7 @@ export function openSettings(current: Settings, onSave: (s: Settings) => void) {
       cityBoundaryTone: boundaryToneOf(cityBoundaryTone.value, current.cityBoundaryTone),
       provinceBoundaryTone: boundaryToneOf(provinceBoundaryTone.value, current.provinceBoundaryTone),
       darkMode: darkMode.checked,
+      ignoreTinyCountries: ignoreTiny.checked,
     };
     saveSettings(s);
     onSave(s);

@@ -20,6 +20,14 @@ import {
 } from '../province';
 import { countryUnits } from '../world';
 import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
+import { ignoredIsos } from '../tinyCountries';
+
+/**
+ * 错误回滚的红显时长（毫秒）。
+ * 700ms 在实测中「还没看清就没了」，故延长到 1.5s（用户要求）。
+ * 导出供运行时探针断言，避免探针复制一份常量后与实现漂移。
+ */
+export const ROLLBACK_RED_MS = 1500;
 
 /**
  * 地图测验模式共享基类（输入模式 / 点击模式）：
@@ -414,21 +422,26 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.granularity === 'city') saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
-  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 195 国或某洲国家；否则地级单位）。 */
+  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 答题国；否则地级单位）。 */
   protected activePool(): Unit[] {
     if (this.isProvinceNation()) return this.provincePool;
     if (this.isWorldNation()) return this.worldScopedPool();
     return scopedUnits(this.ctx.data, this.scopeProvince);
   }
 
-  /** 世界池按大洲/次区域范围过滤（两级都为 null 时返回全部 195 国）。 */
+  /**
+   * 世界池按大洲/次区域范围过滤（两级都为 null 时返回全部答题国），
+   * 并剔除「忽略面积极小的国家」设置排除的国家（该设置只影响练习，不影响排行榜范围）。
+   */
   protected worldScopedPool(): Unit[] {
-    if (!this.worldContinent) return this.worldPool;
+    const ignored = ignoredIsos();
+    const base = ignored.size ? this.worldPool.filter((u) => !ignored.has(u.adcode)) : this.worldPool;
+    if (!this.worldContinent) return base;
     const isoToContinent = new Map(this.ctx.data.countries.map((c) => [c.iso, c.continent]));
     if (this.worldSubregion) {
-      return this.worldPool.filter((u) => subregionOfIso(this.ctx.data, u.adcode) === this.worldSubregion);
+      return base.filter((u) => subregionOfIso(this.ctx.data, u.adcode) === this.worldSubregion);
     }
-    return this.worldPool.filter((u) => isoToContinent.get(u.adcode) === this.worldContinent);
+    return base.filter((u) => isoToContinent.get(u.adcode) === this.worldContinent);
   }
 
   /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池或地级池）。 */
@@ -631,31 +644,35 @@ export abstract class MapQuizMode extends BaseMode {
     if (!q) return;
     const name = this.currentUnitOf(q)?.name ?? q;
 
-    // 错误回滚：第一次答错计入 fail/熟练度/进度红格，随后短暂显示红色并撤回，重答同一题直到答对
+    // 错误回滚：答错即计入 fail/熟练度/进度红格（仅第一次计入），随后短暂显示红色并撤回，
+    // 重答同一题直到答对。**每次答错都标红**（不只是第一次），红显时长 ROLLBACK_RED_MS。
     if (this.errorRollback && !correct) {
       const firstWrong = !this.rollbackCounted.has(q);
       if (firstWrong) {
         this.rollbackCounted.add(q);
         this.recordPractice(q, false);
-        this.red.add(q);
         this.fail += 1;
-        this.results.push('red');
+        this.results.push('red'); // 永久进度：只有第一次答错在进度条上留红格
       }
+      // 标红与计分解耦：无论第几次答错，当前题都要亮红（用户要求「每次都要标红」）。
+      // this.red 在这里只承担**临时高亮**，撤回时统一清掉；永久红格由上面的 results 记录。
+      this.red.add(q);
       this.question = null;
       this.ctx.toast(this.wrongToast(name, timedOut));
+      this.panToUnit(q); // 答错：镜头跟随到正确答案位置（缩放不变）
       this.persist();
-      // 先显示红色标记，短暂停留后撤回，恢复当前题重新作答
+      // 先显示红色标记，停留后撤回，恢复当前题重新作答
       this.refresh();
       this.rollbacking = true;
       if (this.rollbackTimer !== null) window.clearTimeout(this.rollbackTimer);
       this.rollbackTimer = window.setTimeout(() => {
         this.rollbackTimer = null;
         this.rollbacking = false;
-        this.red.delete(q);
+        this.red.delete(q); // 临时高亮结束（进度红格已记在 results 里，不受影响）
         this.question = q;
         this.refresh();
         this.onRollbackRestored();
-      }, 700);
+      }, ROLLBACK_RED_MS);
       return;
     }
 
@@ -675,6 +692,7 @@ export abstract class MapQuizMode extends BaseMode {
       this.fail += 1;
       this.results.push('red');
       this.ctx.toast(this.wrongToast(name, timedOut));
+      this.panToUnit(q); // 答错：镜头跟随到正确答案位置（缩放不变）
     }
     this.persist();
     const pool = this.unvisited();
@@ -686,8 +704,20 @@ export abstract class MapQuizMode extends BaseMode {
     this.ask(this.nextUnit(pool));
   }
 
-  /** 熟练度记录：省级全国 → 省级熟练度；世界全国 → 国家熟练度；市级 → 地级熟练度（完全隔离）。 */
-  protected recordPractice(adcode: string, correct: boolean) {
+  /**
+   * 答错后把镜头跟随到**正确答案**的位置，但**不改变缩放**。
+   *
+   * 与世界档的「自动跟随」区分开：自动跟随是出题时按面积决定缩放（越小的国家放得越大），
+   * 这里是答错后的纠错反馈——只平移，保留用户当前的缩放级别，避免视角被强行拉走。
+   * 省级全国（虚拟省单位）没有真实几何，跳过。
+   */
+  protected panToUnit(adcode: string) {
+    if (this.isProvinceNation()) return;
+    if (this.isWorldNation()) this.ctx.renderer.panWorldCountry(adcode);
+    else this.ctx.renderer.panUnit(adcode);
+  }
+
+  /** 熟练度记录：省级全国 → 省级熟练度；世界全国 → 国家熟练度；市级 → 地级熟练度（完全隔离）。 */  protected recordPractice(adcode: string, correct: boolean) {
     if (this.isProvinceNation()) this.ctx.store.recordProvinceAnswer(adcode, correct);
     else if (this.isWorldNation()) this.ctx.store.recordWorldAnswer(adcode, correct);
     else this.ctx.store.recordAnswer(adcode, correct);

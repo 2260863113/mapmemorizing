@@ -1494,6 +1494,12 @@ body.theme-dark .leaderboard-row {
   font-size: 12px;
   font-weight: 700;
 }
+/* 设置项后面的补充说明（如「忽略面积极小的国家」影响多少国）：弱化到不与主标签争视线 */
+.card .row-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
 .card-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 #summary-body { font-size: 18px; text-align: center; line-height: 1.8; }
 .help-text { font-size: 14px; line-height: 1.8; color: var(--control-text); }

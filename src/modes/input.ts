@@ -139,8 +139,12 @@ export class InputMode extends MapQuizMode {
   ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
-    // 省级全国/世界全国：保持全国视野，不自动聚焦到某国/某省（市级才跟随聚焦）
-    if (this.autoFollow && !this.isProvinceNation() && !this.isWorldNation()) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
+    // 省级全国保持全国视野不聚焦；世界全国与世界市级都按面积决定缩放（越小的国家放得越大）；
+    // 其余（中国地级）用固定的 SELF_FOLLOW_ZOOM。
+    if (this.autoFollow) {
+      if (this.isWorldNation()) this.ctx.renderer.focusWorldCountry(u.adcode);
+      else if (!this.isProvinceNation()) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
+    }
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
