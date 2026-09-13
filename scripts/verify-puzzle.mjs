@@ -1,5 +1,5 @@
 /**
- * 拼图模式（puzzle）真机验收：两阶段（选范围 / 拼图盘面）× 三个粒度（世界/省级/市级）。
+ * 拼图模式（puzzle）真机验收：两阶段（选范围 / 拼图盘面）× 三个粒度（世界/省级/市级），共 49 项。
  *
  * 用法：npm run build && node scripts/verify-puzzle.mjs
  * 产物：docs/shots/puzzle-*.png
@@ -274,6 +274,28 @@ try {
   const twGroup = afterFar.groups.find((g) => g.pieces.includes('710000'));
   check('台湾与北京不相邻 → 即使放在一起也不吸合（仍是独立单片组）',
     !!twGroup && twGroup.pieces.length === 1 && !twGroup.pieces.includes('110000'), afterFar.groups.map((g) => g.pieces));
+
+  // ==================== 面积层级：小的压在大的之上 ====================
+  /** 画布上的 DOM 顺序 = 绘制顺序（后面的在上面），断言面积从大到小。 */
+  const order = await json(`(function(){
+    var wraps = document.querySelectorAll('#puzzle g.puzzle-piece-wrap');
+    var areas = Array.prototype.map.call(wraps, function(w){ return Number(w.dataset.area); });
+    var sorted = true;
+    for (var i = 1; i < areas.length; i++) if (areas[i] > areas[i - 1] + 1e-9) sorted = false;
+    var idx = function(a){ return Array.prototype.findIndex.call(wraps, function(w){ return w.dataset.adcode === a; }); };
+    return {
+      count: areas.length,
+      areas: areas.slice(0, 6),
+      sorted: sorted,
+      // 北京（面积小）必须排在河北（面积大）之后 —— 后画 = 压在河北的环里
+      bjIndex: idx('110000'),
+      hbIndex: idx('130000'),
+    };
+  })()`);
+  check('碎片的上下覆盖按面积排：小的压在大的之上（DOM 里面积从大到小）',
+    order.count >= 4 && order.sorted === true, order);
+  check('北京（面积小）画在河北（面积大）之后 → 压在河北的环里',
+    order.bjIndex > order.hbIndex && order.hbIndex >= 0, order);
   await shot('puzzle-3-snapped.png');
 
   // ==================== 拖动中「可吸附」绿色提示（两种难度都要有） ====================

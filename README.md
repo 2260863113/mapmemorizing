@@ -79,7 +79,7 @@ npm run build:data
 npm run build
 node scripts/verify-round2.mjs     # 38 项：世界跟随缩放、答错跟随、顺序出题、侧栏收起等
 node scripts/verify-round3.mjs     # 38 项：主题按钮、设置面板/开关样式、自由模式粒度、标签默认显示
-node scripts/verify-puzzle.mjs     # 47 项：拼图两阶段 × 三粒度的选范围/下钻/空白返回/开始清空/拖拽/磁吸/难度/暂停/获胜/重置（真实鼠标与点击事件）
+node scripts/verify-puzzle.mjs     # 49 项：拼图两阶段 × 三粒度的选范围/下钻/空白返回/开始清空/面积层级/拖拽/磁吸/难度/暂停/获胜/重置（真实鼠标与点击事件）
 node scripts/shot-follow-clamp.mjs # 跟随钳制的 9 张边界样例截图
 node scripts/shot-round2.mjs       # 出验收截图到 docs/shots/
 ```

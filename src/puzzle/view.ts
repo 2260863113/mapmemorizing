@@ -221,6 +221,8 @@ export class PuzzleView {
       wrap.setAttribute('class', 'puzzle-piece-wrap');
       wrap.setAttribute('data-adcode', row.adcode);
       wrap.setAttribute('data-group', String(row.groupId));
+      // 面积写进 DOM：上下覆盖关系是用户可见的规则，验收脚本据此断言全局排序
+      wrap.setAttribute('data-area', row.area.toFixed(6));
       wrap.setAttribute('transform', `translate(${row.dx.toFixed(2)} ${row.dy.toFixed(2)})`);
       const path = this.paths.get(row.adcode);
       if (path) {
