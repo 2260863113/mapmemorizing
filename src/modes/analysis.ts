@@ -141,14 +141,15 @@ export class AnalysisMode extends BaseMode {
   refresh() {
     if (this.granularity === 'world') {
       // 世界熟练度分析：世界地图，七档着色（同一套分界线），
-      // 不常显国名标签（放大过阈值后经渲染器显示）；悬停国家经 onUnitHover 显示卡片；
-      // 大洲/次区域范围非空时聚焦并只渲染该范围（Q21）。
+      // 国名标签**默认常显**（worldLabelZoomThreshold=0 关掉「放大到 2.2x 才显示」的阈值）；
+      // 悬停国家经 onUnitHover 显示卡片；大洲/次区域范围非空时聚焦并只渲染该范围（Q21）。
       this.ctx.renderer.setWorldMode(true, this.worldContinent, this.worldSubregion);
       this.ctx.renderer.render({
         colorOf: (iso) => worldColor(this.ctx.store, iso),
         disableTooltip: true,
         hideLabels: this.hideLabels,
         worldShowAllLabels: !this.hideLabels,
+        worldLabelZoomThreshold: 0,
       });
       // 侧栏聚合仍统计全世界（国家熟练度是共享分区），只加一行「地图范围」说明（Q29）
       this.ctx.stats.refreshWorldLevel(this.worldScopeLabel());
@@ -156,7 +157,7 @@ export class AnalysisMode extends BaseMode {
     }
     if (this.granularity === 'province') {
       // 省级熟练度分析：省级地图（无港澳放大框），七档着色（糟糕/较差/陌生/一般/初识/熟练/炉火纯青），
-      // 不常显省名标签；悬停省面经 onUnitHover 显示卡片；双击省可下钻其地级
+      // 省名标签默认常显；悬停省面经 onUnitHover 显示卡片；双击省可下钻其地级
       this.ctx.renderer.setProvinceMode(true, { inset: false, allowDrill: true });
       if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
       this.ctx.renderer.render({
@@ -168,14 +169,14 @@ export class AnalysisMode extends BaseMode {
       this.ctx.stats.refreshProvinceLevel();
       return;
     }
-    // 地级熟练度分析（现状）：地级地图，按地级单位熟练度着色
+    // 地级熟练度分析（现状）：地级地图，按地级单位熟练度着色 + 地名标签默认常显（阈值 0）
     this.ctx.renderer.setProvinceMode(false, { inset: false });
     this.ctx.renderer.render({
       colorOf: (adcode) => scoreColor(this.ctx.store.getPractice(adcode).score),
       disableTooltip: true,
       hideLabels: this.hideLabels,
       showAllLabels: !this.hideLabels,
-      labelZoomThreshold: this.hideLabels ? Number.POSITIVE_INFINITY : undefined,
+      labelZoomThreshold: 0,
     });
     this.ctx.stats.refresh(this.ctx.renderer.currentProvince());
   }

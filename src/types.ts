@@ -211,4 +211,6 @@ export interface RenderState {
   showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）
   worldLabel?: (iso: string) => ProvinceLabel | null; // 世界练习：已作答国家的国名标签（null = 不显示）
   worldShowAllLabels?: boolean; // 世界地图放大后常显全部国名标签（熟练度分析世界档）
+  /** 世界国名标签的显示倍率阈值；省略时用渲染器默认（2.2）。自由模式/熟练度分析传 0 = 任何倍率都显示。 */
+  worldLabelZoomThreshold?: number;
 }

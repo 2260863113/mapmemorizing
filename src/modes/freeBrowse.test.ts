@@ -38,7 +38,7 @@ function makeCtx() {
 }
 
 describe('FreeBrowseMode', () => {
-  it('默认走市级档：地级地图 + 全部地名标签 + 不下钻', () => {
+  it('默认走市级档：地级地图 + 全部地名标签默认常显（阈值 0）+ 不下钻', () => {
     const { ctx, calls, states } = makeCtx();
     const mode = new FreeBrowseMode(ctx);
     mode.enter();
@@ -46,6 +46,8 @@ describe('FreeBrowseMode', () => {
     expect(calls).toContain('province:false:false:def');
     expect(states.at(-1)?.showAllLabels).toBe(true);
     expect(states.at(-1)?.hideLabels).toBe(false);
+    // 阈值 0：任何倍率（含默认 1.00x 全景）都显示标签，不再要求放大
+    expect(states.at(-1)?.labelZoomThreshold).toBe(0);
   });
 
   it('切到省级档：省级地图、不显示港澳放大框、不允许下钻，省名标签常显', () => {
@@ -57,13 +59,14 @@ describe('FreeBrowseMode', () => {
     expect(states.at(-1)?.showAllProvinceLabels).toBe(true);
   });
 
-  it('切到世界档：世界地图（全世界范围），国名标签常显', () => {
+  it('切到世界档：世界地图（全世界范围），国名标签默认常显（阈值 0）', () => {
     const { ctx, calls, states } = makeCtx();
     const mode = new FreeBrowseMode(ctx);
     mode.setGranularity('world');
     expect(mode.getGranularity()).toBe('world');
     expect(calls).toContain('world:true:-:-');
     expect(states.at(-1)?.worldShowAllLabels).toBe(true);
+    expect(states.at(-1)?.worldLabelZoomThreshold).toBe(0);
   });
 
   it('双击不下钻', () => {

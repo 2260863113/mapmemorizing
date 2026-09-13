@@ -79,12 +79,14 @@ export class FreeBrowseMode extends BaseMode {
 
   refresh() {
     if (this.granularity === 'world') {
-      // 世界档：世界地图（无放大框、无下钻），全部国家灰底 + 国名标签（放大到阈值后显示）
+      // 世界档：世界地图（无放大框、无下钻），全部国家灰底 + 国名标签**默认常显**
+      // （worldLabelZoomThreshold=0 关掉「放大到 2.2x 才显示」的阈值）
       this.ctx.renderer.setWorldMode(true, null, null);
       this.ctx.renderer.render({
         colorOf: () => 'gray',
         hideLabels: this.hideLabels,
         worldShowAllLabels: !this.hideLabels,
+        worldLabelZoomThreshold: 0,
         disableTooltip: true,
       });
       return;
@@ -101,13 +103,13 @@ export class FreeBrowseMode extends BaseMode {
       });
       return;
     }
-    // 市级档（默认）：地级地图，全部地级市灰底 + 地名标签
+    // 市级档（默认）：地级地图，全部地级市灰底 + 地名标签**默认常显**（阈值 0）
     this.ctx.renderer.setProvinceMode(false, { inset: false });
     this.ctx.renderer.render({
       colorOf: () => 'gray',
       hideLabels: this.hideLabels,
       showAllLabels: !this.hideLabels,
-      labelZoomThreshold: 1,
+      labelZoomThreshold: 0,
       disableTooltip: true,
     });
   }

@@ -6,7 +6,9 @@
  *   3. 自由模式沿用「世界/省级/市级」但不支持下钻
  *   4. 全局设置可调「世界边界」
  *   5. 黑夜/白天模式按钮位于全局「设置」左侧
- *   6. 按钮为 DSH 胶囊风格；设置行文字左对齐、控件右对齐
+ *   6. 按钮样式已回滚为原样；只有设置界面的开关改成 DSH 设置页样式
+ *      （暗主题：关=左侧白点、开=全白；明主题正好相反）
+ *   7. 自由模式与熟练度分析的地图**默认显示地图标签**（含世界全景，阈值 0）
  *
  * 用法：npm run build && node scripts/verify-round3.mjs
  */
@@ -93,17 +95,22 @@ try {
   })`));
   check('点击后进入黑夜模式并持久化，按钮文案改为「白天模式」', dark.bodyDark === true && dark.stored === true && dark.label === '白天模式', dark);
 
-  // ---------------- 需求 6：顶栏/浮层按钮为 DSH 胶囊 ----------------
+  // ---------------- 按钮样式已回滚（恢复原样式，不留胶囊痕迹） ----------------
   const style = JSON.parse(await ev(`JSON.stringify((function(){
-    var cs = function(sel){ var e = document.querySelector(sel); if(!e) return null; var s = getComputedStyle(e); return { h: s.height, r: s.borderRadius, pad: s.padding, font: s.fontSize, border: s.borderTopWidth + ' ' + s.borderTopStyle, weight: s.fontWeight }; };
-    return { settings: cs('#btn-settings'), tab: cs('#mode-tabs button'), action: cs('.mode-action'), seg: cs('.mode-segmented button'), primary: cs('#summary-restart') };
+    var cs = function(sel){ var e = document.querySelector(sel); if(!e) return null; var s = getComputedStyle(e); return { h: s.height, r: s.borderTopLeftRadius, pad: s.padding, font: s.fontSize, borderW: s.borderTopWidth, borderS: s.borderTopStyle, bg: s.backgroundColor, bgImage: s.backgroundImage.slice(0, 40), weight: s.fontWeight }; };
+    // --accent 随主题变化（明 #10b981 / 暗 #34d399），换算成 rgb 便于比对
+    var acc = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+    var hex = /^#([0-9a-f]{6})$/i.exec(acc);
+    var accentRgb = hex ? 'rgb(' + [1,3,5].map(function(i){ return parseInt(hex[1].slice(i-1, i+1), 16); }).join(', ') + ')' : acc;
+    return { accentRgb: accentRgb, settings: cs('#btn-settings'), tab: cs('#mode-tabs button'), action: cs('.mode-action'), seg: cs('.mode-segmented button'), segActive: cs('.mode-segmented button.active'), primary: cs('#summary-restart'), select: cs('#set-city-boundary-tone') };
   })())`));
-  const capsule = (s) => s && parseFloat(s.r) * 2 >= parseFloat(s.h) - 1;
-  check('顶栏按钮为无边框胶囊（圆角=高/2）', capsule(style.settings) && style.settings.border.startsWith('0px'), style.settings);
-  check('模式页签为无边框胶囊', capsule(style.tab) && style.tab.border.startsWith('0px'), style.tab);
-  check('地图浮层按钮（说明/暂停等）为无边框胶囊', capsule(style.action) && style.action.border.startsWith('0px'), style.action);
-  check('分段按钮内项为胶囊', capsule(style.seg), style.seg);
-  check('主按钮为 36 高 / 18 圆角胶囊', style.primary && style.primary.h === '36px' && style.primary.r === '18px', style.primary);
+  const radius8 = (s) => s && s.r === '8px';
+  check('顶栏/浮层按钮恢复原有 8px 圆角与 1px 描边（不再是胶囊）', radius8(style.settings) && radius8(style.action) && style.settings.borderW === '1px' && style.action.borderW === '1px', { settings: style.settings, action: style.action });
+  check('模式页签恢复原有 8px 圆角 + 1px 描边', radius8(style.tab) && style.tab.borderW === '1px', style.tab);
+  check('分段按钮恢复原容器（小圆角，非胶囊组）', style.seg && parseFloat(style.seg.r) <= 10, style.seg);
+  check('分段选中项恢复原深色填充（渐变，非浅色胶囊）', style.segActive && style.segActive.bgImage.indexOf('gradient') >= 0, style.segActive);
+  check('主按钮恢复原绿色实心（--accent）', style.primary && style.primary.bg === style.accentRgb, { primary: style.primary?.bg, accent: style.accentRgb });
+  check('下拉框恢复原有 8px 圆角描边样式', radius8(style.select) && style.select.borderW === '1px', style.select);
 
   // ---------------- 需求 4 + 6：全局设置面板 ----------------
   await ev(`(() => { document.getElementById('btn-settings').click(); return true })()`);
@@ -130,6 +137,38 @@ try {
   check('黑夜模式开关已从设置面板移出（改由顶栏按钮控制）', rows.darkToggleGone, rows.darkToggleGone);
   const alignOk = rows.rows.length > 0 && rows.rows.every((r) => r.textLeftAligned && r.controlRightAligned && r.controlRightOfText);
   check('设置行：文字左对齐、控件右对齐且位于文字右侧', alignOk, rows.rows);
+
+  // ---------------- 开关：DSH 设置页样式（暗主题） ----------------
+  const switchStyle = () => ev(`JSON.stringify((function(){
+    var el = document.getElementById('set-ignore-tiny');
+    var s = getComputedStyle(el);
+    var knob = getComputedStyle(el, '::before');
+    return {
+      checked: el.checked,
+      w: s.width, h: s.height, radius: s.borderTopLeftRadius, pad: s.padding, borderW: s.borderTopWidth,
+      track: s.backgroundColor,
+      knobW: knob.width, knobH: knob.height, knobRadius: knob.borderTopLeftRadius, knobBg: knob.backgroundColor, knobTransform: knob.transform
+    };
+  })())`).then(JSON.parse);
+
+  const swOffDark = await switchStyle();
+  check('开关几何对齐 DSH（36×20 / 圆角 10 / 2px 内边距 / 16px 圆形滑块 / 无边框）',
+    swOffDark.w === '36px' && swOffDark.h === '20px' && swOffDark.radius === '10px' && swOffDark.pad === '2px'
+      && swOffDark.borderW === '0px' && swOffDark.knobW === '16px' && swOffDark.knobH === '16px' && swOffDark.knobRadius === '50%',
+    swOffDark);
+  check('黑夜模式·关闭：轨道为半透明底、滑块在左侧且为白色',
+    swOffDark.checked === false && swOffDark.track === 'rgba(255, 255, 255, 0.16)' && swOffDark.knobBg === 'rgb(249, 250, 251)',
+    swOffDark);
+
+  await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`);
+  await sleep(300);
+  const swOnDark = await switchStyle();
+  check('黑夜模式·打开：轨道转为全白、滑块右移 16px（同为白 → 视觉全白）',
+    swOnDark.checked === true && swOnDark.track === 'rgb(249, 250, 251)' && swOnDark.knobBg === 'rgb(249, 250, 251)'
+      && /matrix\(1,\s*0,\s*0,\s*1,\s*16,\s*0\)/.test(swOnDark.knobTransform),
+    swOnDark);
+  await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`); // 还原为关闭
+  await sleep(250);
   await shot('round3-1-settings-dark.png');
 
   // 改世界边界 → 保存 → 渲染器生效
@@ -151,6 +190,11 @@ try {
     return { visible: !b.classList.contains('hidden'), text: b.textContent, inLowerLeft: rb.left < 200 && rb.bottom > window.innerHeight - 160 };
   })())`));
   check('熟练度分析左下角出现「设置」按钮', analysisBtn.visible && analysisBtn.inLowerLeft, analysisBtn);
+  const analysisCity = await ui();
+  check('熟练度分析·地级档：默认即显示地名标签（阈值 0，全景也画标签）',
+    analysisCity.labels?.hideLabels === false && analysisCity.labels?.showAllLabels === true
+      && analysisCity.labels?.labelZoomThreshold === 0 && analysisCity.labelCounts.city >= 300,
+    { labels: analysisCity.labels, counts: analysisCity.labelCounts, zoom: analysisCity.zoom });
   await shot('round3-2-analysis-city.png');
 
   await ev(`(() => { document.getElementById('btn-mode-settings').click(); return true })()`);
@@ -193,26 +237,35 @@ try {
   })())`));
   check('自由模式显示「世界/省级/市级」分段按钮，默认市级', browseCity.visible && browseCity.labels.join('/') === '世界/省级/市级' && browseCity.active === '市级', browseCity);
   const cityState = await ui();
-  check('市级档：地级地图 + 全部地名标签', cityState.view.worldMode === false && cityState.view.provinceMode === false && cityState.labels.showAllLabels === true, { view: cityState.view, labels: cityState.labels });
+  check('自由模式·市级档：地级地图 + 全部地名标签默认显示（阈值 0，全景也画标签）',
+    cityState.view.worldMode === false && cityState.view.provinceMode === false
+      && cityState.labels.showAllLabels === true && cityState.labels.labelZoomThreshold === 0 && cityState.labelCounts.city >= 300,
+    { view: cityState.view, labels: cityState.labels, counts: cityState.labelCounts, zoom: cityState.zoom });
   await shot('round3-5-browse-city.png');
 
   await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
   await sleep(900);
   const provState = await ui();
-  check('省级档：省级地图、无港澳放大框、不允许下钻、省名标签常显', provState.view.provinceMode === true && provState.view.provinceModeDrill === false && provState.view.provinceModeInset === false && provState.labels.showAllProvinceLabels === true, { view: provState.view, labels: provState.labels });
+  check('自由模式·省级档：省级地图、无港澳放大框、不允许下钻、省名标签默认显示',
+    provState.view.provinceMode === true && provState.view.provinceModeDrill === false && provState.view.provinceModeInset === false
+      && provState.labels.showAllProvinceLabels === true && provState.labelCounts.province >= 30,
+    { view: provState.view, labels: provState.labels, counts: provState.labelCounts });
   await shot('round3-6-browse-province.png');
 
   await ev(`(() => { document.getElementById('granularity-world').click(); return true })()`);
   await sleep(900);
   const worldState = await ui();
   const noScopeRows = JSON.parse(await ev(`JSON.stringify({ continent: document.getElementById('continent-toggle').classList.contains('hidden'), subregion: document.getElementById('subregion-toggle').classList.contains('hidden') })`));
-  check('世界档：世界地图 + 国名标签常显', worldState.view.worldMode === true && worldState.labels.worldShowAllLabels === true, { view: worldState.view, labels: worldState.labels });
+  check('自由模式·世界档：世界地图 + 国名标签默认显示（阈值 0，全景也画国名）',
+    worldState.view.worldMode === true && worldState.labels.worldShowAllLabels === true
+      && worldState.labels.worldLabelZoomThreshold === 0 && worldState.labelCounts.world >= 190,
+    { view: worldState.view, labels: worldState.labels, counts: worldState.labelCounts, zoom: worldState.zoom });
   check('自由模式世界档不显示大洲/次区域行（不支持下钻）', noScopeRows.continent && noScopeRows.subregion, noScopeRows);
   await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="memory"]').click(); return true })()`);
   await sleep(700);
   await shot('round3-7-browse-world.png');
 
-  // ---------------- 需求 2：阶梯断点在配色上的表现 ----------------
+  // ---------------- 需求 2：阶梯断点 + 分析模式世界档标签默认显示 ----------------
   await ev(`(() => { document.getElementById('btn-free').click(); return true })()`);
   await sleep(600);
   const colors = JSON.parse(await ev(`JSON.stringify((function(){
@@ -220,6 +273,17 @@ try {
     return { cityActive: m && m.classList.contains('active') };
   })())`));
   check('熟练度分析仍可用（地级档激活）', colors.cityActive === true, colors);
+  await ev(`(() => { document.getElementById('analysis-granularity-world').click(); return true })()`);
+  await sleep(900);
+  const analysisWorld = await ui();
+  check('熟练度分析·世界档：国名标签默认显示（阈值 0，全景也画国名）',
+    analysisWorld.labels?.worldShowAllLabels === true && analysisWorld.labels?.worldLabelZoomThreshold === 0
+      && analysisWorld.labelCounts.world >= 190,
+    { labels: analysisWorld.labels, counts: analysisWorld.labelCounts, zoom: analysisWorld.zoom });
+  await ev(`(() => { document.getElementById('analysis-granularity-city').click(); return true })()`);
+  await sleep(700);
+  await ev(`(() => { document.getElementById('btn-free').click(); return true })()`);
+  await sleep(500);
   await shot('round3-8-analysis-after.png');
 
   // ---------------- 客观视觉体检：胶囊形状 / 对比度 / 裁切 / 重叠 ----------------
@@ -255,10 +319,9 @@ try {
       var label = (el.id ? '#' + el.id : '') + (el.className && typeof el.className === 'string' ? '.' + el.className.split(' ').join('.') : '') + '[' + (el.textContent||'').trim().slice(0,10) + ']';
       var radius = parseFloat(s.borderTopLeftRadius) || 0;
       var h = r.height;
-      // 胶囊判定：圆角 ≥ 高度一半 - 1px，或整体为小圆角列表项（<10px）
-      var capsule = radius * 2 >= h - 1;
+      // 回滚后按钮应为小圆角（≤10px）；大圆角（胶囊）视为残留
       var soft = radius <= 10;
-      if (!capsule && !soft) out.notCapsule.push({ label: label, h: +h.toFixed(1), radius: radius });
+      if (!soft) out.notCapsule.push({ label: label, h: +h.toFixed(1), radius: radius });
       // 对比度：文字色 vs 自身底色（半透明则叠到页面底色上）；无文字元素（如拖动把手）跳过
       var t = parse(s.color), b = parse(s.backgroundColor);
       var hasText = (el.textContent || '').trim().length > 0;
@@ -280,7 +343,7 @@ try {
     out.progressBarVisible = !document.getElementById('mode-progress').classList.contains('hidden') && document.getElementById('mode-progress').getBoundingClientRect().height > 0;
     return out;
   })())`));
-  check('所有按钮/下拉均为胶囊（圆角 = 高/2）或列表项小圆角', audit.notCapsule.length === 0, audit.notCapsule);
+  check('按钮圆角均不超过 10px（无胶囊残留）', audit.notCapsule.length === 0, audit.notCapsule);
   check('按钮文字对比度均 ≥ 3.5:1（无看不清的按钮）', audit.lowContrast.length === 0, audit.lowContrast);
   check('没有按钮被视口裁切', audit.clipped.length === 0, audit.clipped);
   check('左下信息区完整落在视口内', audit.modeInfo.insideViewport, audit.modeInfo);
@@ -299,6 +362,19 @@ try {
 
   await ev(`(() => { document.getElementById('btn-settings').click(); return true })()`);
   await sleep(500);
+  const swOffLight = await switchStyle();
+  check('白天模式·关闭：轨道为浅灰透明底、滑块在左侧且为黑色',
+    swOffLight.checked === false && swOffLight.track === 'rgba(0, 0, 0, 0.12)' && swOffLight.knobBg === 'rgb(15, 17, 21)',
+    swOffLight);
+  await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`);
+  await sleep(300);
+  const swOnLight = await switchStyle();
+  check('白天模式·打开：轨道转为全黑、滑块右移 16px（与黑夜模式相反）',
+    swOnLight.checked === true && swOnLight.track === 'rgb(15, 17, 21)' && swOnLight.knobBg === 'rgb(15, 17, 21)'
+      && /matrix\(1,\s*0,\s*0,\s*1,\s*16,\s*0\)/.test(swOnLight.knobTransform),
+    swOnLight);
+  await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`); // 还原为关闭
+  await sleep(250);
   await shot('round3-9-settings-light.png');
   await ev(`(() => { document.getElementById('set-cancel').click(); return true })()`);
   await sleep(300);
@@ -316,32 +392,21 @@ try {
   await sleep(900);
   await shot('round3-11-browse-province-light.png');
 
-  // ---------------- 顶栏胶囊可辨识度 + 选中页签（客观取色） ----------------
-  const topbarAudit = JSON.parse(await ev(`JSON.stringify((function(){
-    function parse(c){ var m=/rgba?\\(([^)]+)\\)/.exec(c); if(!m) return null; var p=m[1].split(',').map(parseFloat); return { rgb:[p[0],p[1],p[2]], a: p.length>3?p[3]:1 }; }
-    function srgb(c){ c=c/255; return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4); }
-    function lum(rgb){ return 0.2126*srgb(rgb[0])+0.7152*srgb(rgb[1])+0.0722*srgb(rgb[2]); }
-    function over(fg,bg){ return fg.rgb.map(function(v,i){ return v*fg.a + bg[i]*(1-fg.a); }); }
-    var bar = parse(getComputedStyle(document.querySelector('.topbar')).backgroundColor).rgb;
-    var rest = parse(getComputedStyle(document.getElementById('btn-settings')).backgroundColor);
-    var active = document.querySelector('#mode-tabs button.active');
-    var act = active ? parse(getComputedStyle(active).backgroundColor) : null;
-    var actText = active ? getComputedStyle(active).color : null;
-    var idleText = getComputedStyle(document.querySelector('#mode-tabs button:not(.active)')).color;
-    var ratio = function(a,b){ var l1=lum(a), l2=lum(b); return (Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05); };
+  // ---------------- 回滚自检：顶栏/浮层按钮不再是胶囊 ----------------
+  const rollback = JSON.parse(await ev(`JSON.stringify((function(){
+    var radii = [];
+    Array.prototype.slice.call(document.querySelectorAll('#mode-tabs button, .top-actions button, .mode-action, .mode-segmented button')).forEach(function(el){
+      var s = getComputedStyle(el), r = el.getBoundingClientRect();
+      if (r.width < 2 || s.display === 'none') return;
+      radii.push({ text: (el.textContent||'').trim().slice(0,8), radius: s.borderTopLeftRadius });
+    });
     return {
-      barRgb: bar,
-      restPillRgb: rest.a >= 0.999 ? rest.rgb : over(rest, bar),
-      activeTabText: active ? (active.textContent||'').trim() : null,
-      activeFillRgb: act ? (act.a >= 0.999 ? act.rgb : over(act, bar)) : null,
-      pillVsBar: +ratio(over(rest, bar), bar).toFixed(2),
-      activeVsBar: act ? +ratio(over(act, bar), bar).toFixed(2) : null,
-      activeVsIdleText: +ratio(parse(actText).rgb, bar).toFixed(2),
-      idleTextVsBar: +ratio(parse(idleText).rgb, bar).toFixed(2)
+      count: radii.length,
+      maxRadius: radii.reduce(function(m, x){ return Math.max(m, parseFloat(x.radius) || 0); }, 0),
+      sample: radii.slice(0, 4)
     };
   })())`));
-  check('顶栏「设置」等按钮的胶囊底与栏底色可分辨（亮度比 ≥ 1.15）', topbarAudit.pillVsBar >= 1.15, topbarAudit);
-  check('模式页签有选中项，且选中底与栏底色可分辨（亮度比 ≥ 1.3）', !!topbarAudit.activeFillRgb && topbarAudit.activeVsBar >= 1.3, topbarAudit);
+  check('顶栏与浮层按钮圆角全部 ≤ 10px（胶囊样式已回滚）', rollback.maxRadius <= 10, rollback);
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 通过`);

@@ -387,13 +387,16 @@ interface MemoryState {
 
 ---
 
-## 15. UI 收尾（按钮风格与设置项，2026-09 轮）
+## 15. UI 收尾（设置项与开关样式，2026-09 轮）
 
-1. **按钮=DSH 胶囊（唯一按钮风格）**：全站按钮对齐 DeepSeek Harness Web GUI 的 Button 组件与设计令牌，实现集中在 `src/styles.css` 末尾的「DSH 按钮风格」段。
-   - 几何：胶囊，**圆角 = 高度的一半**；标准档 36 高 / `0 14px` / 圆角 18（primary、卡片按钮），紧凑档 28 高 / `0 10px` / 圆角 14（分段按钮内项），浮层与顶栏取 34 / 32 高对应圆角 17 / 16。
-   - 变体：**primary**（实心，明主题 `#0f1115`、暗主题 `#f9fafb`，文字取反）、**outline**（透明底 + `0.5px` 发丝描边）、**ghost**（透明底，hover 叠一层 `--dsw-alias-interactive-bg-hover`）、**toolbar**（浮在内容之上：`#54555780` → hover `#54555799`）。令牌名与 DSH 的 `--dsw-alias-*` 逐字一致，明暗值分别挂在 `:root` 与 `body.theme-dark`。
-   - 不要再为新组件自造按钮样式（渐变、粗描边、方角、不同圆角）——那会立刻与全站不一致；需要新形态时优先复用上表档位与变体。顶栏是**常暗**表面，故其胶囊用 `.topbar` 上的 `--topbar-pill-*`（半透明白）而非明主题令牌。
-2. **设置行对齐**：全局设置与每模式设置浮层共用 `.card .row` —— `justify-content: space-between`，说明文字靠左（`.row-label`），开关/下拉贴右。新增设置项必须写成 `<span class="row-label">文字</span><控件>` 的次序。
-3. **设置项归属**：黑夜/白天模式改为顶栏按钮（位于「设置」左侧，文案显示点击后切到的模式，选择立即持久化），不再放在设置面板里；全局设置面板只管**地级市/省级/世界**三族边界深浅。
-4. **熟练度分析**：左下角新增与其他模式同构的**设置**按钮（`#btn-mode-settings`），内含「隐藏地图标签」；渲染侧由 `RenderState.hideLabels` 统一关闭三档标签（地级市/省名/国名），优先于各 `show*Labels` 开关。
-5. **自由模式**：沿用「世界/省级/市级」分段按钮（`chromeSync.syncSegments` 的 `showsGranularity` 含 `memory`，且 `#mode-actions` 对该模式不再整体隐藏），但**不支持下钻**（`onUnitDblClick` 空实现 + 省级档 `allowDrill:false`）；世界档不显示大洲/次区域行（无作用对象）。
+1. **按钮样式保持原样（已回滚 DSH 胶囊化）**：本轮曾把全站按钮改成 DSH 胶囊，用户随后要求回滚——按钮恢复原有 `border-radius: 8px` + 1px 描边 / 绿色实心 primary / 深色渐变选中项，且不得再引入胶囊样式。**新增按钮请沿用现有样式**，不要自造。
+2. **设置界面的开关改成 DSH 设置页样式**（`src/styles.css` 末尾「DSH 开关」段）：对齐 DeepSeek Harness 的 `SubagentModelSelectionCard` 开关 —— 轨道 36×20、圆角 10、内边距 2px、圆形滑块 16px，打开时滑块右移 16px。
+   - 颜色取 `--dsw-alias-*` 令牌（暗主题 `brand-primary = #f9fafb`、明主题 `#0f1115`），故明暗互为反相：
+     暗主题「关闭 = 半透明轨道 + 左侧白点；打开 = 全白」，明主题「关闭 = 浅灰轨道 + 左侧黑点；打开 = 全黑」。
+   - 开关是 `.card input[type="checkbox"]`（全局设置面板与每模式设置浮层共用），故两处样式自动一致。
+3. **设置行对齐**：`.card .row` 用 `justify-content: space-between` —— 说明文字靠左（`.row-label`），开关/下拉贴右。新增设置项必须写成 `<span class="row-label">文字</span>` + 控件的次序，否则会退回「控件紧跟文字」的旧排版。
+4. **设置项归属**：黑夜/白天模式是顶栏按钮（位于「设置」左侧，文案显示点击后切到的模式，选择立即持久化），不在设置面板里；全局设置面板只管**地级市/省级/世界**三族边界深浅。
+5. **熟练度分析**：左下角有与其他模式同构的**设置**按钮（`#btn-mode-settings`），内含「隐藏地图标签」；渲染侧由 `RenderState.hideLabels` 统一关闭三档标签（地级市/省名/国名），优先于各 `show*Labels` 开关。
+6. **自由模式**：沿用「世界/省级/市级」分段按钮（`chromeSync.syncSegments` 的 `showsGranularity` 含 `memory`，且 `#mode-actions` 对该模式不再整体隐藏），但**不支持下钻**（`onUnitDblClick` 空实现 + 省级档 `allowDrill:false`）；世界档不显示大洲/次区域行（无作用对象）。
+7. **地图标签默认显示（自由模式 + 熟练度分析）**：两模式的三档地图都传 `labelZoomThreshold: 0` / `worldLabelZoomThreshold: 0`，即**任何倍率（含默认 1.00x 全景）都画标签**，不再依赖放大过阈值；「隐藏地图标签」开关只负责整体关闭。世界图的 `worldLabelZoomThreshold` 是为此新增的 `RenderState` 字段（默认仍是 2.2，只有这两个模式传 0）。
+   - 代价：全景下地级 340+ / 国家 194 个标签会密集重叠（`labelScale(1)=0.5` → 字号 7px），这是「默认常显」的必然结果，与测验模式的按缩放显示策略不同。

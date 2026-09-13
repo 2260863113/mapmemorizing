@@ -497,6 +497,8 @@ export function installProbe(app: AppController) {
           showAllLabels?: boolean;
           showAllProvinceLabels?: boolean;
           worldShowAllLabels?: boolean;
+          labelZoomThreshold?: number;
+          worldLabelZoomThreshold?: number;
         } | null;
         worldMode: boolean;
         worldBoundaryTone: string;
@@ -506,8 +508,15 @@ export function installProbe(app: AppController) {
         cityBoundaryTone: string;
         provinceBoundaryTone: string;
         currentProvince: () => string | null;
+        zoom: number;
+        labelMode: string;
+        buildLabelData?: (s: unknown) => unknown[];
+        buildProvinceLabelData?: (s: unknown) => unknown[];
+        buildWorldLabelData?: (s: unknown) => unknown[];
       };
       const state = r.lastState;
+      const countOf = (fn: ((s: unknown) => unknown[]) | undefined) =>
+        state && fn ? fn.call(r, state).length : null;
       return {
         mode: app.current?.id ?? null,
         granularity: app.current?.getGranularity?.() ?? null,
@@ -525,12 +534,22 @@ export function installProbe(app: AppController) {
           provinceModeInset: r.provinceModeInset,
           drilledProvince: r.currentProvince(),
         },
+        zoom: r.zoom,
+        labelMode: r.labelMode,
+        /** 各标签系列实际会画出的标签数量（0 = 一个都不显示；直接调渲染器的构造器，只读）。 */
+        labelCounts: {
+          city: countOf(r.buildLabelData),
+          province: countOf(r.buildProvinceLabelData),
+          world: countOf(r.buildWorldLabelData),
+        },
         labels: state
           ? {
               hideLabels: state.hideLabels === true,
               showAllLabels: state.showAllLabels === true,
               showAllProvinceLabels: state.showAllProvinceLabels === true,
               worldShowAllLabels: state.worldShowAllLabels === true,
+              labelZoomThreshold: state.labelZoomThreshold ?? null,
+              worldLabelZoomThreshold: state.worldLabelZoomThreshold ?? null,
             }
           : null,
       };

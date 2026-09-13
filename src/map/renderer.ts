@@ -1059,8 +1059,8 @@ export class MapRenderer {
       }
       return out;
     }
-    // 分析档：仅在放大到国名阈值后显示（Q35：不常显）
-    if (state.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) {
+    // 分析/浏览档：按 worldLabelZoomThreshold（省略时为 WORLD_LABEL_ZOOM）决定是否常显全部国名
+    if (state.worldShowAllLabels && this.zoom > (state.worldLabelZoomThreshold ?? WORLD_LABEL_ZOOM)) {
       for (const c of this.data.countries) {
         if (!visible(c.iso)) continue;
         const anchor = this.worldLabelAnchors.get(c.iso);
@@ -1079,9 +1079,12 @@ export class MapRenderer {
 
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
     // 世界模式：地级市标签系列不参与；国名标签由 world-labels 系列渲染。
-    // 世界分析档国名只在放大过阈值后显示——把该开关复用到 'city' 档位以驱动缩放后刷新。
+    // 世界分析/浏览档国名是否常显由 worldShowAllLabels + worldLabelZoomThreshold 决定
+    //（自由模式与熟练度分析传 0 = 任何倍率都显示），把该开关复用到 'city' 档位以驱动缩放后刷新。
     if (this.worldMode) {
-      if (!state?.hideLabels && state?.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) return 'city';
+      if (!state?.hideLabels && state?.worldShowAllLabels && this.zoom > (state?.worldLabelZoomThreshold ?? WORLD_LABEL_ZOOM)) {
+        return 'city';
+      }
       return 'none';
     }
     // 省级模式：彻底禁用地级市地名标签（省名标签由 province-labels 系列单独渲染）

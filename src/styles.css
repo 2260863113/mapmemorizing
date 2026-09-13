@@ -1518,302 +1518,74 @@ body.theme-dark .leaderboard-row {
 .hidden { display: none !important; }
 
 /* =========================================================================
-   DSH 按钮风格
+   DSH 开关（设置界面里原本绿色的那个开关）
    -------------------------------------------------------------------------
-   对齐当前 DeepSeek Harness Web GUI 的 Button 组件（dsh-client-ui-primitives
-   的 Button.module.css）与其设计令牌（--dsw-alias-*）：
+   对齐 DeepSeek Harness 设置页的开关（ui-settings-plugins 的
+   SubagentModelSelectionCard）：轨道 36×20、圆角 10、内边距 2px、圆形滑块 16px，
+   打开时滑块右移 16px、轨道换成 brand-primary。
 
-     · 几何：胶囊 —— 高 36 / 内边距 0 14px / 圆角 18px（紧凑档 高 28 / 0 10px / 圆角 14px）
-     · 变体：primary（实心，明主题近黑 #0f1115、暗主题 #f9fafb，文字取反）
-              outline（透明底 + 0.5px 发丝描边 --dsw-alias-border-l3）
-              ghost  （透明底，hover 用 --dsw-alias-interactive-bg-hover）
-              toolbar（浮在内容之上的工具栏按钮：#54555780 → hover #54555799）
-     · 交互：无降级阴影、无渐变；hover/active 直接换底色（100ms 过渡，同 DSH 发送键）
-     · 排版：14px/22px（紧凑档 12px/18px）
-
-   应用侧的映射：
-     · 顶栏（深色栏）按钮 → toolbar/ghost-active 语义的自定义胶囊
-     · 地图上方浮层按钮（跳过/暂停/重置/说明/设置、缩放角标、分段按钮）→ toolbar 变体
-     · 卡片与浮层面板按钮 → primary / outline 变体
+   颜色取 DSH 的 --dsw-alias-* 令牌，故明暗主题互为反相：
+     暗主题：关闭 = 半透明轨道 + 左侧白点；打开 = 全白
+     明主题：关闭 = 浅灰轨道 + 左侧黑点；打开 = 全黑
+   （brand-primary 在暗主题是 #f9fafb、明主题是 #0f1115。）
    ========================================================================= */
-
 :root {
-  --dsw-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --ds-transition-duration-fast: 0.1s;
-
-  /* 明主题令牌（与 DSH body{} 一致） */
-  --dsw-alias-label-primary: #0f1115;
+  --dsw-alias-brand-primary: #0f1115;
   --dsw-alias-label-primary-foreground: #ffffff;
-  --dsw-alias-label-secondary: #61666b;
-  --dsw-alias-label-tertiary: #81858c;
   --dsw-alias-border-l3: rgba(0, 0, 0, 0.12);
-  --dsw-alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
-  --dsw-alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
-  --dsw-alias-button-primary-fill: #0f1115;
-  --dsw-alias-button-primary-hover: #43454a;
-  --dsw-alias-button-tool-bar-fill: #54555780;
-  --dsw-alias-button-tool-bar-hover: #54555799;
-  --dsw-alias-button-ghost-active-fill: #ebeef2;
-  --dsw-alias-button-ghost-active-border: #979da6;
-  --dsw-alias-state-error-primary: #ec1313;
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 body.theme-dark {
-  /* 暗主题令牌（与 DSH body[data-ds-dark-theme]{} 一致） */
-  --dsw-alias-label-primary: #f9fafb;
+  --dsw-alias-brand-primary: #f9fafb;
   --dsw-alias-label-primary-foreground: #0f1115;
-  --dsw-alias-label-secondary: #cfd3d6;
-  --dsw-alias-label-tertiary: #adb2b8;
   --dsw-alias-border-l3: rgba(255, 255, 255, 0.16);
-  --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
-  --dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
-  --dsw-alias-button-primary-fill: #f9fafb;
-  --dsw-alias-button-primary-hover: #ebeef2;
-  --dsw-alias-button-ghost-active-fill: #43454a;
-  --dsw-alias-button-ghost-active-border: #81858c;
-  --dsw-alias-state-error-primary: #f25a5a;
 }
 
-/* 顶栏是**常暗**表面（明主题下也是深色），故其上的胶囊自有一组半透明白色底 */
-.topbar {
-  --topbar-pill-rest: rgba(255, 255, 255, 0.1);
-  --topbar-pill-hover: rgba(255, 255, 255, 0.16);
-  --topbar-pill-active: rgba(255, 255, 255, 0.22);
+.card input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--dsw-alias-border-l3);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 0.12s var(--ds-ease-in-out);
 }
-
-button {
-  font-family: var(--dsw-font-family);
-  font-weight: 500;
+.card input[type="checkbox"]::before {
+  content: '';
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+  transition: transform 0.12s var(--ds-ease-in-out);
 }
-/* DSH 的聚焦环：2px 半透明描边（用 box-shadow 实现，不占布局） */
-button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
+.card input[type="checkbox"]:checked {
+  background: var(--dsw-alias-brand-primary);
 }
-button:disabled {
+.card input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
+}
+.card input[type="checkbox"]:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: 0.5;
 }
-
-/* ---------- 顶栏模式页签：胶囊 + 选中态实底 ---------- */
-#mode-tabs button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 16px;
-  background: transparent;
-  color: var(--tab-text);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 22px;
-  transition: background-color var(--ds-transition-duration-fast);
+.card input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
 }
-#mode-tabs button:hover { background: var(--topbar-pill-hover); }
-#mode-tabs button.active {
-  background: var(--topbar-pill-active);
-  color: #ffffff;
-  font-weight: 500;
-}
-
-/* ---------- 顶栏右侧按钮（含「黑夜模式/白天模式」与「设置」）：toolbar 胶囊 ---------- */
-.top-actions button.ghost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 16px;
-  background: var(--topbar-pill-rest);
-  color: var(--tab-text);
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 20px;
-  transition: background-color var(--ds-transition-duration-fast), color var(--ds-transition-duration-fast);
-}
-.top-actions button.ghost:hover {
-  background: var(--topbar-pill-hover);
-  color: #ffffff;
-}
-.top-actions button.ghost:active { background: var(--topbar-pill-active); }
-
-/* 用户中心：同一条胶囊基线 */
-.user-center {
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 16px;
-  background: var(--topbar-pill-rest);
-  transition: background-color var(--ds-transition-duration-fast);
-}
-.user-center:hover,
-.user-center[aria-expanded="true"] { background: var(--topbar-pill-hover); }
-
-/* ---------- 地图浮层按钮：toolbar 变体胶囊 ---------- */
-.mode-action,
-#zoom-pill,
-#test-timer {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 17px;
-  background: var(--dsw-alias-button-tool-bar-fill);
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  box-shadow: var(--floating-shadow);
-  backdrop-filter: var(--floating-blur);
-}
-.mode-action {
-  min-width: 82px;
-  cursor: pointer;
-  transition: background-color var(--ds-transition-duration-fast);
-}
-.mode-action:hover { background: var(--dsw-alias-button-tool-bar-hover); }
-.mode-action:active { background: var(--dsw-alias-interactive-bg-active); }
-/* 危险动作（暂停/重置二次确认）保留红色反馈 */
-.mode-action.danger-hover:hover,
-#btn-end:hover,
-#btn-reset:hover,
-.mode-action.confirming {
-  background: var(--dsw-alias-state-error-primary);
-  color: #ffffff;
-}
-/* 角标类（缩放倍率 / 计时）保持等宽数字与加重字重，便于扫读 */
-#zoom-pill,
-#test-timer {
-  min-width: 76px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---------- 分段按钮（世界/省级/市级、顺序/随机/错题、大洲/次区域）：胶囊组 ---------- */
-.mode-segmented {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 34px;
-  padding: 3px;
-  border: 0;
-  border-radius: 17px;
-  background: var(--dsw-alias-button-tool-bar-fill);
-  box-shadow: var(--floating-shadow);
-  backdrop-filter: var(--floating-blur);
-  overflow: visible;
-}
-.mode-segmented button {
-  min-width: 57px;
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 18px;
-  transition: background-color var(--ds-transition-duration-fast);
-}
-.mode-segmented button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.mode-segmented button.active {
-  background: var(--dsw-alias-button-ghost-active-fill);
-  box-shadow: inset 0 0 0 0.5px var(--dsw-alias-button-ghost-active-border);
-  color: var(--dsw-alias-label-primary);
-  backdrop-filter: none;
-}
-body.theme-dark .mode-segmented button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-body.theme-dark .mode-segmented button.active {
-  background: var(--dsw-alias-button-ghost-active-fill);
-  box-shadow: inset 0 0 0 0.5px var(--dsw-alias-button-ghost-active-border);
-}
-#subregion-toggle { height: 34px; }
-#continent-toggle button { min-width: 0; padding: 0 9px; font-size: 13px; }
-
-/* ---------- 卡片/面板按钮：primary（实心）与 outline（发丝描边） ---------- */
-button.primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 36px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 18px;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  transition: background-color var(--ds-transition-duration-fast);
-}
-button.primary:hover { background: var(--dsw-alias-button-primary-hover); }
-button.ghost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 36px;
-  padding: 0 14px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 18px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  transition: background-color var(--ds-transition-duration-fast);
-}
-button.ghost:hover { background: var(--dsw-alias-interactive-bg-hover); }
-button.ghost:active { background: var(--dsw-alias-interactive-bg-active); }
-button.ghost.danger { color: var(--dsw-alias-state-error-primary); }
-/* 紧凑档：面板内的次要按钮（保留旧类名以防外部面板仍在使用） */
-button.ghost.sm,
-button.primary.sm { height: 28px; padding: 0 10px; border-radius: 14px; font-size: 12px; line-height: 18px; }
-
-/* 下拉选择：胶囊 + 发丝描边（与 outline 按钮同一条基线） */
-select,
-.card select {
-  height: 32px;
-  padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 16px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  font-size: 13px;
-  font-family: var(--dsw-font-family);
-}
-select:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
-}
-
-/* 头像上传按钮（账号面板）：outline 胶囊 */
-.avatar-upload {
-  height: 34px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 17px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
-}
-.avatar-upload:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
 /* =========================================================================
    设置行：说明文字左对齐、开关/下拉右对齐
    -------------------------------------------------------------------------
    全局设置与每模式设置浮层共用 .card .row —— 两端对齐（space-between）后，
-   文字靠左、控件贴右，与 DSH 设置页同一套路。
+   文字靠左、控件贴右。新增设置项请写成
+   `<span class="row-label">文字</span>` + 控件 的次序。
    ========================================================================= */
 .card .row {
   display: flex;
@@ -1835,7 +1607,6 @@ select:focus-visible {
   flex: 0 0 auto;
   margin-left: auto;
 }
-/* 模式设置浮层的开关行沿用同一套对齐 */
 .mode-setting-toggle {
   justify-content: space-between;
 }
