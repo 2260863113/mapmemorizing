@@ -151,9 +151,11 @@ try {
 
   console.log('\n=== 5. 世界自动跟随：缩放与国家面积成反比 ===');
   const zoom = await evaluate('window.__probe.worldFollowZoom()');
-  check('小国（新加坡）缩放 > 大国（俄罗斯）', zoom.small > zoom.big, `sgp=${zoom.small.toFixed(2)} rus=${zoom.big.toFixed(2)}`);
-  check('缩放落在设计区间 [1.6, 9]', zoom.small <= 9.0001 && zoom.big >= 1.5999, `${zoom.small.toFixed(2)} / ${zoom.big.toFixed(2)}`);
-  check('全池严格单调（面积↑ ⇒ 缩放↓）', zoom.monotonic === true, `${zoom.countries} 国`);
+  const fmt = (o) => Object.entries(o).map(([k, v]) => `${k}=${v.zoom.toFixed(2)}x(目标${v.want})`).join(' ');
+  check('命中用户标定的三个锚点（安/马/列→28x，法→13x，俄→2x）', zoom.anchorsHit === true, fmt(zoom.anchors));
+  check('缩放落在设计区间 [2, 28]', zoom.small <= 28.0001 && zoom.big >= 1.9999, `${zoom.small.toFixed(2)} / ${zoom.big.toFixed(2)}`);
+  check('全池单调不增（面积↑ ⇒ 缩放↓）', zoom.monotonic === true, `${zoom.countries} 国`);
+  check('小国顶到地图上限（28x）', zoom.small === 28, `顶到上限 ${zoom.atCeiling} 国`);
 
   // 集成：真的调 renderer，证明「输入模式 ask() 走的那条路径」能驱动相机
   const af = await evaluate('window.__probe.worldAutoFollow()');

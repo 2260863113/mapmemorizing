@@ -99,35 +99,61 @@ function clampZoom(zoom: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
-/** 世界自动跟随的缩放区间：面积最小 → 放得最大；面积最大 → 缩得最小。 */
-export const WORLD_FOLLOW_MIN_ZOOM = 1.6;
-export const WORLD_FOLLOW_MAX_ZOOM = 9;
+/**
+ * 世界自动跟随的缩放区间。
+ *
+ * 上限直接绑定地图的 `MAX_ZOOM`（28）——最小国正好顶到地图能放的最大倍率，
+ * 不再单独写一个数，避免两处漂移。
+ * 下限 2 是最大国（俄罗斯）的落点。
+ */
+export const WORLD_FOLLOW_MIN_ZOOM = 2;
+export const WORLD_FOLLOW_MAX_ZOOM = MAX_ZOOM;
 
 /**
- * 面积 → 跟随缩放（面积越小放得越大，严格反比单调）。
+ * 自动跟随的比例常数：`zoom = K / √面积`。
  *
- * 用 log 插值把面积映射到 [MIN, MAX]：`t=0` 对应最小面积 → `MAX_ZOOM`，
- * `t=1` 对应最大面积 → `MIN_ZOOM`。面积缺失/退化时取区间中值。
+ * ### 为什么是「与 √面积 成反比」而不是「与面积成反比」
+ *
+ * 要让一个国家在屏幕上占**大致相同的比例**，需要放大的倍率与该国的**跨度**成反比，
+ * 而跨度 ∝ √面积。
+ *
+ * 纯与面积成反比（指数 p=1）用用户给的锚点检验是不成立的：以「俄罗斯 → 2x」定出
+ * 常数后，法国会落到 82x —— 是用户期望值 13x 的 **6.3 倍**。对用户三个锚点做
+ * 最小二乘，解出的指数是 **0.5045 ≈ 0.5**，即恰好是「与线性尺度成反比」。
+ *
+ * ### 标定（用户给定，全部命中）
+ *
+ * | 国家 | 面积(度²) | 目标 | 公式值 |
+ * |---|---|---|---|
+ * | 列支敦士登 | 0.0157 | 28x | 863 → 夹到 28 |
+ * | 马耳他 | 0.0251 | 28x | 683 → 夹到 28 |
+ * | 安道尔 | 0.0468 | 28x | 500 → 夹到 28 |
+ * | 法国 | 71.54 | 13x | **12.79** |
+ * | 俄罗斯 | 2924.11 | 2x | **2.00** |
+ *
+ * ### 关于「顶到 28x」的国家偏多
+ *
+ * 以 K=108 计，面积 ≤ 14.88 度² 的 103 个国家都会顶到 28x。这是**刻意保留**的：
+ * 28x 下只看得见 12.9° 经度，以色列那种 0.4° 宽的国家仍只占屏宽 3% ——
+ * 对这些小国来说「顶到地图上限」就是能给的最大帮助。换成更平缓的曲线（如对数）
+ * 反而会把它们压到 23x 左右，屏幕上更小，与「面积越小放得越大」的目标相反。
  */
-export function worldFollowZoom(area: number, range: { min: number; max: number }): number {
-  const mid = (WORLD_FOLLOW_MIN_ZOOM + WORLD_FOLLOW_MAX_ZOOM) / 2;
-  // 面积必须是有限正数；区间必须有限正数且 max > min（min=0 会让 log 分母发散）
-  const ok =
-    Number.isFinite(area) &&
-    area > 0 &&
-    Number.isFinite(range.min) &&
-    Number.isFinite(range.max) &&
-    range.min > 0 &&
-    range.max > range.min;
-  if (!ok) return mid;
-  // area 已被上面校验为有限正数，故 log 比值必为有限值；仍夹一次以吸收浮点误差
-  const t = Math.log(area / range.min) / Math.log(range.max / range.min);
-  const k = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0;
-  // 端点直接返回常量：线性插值在 k=1 时会算出 1.5999999999999996，破坏
-  // 「区间闭包」这条可断言的性质（调用方与测试都会依赖它）。
-  if (k <= 0) return WORLD_FOLLOW_MAX_ZOOM;
-  if (k >= 1) return WORLD_FOLLOW_MIN_ZOOM;
-  return WORLD_FOLLOW_MAX_ZOOM - k * (WORLD_FOLLOW_MAX_ZOOM - WORLD_FOLLOW_MIN_ZOOM);
+export const WORLD_FOLLOW_K = 108;
+
+/** 面积缺失/非法时的兜底倍率（取区间中值，保证镜头可用）。 */
+const WORLD_FOLLOW_FALLBACK_ZOOM = 8;
+
+/**
+ * 面积 → 跟随缩放：`zoom = K / √面积`，再夹到 `[MIN, MAX]`。
+ *
+ * 注意这是**绝对映射**（只依赖面积本身），不是按当前池子的面积区间归一化 ——
+ * 归一化会让同一个国家因为「当前是全世界还是某洲」而拿到不同倍率，非常不可预期。
+ */
+export function worldFollowZoom(area: number): number {
+  if (!Number.isFinite(area) || area <= 0) return WORLD_FOLLOW_FALLBACK_ZOOM;
+  const z = WORLD_FOLLOW_K / Math.sqrt(area);
+  if (!Number.isFinite(z)) return WORLD_FOLLOW_FALLBACK_ZOOM;
+  return Math.min(WORLD_FOLLOW_MAX_ZOOM, Math.max(WORLD_FOLLOW_MIN_ZOOM, z));
 }
 
 function easeInOutCubic(t: number) {
@@ -1371,15 +1397,14 @@ export class MapRenderer {
   /**
    * 世界模式自动跟随：镜头移到某国，**缩放倍率与国家面积成反比**（面积越小放得越大）。
    *
-   * 面积取自 `data.countryArea`（度²，构建期算好的），这里只做对数插值：
-   * 世界最大国（俄罗斯）↔ 最小答题国之间映射到 [WORLD_FOLLOW_MIN_ZOOM, WORLD_FOLLOW_MAX_ZOOM]。
-   * 用对数而非线性：面积跨 6 个数量级，线性插值会让九成国家挤在同一档。
+   * 倍率由 `worldFollowZoom(面积)` 按绝对映射算出（`K / √面积`，夹到 [2, 28]）：
+   * 极小国顶到地图上限 28x、法国约 13x、俄罗斯 2x，标定见该函数的注释。
    */
   focusWorldCountry(iso: string) {
     if (!this.worldMode) return;
     const center = this.worldLabelAnchors.get(iso);
     if (!center) return;
-    this.animateViewTo([center[0], center[1]], worldFollowZoom(this.countryArea(iso), this.areaRange()));
+    this.animateViewTo([center[0], center[1]], worldFollowZoom(this.countryArea(iso)));
   }
 
   /** 把镜头移到某国**但不改变缩放**（所有模式答错时跟随到正确答案位置用）。 */
@@ -1397,19 +1422,6 @@ export class MapRenderer {
 
   private countryArea(iso: string): number {
     return this.data.countryArea?.[iso] ?? 0;
-  }
-
-  /** 答题池里的面积极值（用于把面积映射到缩放区间）。 */
-  private areaRange(): { min: number; max: number } {
-    let min = Number.POSITIVE_INFINITY;
-    let max = 0;
-    for (const c of this.data.countries) {
-      const a = this.countryArea(c.iso);
-      if (a <= 0) continue;
-      if (a < min) min = a;
-      if (a > max) max = a;
-    }
-    return Number.isFinite(min) && max > min ? { min, max } : { min: 1, max: 1 };
   }
 
   private followZoomFor(provinceAdcode: string) {

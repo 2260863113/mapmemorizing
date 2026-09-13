@@ -10,7 +10,7 @@
  */
 import type { AppController } from './appController';
 import { ROLLBACK_RED_MS } from './modes/mapQuizMode';
-import { worldFollowZoom } from './map/renderer';
+import { worldFollowZoom, WORLD_FOLLOW_MAX_ZOOM, WORLD_FOLLOW_MIN_ZOOM } from './map/renderer';
 import { applyIgnoreTiny, ensureTinyCountries } from './tinyCountries';
 
 export function installProbe(app: AppController) {
@@ -220,20 +220,29 @@ export function installProbe(app: AppController) {
       }
     },
 
-    /** 5. 世界自动跟随：缩放与面积成反比。 */
+    /** 5. 世界自动跟随：缩放与面积成反比（含用户标定的三个锚点）。 */
     worldFollowZoom() {
       const area = anyApp.data.countryArea;
       const pool = anyApp.data.countries.map((c) => c.iso).filter((i) => area[i] > 0);
-      const min = Math.min(...pool.map((i) => area[i]));
-      const max = Math.max(...pool.map((i) => area[i]));
-      const range = { min, max };
-      const sgp = worldFollowZoom(area.SGP, range);
-      const rus = worldFollowZoom(area.RUS, range);
       const sorted = pool.slice().sort((a, b) => area[a] - area[b]);
-      const zooms = sorted.map((i) => worldFollowZoom(area[i], range));
+      const zooms = sorted.map((i) => worldFollowZoom(area[i]));
       let monotonic = true;
       for (let i = 1; i < zooms.length; i++) if (zooms[i] > zooms[i - 1] + 1e-9) monotonic = false;
-      return { small: sgp, big: rus, monotonic, countries: pool.length };
+      // 锚点：安道尔/马耳他/列支敦士登 → 28x；法国 → 13x；俄罗斯 → 2x
+      const anchors: Record<string, { area: number; zoom: number; want: number }> = {};
+      for (const [iso, want] of [['AND', 28], ['MLT', 28], ['LIE', 28], ['FRA', 13], ['RUS', 2]] as [string, number][]) {
+        anchors[iso] = { area: area[iso], zoom: worldFollowZoom(area[iso]), want };
+      }
+      const anchorsHit = Object.values(anchors).every((a) => Math.abs(a.zoom - a.want) <= 1);
+      return {
+        small: worldFollowZoom(area.SGP),
+        big: worldFollowZoom(area.RUS),
+        monotonic,
+        countries: pool.length,
+        anchors,
+        anchorsHit,
+        atCeiling: pool.filter((i) => worldFollowZoom(area[i]) >= 28 - 1e-9).length,
+      };
     },
 
     /** 6. 答错后平移到正确答案位置且缩放不变。 */
@@ -300,7 +309,7 @@ export function installProbe(app: AppController) {
       const sgp = await shoot('SGP'); // 极小：新加坡
       const rus = await shoot('RUS'); // 极大：俄罗斯
       const chn = await shoot('CHN'); // 中等：中国
-      const inRange = (z: number) => z >= 1.5999 && z <= 9.0001;
+      const inRange = (z: number) => z >= WORLD_FOLLOW_MIN_ZOOM - 1e-4 && z <= WORLD_FOLLOW_MAX_ZOOM + 1e-4;
       const close = (s: { landed: number }) => Number.isFinite(s.landed) && s.landed < 1.5; // 度
       return {
         sgpZoom: sgp.view.zoom,
@@ -313,6 +322,14 @@ export function installProbe(app: AppController) {
         inverse: sgp.view.zoom > chn.view.zoom && chn.view.zoom > rus.view.zoom,
         allInRange: [sgp.view.zoom, rus.view.zoom, chn.view.zoom].every(inRange),
       };
+    },
+
+    /** 截图用：跟随某国并回报其面积与算出的倍率（不等待动画，由调用方截图）。 */
+    followShot(iso: string) {
+      renderer.setWorldMode(true, null, null);
+      renderer.focusWorldCountry(iso);
+      const area = anyApp.data.countryArea[iso] ?? 0;
+      return { area: Number(area.toFixed(4)), zoom: worldFollowZoom(area) };
     },
 
     /** 还原：把视图切回世界全图（探针之间互不污染）。 */
