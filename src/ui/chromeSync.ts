@@ -42,6 +42,7 @@ export class ChromeSync {
     const current = this.s.current();
     const mode = current?.id;
     const isNonMap = mode === 'board' || mode === 'admin';
+    const isPuzzle = mode === 'puzzle';
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
     const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
@@ -53,11 +54,14 @@ export class ChromeSync {
     // 点击/输入模式处于省级全国（含港澳放大框）时，左下说明/缩放按钮上移避免被放大框遮挡
     const provinceNationInset = (mode === 'click' || mode === 'self') && (current?.isProvinceNation?.() ?? false);
     $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
-    $('map').classList.toggle('hidden', isNonMap);
+    $('map').classList.toggle('hidden', isNonMap || isPuzzle);
+    $('puzzle').classList.toggle('hidden', !isPuzzle);
     $('board').classList.toggle('hidden', mode !== 'board');
     $('admin').classList.toggle('hidden', mode !== 'admin');
     $('mode-info').classList.toggle('hidden', isNonMap);
     $('endless-status').classList.toggle('hidden', mode !== 'endless' || !current?.isStarted());
+    // 拼图顶部进度行：只有拼图模式且已开始（或刚完成）时显示，内容由 PuzzleMode 写入
+    $('puzzle-status').classList.toggle('hidden', !isPuzzle || !current?.isStarted());
     // 每模式设置按钮：该模式提供设置面板时显示
     $('btn-mode-settings').classList.toggle('hidden', !current?.getModeSettings());
     $('endless-items').classList.toggle('hidden', mode !== 'endless');
@@ -76,9 +80,15 @@ export class ChromeSync {
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
-    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap && mode !== 'memory');
+    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap && mode !== 'memory' && !isPuzzle);
     this.syncSegments();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
+    // 拼图难度行：只在本模式显示，并把当前档位同步到按钮高亮
+    $('puzzle-break').classList.toggle('hidden', !isPuzzle);
+    $('puzzle-difficulty-toggle').classList.toggle('hidden', !isPuzzle);
+    if (isPuzzle) {
+      this.syncSegmentedToggle('puzzle-difficulty-toggle', (current as { getDifficulty?: () => string })?.getDifficulty?.() ?? 'easy');
+    }
     this.syncViewChrome();
   }
 
@@ -152,22 +162,24 @@ export class ChromeSync {
   syncSegments() {
     const current = this.s.current();
     const mode = current?.id;
+    const isPuzzle = mode === 'puzzle';
     const testStarted = !!current?.isStarted();
     const scope = current?.getScopeProvince();
     const scopeIsNation = isNationLikeScope(scope);
     const isGranularityMode = mode === 'click' || mode === 'self';
     const isTestMode = mode === 'self' || mode === 'click' || mode === 'endless';
     // 跳过/暂停/重置显隐：click/self 未开始只留「重置」，开始后显示 跳过·暂停·重置（顺序：跳过→暂停→重置）
+    // 拼图模式：没有跳过；开始前只留「重置」，开始后给出「暂停」与「重置」
     $('btn-skip').classList.toggle('hidden', !isTestMode || mode === 'endless' || (isGranularityMode && !testStarted));
-    $('btn-end').classList.toggle('hidden', !isTestMode || (isGranularityMode && !testStarted));
-    $('btn-reset').classList.toggle('hidden', isGranularityMode ? false : !isTestMode && mode !== 'free');
+    $('btn-end').classList.toggle('hidden', isPuzzle ? !testStarted : !isTestMode || (isGranularityMode && !testStarted));
+    $('btn-reset').classList.toggle('hidden', isPuzzle ? false : isGranularityMode ? false : !isTestMode && mode !== 'free');
     // 搜索输入框：输入/自测仅测试开始时显示；无尽闯关输入框常驻
     const searchVisible = mode === 'endless' || (mode === 'self' && testStarted);
     $('search-row').classList.toggle('hidden', !searchVisible);
-    // 「世界/省级/市级」：点击/输入模式（全国范围且未开始测试时）与自由模式（纯浏览，随时可切）显示。
-    // 自由模式沿用同一组分段按钮，但模式下钻能力已关闭（双击不下钻）。
-    const showsGranularity = isGranularityMode || mode === 'memory';
-    const granularityVisible = showsGranularity && !testStarted && (mode === 'memory' || scopeIsNation);
+    // 「世界/省级/市级」：点击/输入模式（全国范围且未开始测试时）、自由模式（纯浏览，随时可切）
+    // 与拼图模式（本轮只实现省级，另两档点了会提示"暂未开放"）显示。
+    const showsGranularity = isGranularityMode || mode === 'memory' || isPuzzle;
+    const granularityVisible = showsGranularity && !testStarted && (mode === 'memory' || isPuzzle || scopeIsNation);
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
     if (granularityVisible) {
       const g = (current?.getGranularity?.() ?? 'province') as Granularity;
@@ -175,10 +187,11 @@ export class ChromeSync {
     }
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
     // 熟练度分析（free）世界档无「开始测试」概念，故单独放行（Q21）。
-    // 自由模式世界档不显示洲/次区域行：该模式不支持下钻，这些按钮没有作用对象。
+    // 自由模式与拼图模式不显示洲/次区域行：前者不支持下钻、后者本轮只有省级。
     const isAnalysisWorld = mode === 'free' && (current?.getGranularity?.() ?? 'city') === 'world';
     const isWorldGranularity =
-      isAnalysisWorld || (granularityVisible && mode !== 'memory' && (current?.getGranularity?.() ?? 'province') === 'world');
+      isAnalysisWorld ||
+      (granularityVisible && mode !== 'memory' && !isPuzzle && (current?.getGranularity?.() ?? 'province') === 'world');
     $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
     // 换行占位随洲按钮一同显隐，否则非世界粒度时会凭空多出一个空行
     $('continent-break').classList.toggle('hidden', !isWorldGranularity);

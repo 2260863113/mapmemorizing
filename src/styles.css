@@ -326,6 +326,7 @@ body.theme-dark #test-timer.urgent {
   background: transparent;
 }
 #app.test-paused #map,
+#app.test-paused #puzzle,
 #app.test-paused #side-panel {
   filter: blur(12px);
   transform: scale(1.02);
@@ -575,6 +576,7 @@ body.theme-dark .mode-segmented button.active {
 .start-action.secondary { background: var(--panel-bg); color: var(--input-text); border-color: var(--input-border); }
 .start-action.secondary:hover { background: var(--control-hover); border-color: var(--muted); }
 #endless-status,
+#puzzle-status,
 #top-status #test-timer {
   display: inline-flex;
   align-items: center;
@@ -594,6 +596,14 @@ body.theme-dark .mode-segmented button.active {
   font-size: 15px;
   font-weight: 700;
 }
+#puzzle-status {
+  gap: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+#puzzle-status b,
+.puzzle-done-title b { color: var(--accent); }
+.puzzle-done-title { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
 #top-status #test-timer {
   min-width: 92px;
   font-size: 17px;
@@ -823,6 +833,110 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 }
 .inline-action:hover { background: var(--accent-strong); }
 #map { flex: 1; min-width: 0; background: var(--map-bg); }
+/* ---------- 拼图模式画布 ----------
+   进入拼图模式时 #map 隐藏、本层显示（与留言板/管理同一套做法）。
+   画布是纯 SVG：碎片用真值投影的 path，拖动只改所属 <g> 的 translate。 */
+#puzzle {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--map-bg);
+  touch-action: none; /* 指针拖拽自行处理，禁用浏览器手势 */
+  user-select: none;
+  cursor: grab;
+}
+#puzzle .puzzle-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+#puzzle .puzzle-piece {
+  vector-effect: non-scaling-stroke; /* 描边恒定 1px，不随缩放变粗 */
+  cursor: grab;
+}
+#puzzle .puzzle-group {
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22)); /* 已成组的块统一投影 */
+}
+#puzzle .puzzle-group.can-snap .puzzle-piece {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+#puzzle .puzzle-label {
+  font-size: calc(14px / var(--pz, 1)); /* 屏幕字号恒定（不随缩放变粗），与地图页省名同档 */
+  font-weight: 600;
+  paint-order: stroke;
+  stroke-width: calc(3px / var(--pz, 1));
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+#puzzle .puzzle-ghost {
+  opacity: 0.7;
+  pointer-events: none;
+}
+#puzzle .puzzle-sea-islets {
+  animation: puzzle-fade-in 0.6s ease;
+}
+@keyframes puzzle-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+#puzzle.puzzle-disabled,
+#puzzle .puzzle-disabled { cursor: default; }
+/* 左侧三个玻璃态卡槽：竖排居中，不挤压画布 */
+.puzzle-slots {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 6;
+  pointer-events: auto;
+}
+.puzzle-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 96px;
+  height: 96px;
+  padding: 8px;
+  border: 1px solid var(--floating-border);
+  border-radius: 14px;
+  /* 玻璃态：半透明底 + 背景模糊 + 内高光（与侧栏/浮层同一套 token） */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), var(--floating-shadow);
+  backdrop-filter: blur(14px) saturate(150%);
+  cursor: grab;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+body.theme-dark .puzzle-slot {
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.22), rgba(148, 163, 184, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--floating-shadow);
+}
+.puzzle-slot:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.puzzle-slot-preview {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+.puzzle-slot-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--control-text);
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .puzzle-slot { width: 72px; height: 72px; }
+}
 #board {
   flex: 1;
   min-width: 0;

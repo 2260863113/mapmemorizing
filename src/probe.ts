@@ -432,6 +432,57 @@ export function installProbe(app: AppController) {
     },
 
     /**
+     * 拼图模式只读快照（2026-09 新增模式）：卡槽/已放置数/组结构/计时/视图变换。
+     * 全部按名读取 private 成员（探针惯例），不修改状态。
+     */
+    puzzle() {
+      const app = anyApp as unknown as {
+        puzzleMode?: { snapshot?: () => Record<string, unknown> };
+        current?: { id?: string } | null;
+      };
+      const snapshot = app.puzzleMode?.snapshot?.() ?? null;
+      return { mode: app.current?.id ?? null, ...(snapshot ?? {}) };
+    },
+
+    /** 探针用：直接开一局（等价于点「开始」）。 */
+    puzzleStart() {
+      const app = anyApp as unknown as { puzzleMode?: { debugStart?: () => void } };
+      app.puzzleMode?.debugStart?.();
+      return true;
+    },
+
+    /** 探针用：把剩余碎片按真值位置一次性放下（验证"拼成一整块 → 获胜"流程）。 */
+    puzzleAutoSolve() {
+      const app = anyApp as unknown as {
+        puzzleMode?: { debugAutoSolve?: () => boolean };
+      };
+      return app.puzzleMode?.debugAutoSolve?.() ?? false;
+    },
+
+    /** 探针用：切难度（等价于点「简单/困难」）。 */
+    puzzleDifficulty(d: 'easy' | 'hard') {
+      const app = anyApp as unknown as { puzzleMode?: { debugSetDifficulty?: (x: 'easy' | 'hard') => void } };
+      app.puzzleMode?.debugSetDifficulty?.(d);
+      return true;
+    },
+
+    /** 探针用：把某片放到指定拼图 px 处（验证吸附判定，不经过指针）。 */
+    puzzlePlaceAt(adcode: string, x: number, y: number) {
+      const app = anyApp as unknown as {
+        puzzleMode?: { debugPlaceAt?: (a: string, x: number, y: number) => unknown };
+      };
+      return app.puzzleMode?.debugPlaceAt?.(adcode, x, y) ?? null;
+    },
+
+    /** 探针用：某片"真值位置"在拼图 px 下的坐标。 */
+    puzzleTruePosition(adcode: string) {
+      const app = anyApp as unknown as {
+        puzzleMode?: { debugTruePosition?: (a: string) => unknown };
+      };
+      return app.puzzleMode?.debugTruePosition?.(adcode) ?? null;
+    },
+
+    /**
      * 7. 顺序模式出的题**必须都在当前地图范围内**（用户报的缺陷）。
      *
      * 做法：把输入模式切到「世界粒度 + 亚洲」，跑完整个顺序序列，逐题断言

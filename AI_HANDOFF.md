@@ -1,6 +1,32 @@
 # 给下一个 AI 的交接文档
 
-## 本轮（跟随钳制）：边缘目标不再被顶到正中
+## 本轮（新增拼图模式）
+
+需求：在输入模式右边、无尽闯关左边加一个**拼图模式**；进入时没有地图；左侧三个玻璃态方槽装着地图单位；拖出即 1:1 大小、可任意摆放；相邻两片接近时吸合成组、整组可拖；岛类（台湾/海南）以最近单位当邻居；碎片取 plus（40%）档；本轮只做全国省级；34 片拼成一整块即获胜。
+
+四轮 grill 定稿的口径（详见 `DESIGN.md` §17 与 `CONTEXT.md` 的「拼图模式 / 卡槽 / 拼图组 / 拼图邻接 / 拼图难度」）：
+
+- **入口**：mode id 新增 `puzzle`（按 ADR-0001 分配新 id）；页签顺序 点击/输入/**拼图**/无尽/自由；不提交排行榜（服务端白名单仍是 self/click/endless）。
+- **画面**：`#map` 隐藏、新的 `#puzzle` SVG 画布显示（与留言板/管理同一套做法）；投影与地图页一致；默认比例 = 中国 bbox 宽 ≈ 视口宽 ×1.15；滚轮 0.6–6x、拖空白平移、双击空白复位。
+- **卡槽**：左侧浮层竖排 3 个 96×96 玻璃态方槽、竖直居中；预览按最长边占槽 78%；随拖随补；**开始前卡槽已填满**（点「开始」只启动计时，不重新打乱）；不能退回卡槽。
+- **磁吸**：只在**松手**时判定，容差 15 拼图像素（真实比例），对齐到**被拖动的一方**；拖动中只高亮"可吸附"；可连锁合并；不相邻的两片即使重叠也不吸。
+- **海南与南海**：海南片只含主岛 + 近岸小岛；三沙等远海岛礁在**获胜后自动补上**（淡入并入海南组）；「南海诸岛」装饰面全程不出现。
+- **难度**：简单/困难**只影响是否显示省名**，默认简单、存 localStorage。
+- **计时/暂停/获胜**：点「开始」才计时；暂停与切走都不累计；**不计步数**；34 片吸成一整块 → 补三沙 → 镜头连带岛礁缩到整图 → 完成卡片（用时 + 再来一局/关闭）。
+
+新增/改动文件：
+
+- `src/puzzle/{projection,pieces,adjacency,state,view}.ts`（新）+ 对应 3 个单测文件（25 例）
+- `src/modes/puzzle.ts`（新，模式：生命周期/计时/难度/获胜/探针钩子）
+- `src/map/geometry.ts`：新增 `bboxOfPolygons`（按子集算海南主岛 bbox 用）
+- `src/types.ts`（Mode 加 `puzzle`）、`src/ui/dom.ts`（`puzzleStatus`、`showSummary` 支持自定义「再来一局」文案）、`src/modeSettings.ts`（难度持久化）、`src/ui/chromeSync.ts`（`#puzzle`/`#map` 显隐、进度行、粒度/难度行、暂停与重置按钮分支）、`src/appController.ts`（注册模式、帮助文案、难度接线、切模式时不 resize 隐藏画布）、`index.html`（页签 + `#puzzle` + `#puzzle-status` + 难度分段按钮）、`messages.json`、`src/styles.css`
+- `src/probe.ts`：新增 `puzzle/puzzleStart/puzzleAutoSolve/puzzleDifficulty/puzzlePlaceAt/puzzleTruePosition`
+- `scripts/verify-puzzle.mjs`（新，22 项，含 CDP 真实鼠标拖拽）
+- `docs/adr/0006-puzzle-uses-own-svg-canvas.md`（新）、`DESIGN.md` §17、`CONTEXT.md`、`README.md`
+
+⚠ 实现中踩过的两个坑（都已修）：`pause()` 里必须**先 `commitElapsed()` 再置暂停标志**，否则整段时间被丢弃；获胜取景必须**连带 seaIslets 一起装进视口**，否则"自动补上"用户看不见。探针的 `puzzlePlaceAt` 走 `state.takeAny()`（能取池里的片），游戏内的拖拽仍只能从卡槽取。
+
+## 上一轮（跟随钳制）：边缘目标不再被顶到正中
 
 需求：世界跟随与省级/市级自动跟随，在目标已贴近当前地图范围边缘时不要把它挪到视觉正中，以免半屏空白。
 

@@ -19,6 +19,7 @@ import { AnalysisMode, provinceLevelOf, PROVINCE_LEVEL_WORD_KEY } from './modes/
 import { InputMode } from './modes/input';
 import { EndlessMode } from './modes/endless';
 import { FreeBrowseMode } from './modes/freeBrowse';
+import { PuzzleMode, type PuzzleDifficulty } from './modes/puzzle';
 import { ClickMode } from './modes/click';
 import { continentFromScope, isNationLikeScope, isWorldScope, PROVINCE_NATION_SCOPE, subregionFromScope, WORLD_NATION_SCOPE, type Granularity } from './province';
 import { CONTINENTS, type Continent, type SubregionId } from './types';
@@ -74,6 +75,7 @@ export class AppController {
   private selfMode: InputMode;
   private clickMode: ClickMode;
   private freeMode: AnalysisMode;
+  private puzzleMode: PuzzleMode;
   private modes: Record<Mode, ModeController>;
   private scoreSubmitter: ScoreSubmitter;
   private confirmTimers = new Map<string, number>();
@@ -152,12 +154,14 @@ export class AppController {
     this.selfMode = new InputMode(ctx);
     this.clickMode = new ClickMode(ctx);
     this.freeMode = new AnalysisMode(ctx);
+    this.puzzleMode = new PuzzleMode(ctx);
     this.modes = {
       free: this.freeMode,
       self: this.selfMode,
       endless: new EndlessMode(ctx),
       click: this.clickMode,
       memory: new FreeBrowseMode(ctx),
+      puzzle: this.puzzleMode,
       board: new BoardMode(this.boardPanel),
       admin: this.adminMode,
     };
@@ -328,7 +332,8 @@ export class AppController {
     this.updateProgress();
     void this.refreshSidePanel();
     // 从留言板/管理员切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
-    if (mode !== 'board' && mode !== 'admin') this.renderer.resize();
+    // （拼图模式用 #puzzle 自己的画布，不需要动隐藏中的 ECharts 画布）
+    if (mode !== 'board' && mode !== 'admin' && mode !== 'puzzle') this.renderer.resize();
   }
 
   // ==================== 视图 chrome 同步（薄委托到 ChromeSync） ====================
@@ -450,6 +455,7 @@ export class AppController {
     if (mode === 'self') return { title: t('help.self.title'), body: t('help.self.body') };
     if (mode === 'endless') return { title: t('help.endless.title'), body: t('help.endless.body') };
     if (mode === 'free') return { title: t('help.free.title'), body: t('help.free.body') };
+    if (mode === 'puzzle') return { title: t('help.puzzle.title'), body: t('help.puzzle.body') };
     if (mode === 'click') return { title: t('help.click.title'), body: t('help.click.body') };
     return { title: t('help.memory.title'), body: t('help.memory.body') };
   }
@@ -619,6 +625,15 @@ export class AppController {
         this.syncModeChrome();
         this.updateProgress();
         void this.refreshSidePanel();
+      });
+    });
+
+    // 拼图模式的「简单/困难」：只影响是否显示省名（PuzzleMode.setDifficulty 内部重绘）
+    document.querySelectorAll<HTMLButtonElement>('#puzzle-difficulty-toggle button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const d = btn.dataset.puzzleDifficulty as PuzzleDifficulty;
+        this.puzzleMode.setDifficulty(d);
+        this.syncSegmentedToggle('puzzle-difficulty-toggle', this.puzzleMode.getDifficulty());
       });
     });
 

@@ -100,6 +100,23 @@ export function bboxOfRings(rings: PolygonRings): [number, number, number, numbe
   return [minX, minY, maxX, maxY];
 }
 
+/** 多个多边形（各自可含内环）的并集 bbox（拼图切分海南时需要按子集算 bbox）。 */
+export function bboxOfPolygons(polygons: PolygonRings[]): [number, number, number, number] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const rings of polygons) {
+    for (const ring of rings) {
+      for (const [x, y] of ring) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  if (!Number.isFinite(minX)) return [0, 0, 0, 0];
+  return [minX, minY, maxX, maxY];
+}
+
 export function firstInsidePoint(polygon: PolygonRings): GeoPoint | null {
   for (const ring of polygon) {
     for (const point of ring) {

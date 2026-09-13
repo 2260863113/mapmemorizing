@@ -99,3 +99,25 @@ export function loadAnalysisHideLabels(): boolean {
 export function saveAnalysisHideLabels(v: boolean) {
   saveBool(ANALYSIS_HIDE_LABELS_KEY, v);
 }
+
+// ---------- 拼图模式（puzzle） ----------
+const PUZZLE_DIFFICULTY_KEY = 'china-admin-puzzle-difficulty-v1';
+
+/**
+ * 拼图难度：`easy`（默认，显示省名简称）/ `hard`（不显示）。
+ * 只影响是否显示标签——对齐容差与其它规则两档相同（用户口径）。
+ */
+export function loadPuzzleDifficulty(): 'easy' | 'hard' {
+  try {
+    return localStorage.getItem(PUZZLE_DIFFICULTY_KEY) === 'hard' ? 'hard' : 'easy';
+  } catch {
+    return 'easy';
+  }
+}
+export function savePuzzleDifficulty(v: 'easy' | 'hard') {
+  try {
+    localStorage.setItem(PUZZLE_DIFFICULTY_KEY, v);
+  } catch {
+    /* 忽略存储失败 */
+  }
+}

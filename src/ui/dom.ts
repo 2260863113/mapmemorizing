@@ -50,12 +50,13 @@ export function showStopwatch(elapsedMs: number | null) {
   el.textContent = `${(elapsedMs / 1000).toFixed(2)}s`;
 }
 
-export function showSummary(html: string, onRestart: () => void, onSubmit?: () => void) {
+export function showSummary(html: string, onRestart: () => void, onSubmit?: () => void, restartLabel?: string) {
   $('summary-body').innerHTML = html;
   const submit = $('summary-submit') as HTMLButtonElement;
   submit.classList.toggle('hidden', !onSubmit);
   submit.onclick = onSubmit ?? null;
   const restart = $('summary-restart') as HTMLButtonElement;
+  restart.textContent = restartLabel ?? t('summary.restart');
   restart.onclick = () => {
     hideSummary();
     onRestart();
@@ -83,6 +84,13 @@ export function hideSettlement() {
 /** 无尽闯关顶部进度卡片（空字符串时隐藏）。 */
 export function endlessStatus(html: string) {
   const el = $('endless-status');
+  el.innerHTML = html;
+  el.classList.toggle('hidden', html === '');
+}
+
+/** 拼图模式顶部进度行（空字符串时隐藏）。 */
+export function puzzleStatus(html: string) {
+  const el = $('puzzle-status');
   el.innerHTML = html;
   el.classList.toggle('hidden', html === '');
 }

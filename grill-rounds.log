@@ -650,3 +650,10 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 口径（用户三轮确认）：露白优先于"目标不贴边"→ 让步后露白 ≤ m；倍率下限夹 28x；世界全国按世界 bbox、大洲/次区域按标定框；即时取景（下钻/切洲）不改。
 - ⚠ 下钻极小范围（宁夏）时倍率下限需 47x，被 28x 上限截断，左右各余约 1.15° 空白——固有代价，若要继续收敛只能提高 MAX_ZOOM。
 - ⚠ 目标落在取景边界"外"时露白会超过 m（仅可能发生在世界大洲/次区域的取景框上，那里框外仍是陆地，无真正空白）。
+================================================================
+2026-09-13 19:00  新增拼图模式（全国省级）
+- 需求：输入模式右边、无尽闯关左边加「拼图模式」；进入无地图、左侧三个玻璃态卡槽装碎片，拖出即 1:1、可任意摆放，相邻两片接近（≤15px）松手即精确对齐成组、整组可拖；岛类按最近片兜底；碎片取 plus 40% 档；34 片吸成一整块即获胜。四轮 grill 定稿，详见 DESIGN §17 与 CONTEXT 词条。
+- 新增 src/puzzle/{projection,pieces,adjacency,state,view}.ts + 3 个单测（25 例）、src/modes/puzzle.ts、scripts/verify-puzzle.mjs（22 项，含 CDP 真实鼠标拖拽）、docs/adr/0006。
+- 改动：types/ui-dom/modeSettings/chromeSync/appController/index.html/messages.json/styles.css/probe.ts/map-geometry（新增 bboxOfPolygons）；文档 README/CONTEXT/DESIGN/AI_HANDOFF。
+- 口径：不做步数、不进排行榜；难度只影响是否显示省名；海南片只留主岛、三沙获胜后自动补上；非省级粒度点了只提示「暂未开放」。
+- ⚠ 已知取舍：默认比例下澳门只有约 1.6px 宽（从卡槽拖出不受影响，放下后要再挪需先放大）；世界/地级拼图未做，扩展只需换 buildPieces 的数据源与邻接表。
