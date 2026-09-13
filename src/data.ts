@@ -57,7 +57,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<{ subregions: AppData['subregions']; byIso: AppData['isoSubregion'] }>('data/subregions.json'),
     fetchJson<{ area: AppData['countryArea'] }>('data/world_area.json'),
   ]);
-  const allUnits = meta.units.map((u) => (isPureDecoration(u) ? u : { ...u, decorative: false }));
+  const allUnits = meta.units.map((u) => (isPureDecoration(u) ? { ...u, decorative: true } : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
   const provFine = provTopoToGeoJson(provFineTopo);
   // 五档精细度阶梯（顶点保留比例）：ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%
@@ -111,8 +111,18 @@ export function buildIndex(data: AppData) {
   return { byAdcode, provinceUnits };
 }
 
-function isPureDecoration(unit: Unit) {
-  return unit.adcode === '100000_JD';
+/**
+ * 装饰面判定：**省直辖县级市 / 兵团城市 / 南海诸岛**（`units.json` 里 `decorative: true`）
+ * 加上历史硬编码的南海诸岛 adcode。
+ *
+ * 为什么要认数据里的 flag：早期 `units.json` 只标了南海诸岛一面，这里是"除它之外一律
+ * `decorative: false`"的归一化；2026-09 数据管线把 32 个县级/兵团填充面也标成装饰面后，
+ * 这个归一化会把它们**洗成可答题单位**，于是答题池从文档口径的 340 涨到 372（出题会问
+ * 仙桃市、济源市、胡杨河市…）。设计口径见 DESIGN.md §2/§4.2：装饰面参与地图绘制与邻接，
+ * 但**不参与匹配/统计/测试**。故这里改为"数据标注优先"。
+ */
+export function isPureDecoration(unit: Unit) {
+  return unit.adcode === '100000_JD' || unit.decorative === true;
 }
 
 export type Index = ReturnType<typeof buildIndex>;

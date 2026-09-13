@@ -1,32 +1,54 @@
 /**
  * 拼图模式（puzzle，2026-09 新增，见 CONTEXT.md「拼图模式」与 docs/adr/0006）。
  *
- * 玩法：进入时画面上没有地图，左侧三个玻璃态卡槽里各装一片省级单位（plus 40% 几何）；
- * 拖出后是 1:1 真值大小，可放在任意位置；**松手时**相邻两片若接近其真值相对位置（≤15px）
- * 就精确对齐合成一组，此后整组一起拖；34 片吸成一整块即获胜。
+ * **两个阶段**（用户口径）：
+ *   1. **选范围（有地图）**：进模式时屏幕上仍是完整地图（按当前粒度渲染，简单档带名称标签）。
+ *      顶部「世界/省级/市级」切粒度；世界档另有「全世界/各大洲」与次区域两行。
+ *      点地图上的单位**下钻**（省级/市级 → 该省地级市；世界 → 大洲 → 次区域），点空白**退回上一层**。
+ *      这一阶段出「开始」卡片，副标题写明当前范围。
+ *   2. **拼图（无地图）**：点「开始」后地图隐藏、画布清空，只放当前范围的碎片；拖出即 1:1 真值
+ *      大小、可放任意位置；**松手时**相邻两片若接近其真值相对位置（≤15px）就精确对齐并为组，
+ *      此后整组一起拖；全部碎片吸成一整块即获胜。结束后难度按钮重新出现，「重置」回到开始卡片。
  *
- * 本轮只做**全国省级**：粒度分段按钮保留三档，点世界/市级只提示"暂未开放"。
- * 难度（简单/困难）只影响是否显示省名。计时从点「开始」起算，暂停/切走都不累计。
+ * 范围口径与点击/输入模式**共用同一套哨兵**（`PROVINCE_NATION_SCOPE` / `WORLD_NATION_SCOPE` /
+ * 大洲哨兵 / 次区域哨兵 / 省 adcode），于是大洲与次区域两行分段按钮、`isNationLikeScope` 等
+ * 现成逻辑直接可用。
+ *
+ * 不提交排行榜（服务端白名单仍是 self/click/endless）；难度（简单/困难）只影响是否显示名称，
+ * 运行中收起且不允许切换。
  */
-import type { Mode } from '../types';
+import type { AppData, Continent, Mode, SubregionId } from '../types';
+import { CONTINENTS } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t } from '../i18n';
-import type { Granularity } from '../province';
-import { buildProvinceAdjacency } from '../province';
+import {
+  buildProvinceAdjacency,
+  continentFromScope,
+  continentScope,
+  provinceShortName,
+  PROVINCE_NATION_SCOPE,
+  subregionFromScope,
+  subregionScope,
+  WORLD_NATION_SCOPE,
+  type Granularity,
+} from '../province';
 import { MAP_THEMES } from '../map/theme';
-import { buildPieces, type PuzzlePieceDef } from '../puzzle/pieces';
+import { buildPieces, countScopePieces, familyOf, type PuzzlePieceDef, type PuzzleScope } from '../puzzle/pieces';
 import { buildPuzzleAdjacency } from '../puzzle/adjacency';
 import { PuzzleState, SNAP_TOLERANCE_PX, type DropResult } from '../puzzle/state';
 import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
-import { PUZZLE_SPAN_LNG, project } from '../puzzle/projection';
+import { project, spanLng, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
 import { puzzleStatus, setHint, showSummary, toast } from '../ui/dom';
 
-/** 难度：简单 = 显示省名；困难 = 不显示（用户口径：难度只管标签）。 */
+/** 难度：简单 = 显示名称；困难 = 不显示（用户口径：难度只管标签，且运行中锁定）。 */
 export type PuzzleDifficulty = 'easy' | 'hard';
 
-/** 默认视角：整幅中国 bbox 宽 ≈ 视口宽 × 1.15（略大于视口，便于把碎片推到四周）。 */
+/** 拼图阶段：scope = 选范围（显示地图）；board = 拼图盘面（隐藏地图）。 */
+export type PuzzlePhase = 'scope' | 'board';
+
+/** 默认视角：范围 bbox 宽 ≈ 视口宽 × 1.15（略大于视口，便于把碎片推到四周）。 */
 const DEFAULT_WIDTH_RATIO = 1.15;
 
 /** 计时刷新间隔（毫秒）。 */
@@ -47,51 +69,296 @@ export class PuzzleMode extends BaseMode {
   private pieces: PuzzlePieceDef[] = [];
   private state: PuzzleState | null = null;
   private view: PuzzleView | null = null;
+  /** 视图绑定的 state 实例：范围/开局会新建 state，视图必须跟着重建。 */
+  private viewState: PuzzleState | null = null;
   private difficulty: PuzzleDifficulty = loadPuzzleDifficulty();
-  private granularity: Granularity = 'province';
 
+  private granularity: Granularity = this.loadGranularity();
+  /**
+   * 当前范围哨兵（与点击模式同一套编码）：
+   * 省级档 = `PROVINCE_NATION_SCOPE`；世界档 = 世界/大洲/次区域哨兵；
+   * 市级档 = null（全国）或省 adcode（下钻该省的地级市）。
+   */
+  private scope: string | null = PROVINCE_NATION_SCOPE;
+  /** 当前范围碎片集合的经度跨度（度）：默认比例按它算，让每个范围都铺满视口。 */
+  private scopeSpanLng = 0;
+
+  /** 一局进行中（开始 → 获胜/重置）。 */
   private started = false;
+  /** 已获胜（盘面保留在屏幕上，直到「重置」或再来一局）。 */
+  private finished = false;
   private paused = false;
   private entered = false;
-  private finished = false;
 
-  /** 计时：只在"已开始且未被暂停且在模式内"时累加。 */
   private elapsedMs = 0;
   private runStart = 0;
   private tickTimer: number | null = null;
+  private provinceAdjacencyCache: Map<string, string[]> | null = null;
 
   constructor(private ctx: ModeCtx) {
     super();
   }
 
+  // ==================== 粒度与范围 ====================
+
+  private granularityStorageKey() {
+    return 'china-admin-mode-granularity:puzzle';
+  }
+
+  private loadGranularity(): Granularity {
+    try {
+      const raw = localStorage.getItem(this.granularityStorageKey());
+      if (raw === 'city') return 'city';
+      if (raw === 'world') return 'world';
+      return 'province';
+    } catch {
+      return 'province';
+    }
+  }
+
+  private persistGranularity() {
+    try {
+      localStorage.setItem(this.granularityStorageKey(), this.granularity);
+    } catch {
+      /* 忽略存储失败 */
+    }
+  }
+
+  getGranularity(): Granularity {
+    return this.granularity;
+  }
+
+  /** 切粒度：回到该粒度的全国范围（运行中不允许——此时按钮已收起）。 */
+  setGranularity(g: Granularity) {
+    if (this.boardPhase() || this.granularity === g) return;
+    this.granularity = g;
+    this.persistGranularity();
+    this.scope = this.nationScopeFor(g);
+    this.enter();
+  }
+
+  private nationScopeFor(g: Granularity): string | null {
+    if (g === 'world') return WORLD_NATION_SCOPE;
+    if (g === 'province') return PROVINCE_NATION_SCOPE;
+    return null; // 市级全国
+  }
+
+  getScopeProvince(): string | null {
+    return this.scope;
+  }
+
+  /**
+   * 世界档的洲范围（供「全世界/各大洲」行高亮）。次区域哨兵里不含大洲，需反查一次——
+   * 否则选中次区域后洲行会掉高亮，且 `setWorldMode(continent=null, subregion)` 会被渲染器
+   * 当成"没有大洲"而忽略次区域（地图退回全世界，空白返回也失效）。
+   */
+  getWorldContinent(): Continent | null {
+    const cont = continentFromScope(this.scope);
+    if (cont) return cont;
+    const sub = subregionFromScope(this.scope);
+    return sub ? this.continentOfSubregion(sub) : null;
+  }
+
+  /** 世界档的次区域范围（供次区域行高亮）。 */
+  getWorldSubregion(): SubregionId | null {
+    return subregionFromScope(this.scope);
+  }
+
+  setWorldContinent(c: Continent | null) {
+    if (this.boardPhase() || this.granularity !== 'world') return;
+    this.scope = c ? continentScope(c) : WORLD_NATION_SCOPE;
+    this.enter();
+  }
+
+  setWorldSubregion(s: SubregionId | null) {
+    if (this.boardPhase() || this.granularity !== 'world') return;
+    const continent = this.getWorldContinent();
+    if (!continent) return;
+    this.scope = s ? subregionScope(s) : continentScope(continent);
+    this.enter();
+  }
+
+  isProvinceNation(): boolean {
+    return this.granularity === 'province' && this.scope === PROVINCE_NATION_SCOPE;
+  }
+
+  isWorldNation(): boolean {
+    return this.granularity === 'world' && this.scope === WORLD_NATION_SCOPE;
+  }
+
+  /** 当前范围的可读名（开始卡片副标题用）：带上片数与单位口径，让人一眼看清要拼什么。 */
+  scopeLabel(): string {
+    const count = countScopePieces(this.ctx.data, this.puzzleScope());
+    if (this.granularity === 'world') {
+      const sub = subregionFromScope(this.scope);
+      if (sub) {
+        const name = this.ctx.data.subregions.find((x) => x.id === sub)?.name ?? t('common.world');
+        return t('puzzle.scopeSubregion', { name, count });
+      }
+      const cont = continentFromScope(this.scope);
+      if (cont) {
+        const name = CONTINENTS.find((c) => c.id === cont)?.name ?? t('common.world');
+        return t('puzzle.scopeContinent', { name, count });
+      }
+      return t('puzzle.scopeWorld', { count });
+    }
+    if (this.granularity === 'province') return t('puzzle.scopeProvinceNation');
+    if (this.scope) return t('puzzle.scopeCityOf', { name: provinceShortName(this.ctx.data, this.scope), count });
+    return t('puzzle.scopeCityNation', { count });
+  }
+
+  /** 哨兵 → 碎片构建用的范围描述。 */
+  private puzzleScope(): PuzzleScope {
+    return {
+      granularity: this.granularity,
+      family: this.family(),
+      province: this.granularity === 'city' && this.scope ? this.scope : undefined,
+      continent: this.granularity === 'world' ? (this.getWorldContinent() ?? undefined) : undefined,
+      subregion: this.granularity === 'world' ? (this.getWorldSubregion() ?? undefined) : undefined,
+    };
+  }
+
+  private family(): PuzzleFamily {
+    return familyOf(this.granularity);
+  }
+
+  // ==================== 地图下钻（选范围阶段） ====================
+
+  /** 点地图上的单位 = 下钻（世界：国家→大洲→次区域；省级/市级：省→该省地级市）。 */
+  onUnitClick(adcode: string): boolean {
+    if (this.boardPhase()) return false;
+    if (this.granularity === 'world') {
+      const country = this.ctx.data.countries.find((c) => c.iso === adcode);
+      if (!country) return false;
+      if (this.getWorldContinent() !== country.continent) {
+        this.scope = continentScope(country.continent);
+        this.enter();
+        return true;
+      }
+      const sr = this.ctx.data.isoSubregion[adcode];
+      if (sr && this.getWorldSubregion() !== sr) {
+        this.scope = subregionScope(sr);
+        this.enter();
+        return true;
+      }
+      return false;
+    }
+    const province = this.ctx.data.provinces.find((p) => p.adcode === adcode);
+    if (!province) return false;
+    this.granularity = 'city';
+    this.persistGranularity();
+    this.scope = adcode;
+    this.enter();
+    return true;
+  }
+
+  /** 点空白 = 退回上一层（世界：次区域→大洲→世界；下钻某省→市级全国）。 */
+  onBackToNation() {
+    if (this.boardPhase()) return; // 盘面阶段地图已隐藏，这里只是防御
+    if (this.granularity === 'world') {
+      const sub = subregionFromScope(this.scope);
+      if (sub) {
+        const cont = this.continentOfSubregion(sub);
+        this.scope = cont ? continentScope(cont) : WORLD_NATION_SCOPE;
+        this.enter();
+        return;
+      }
+      if (continentFromScope(this.scope)) {
+        this.scope = WORLD_NATION_SCOPE;
+        this.enter();
+      }
+      return;
+    }
+    if (this.granularity === 'city' && this.scope) {
+      this.scope = null;
+      this.enter();
+    }
+  }
+
+  private continentOfSubregion(sub: SubregionId): Continent | null {
+    return this.ctx.data.subregions.find((s) => s.id === sub)?.continent ?? null;
+  }
+
   // ==================== 生命周期 ====================
+
+  /** 盘面阶段 = 一局进行中或已获胜（此时地图隐藏、画布显示）。 */
+  private boardPhase(): boolean {
+    return this.started || this.finished;
+  }
+
+  puzzlePhase(): PuzzlePhase {
+    return this.boardPhase() ? 'board' : 'scope';
+  }
 
   enter() {
     this.entered = true;
-    // 拼图不用地图：顺手把港澳放大框收起来（它由渲染器驱动，不随 #map 一起隐藏）
-    this.ctx.renderer.setProvinceMode(false, { inset: false });
-    this.ensureState();
-    this.mountView();
-    if (!this.started) {
+    if (!this.boardPhase()) {
+      // 选范围阶段：拆掉画布、丢弃上一局状态、显示地图与开始卡片
+      this.teardownView();
+      this.state = null;
+      this.pieces = [];
+      this.scopeSpanLng = 0;
+      this.renderScopeMap();
       this.showStartCard();
-    } else {
-      setHint('');
-      if (!this.paused) this.startTimer();
+      puzzleStatus('');
+      this.ctx.syncChrome?.();
+      return;
     }
-    this.refresh();
+    this.ensureState();
+    this.showBoard(false);
+    setHint('');
+    if (!this.paused) this.startTimer();
+    this.ctx.syncChrome?.();
   }
 
   exit() {
     this.entered = false;
-    this.stopTimer();
-    this.view?.setEnabled(false);
+    this.clearTick();
+    this.ctx.renderer.setProvinceMode(false, { inset: false });
   }
 
-  /** 该模式没有排行榜/熟练度，refresh 只负责把视角与配色跟上当前窗口与主题。 */
+  /** 选范围阶段的地图：灰面 + 名称标签（困难档隐藏名称），省级全国带港澳放大框。 */
+  private renderScopeMap() {
+    const hideLabels = this.difficulty === 'hard';
+    if (this.granularity === 'world') {
+      this.ctx.renderer.setWorldMode(true, this.getWorldContinent(), this.getWorldSubregion());
+      this.ctx.renderer.render({
+        colorOf: () => 'gray',
+        hideLabels,
+        worldShowAllLabels: !hideLabels,
+        worldLabelZoomThreshold: 0,
+        disableTooltip: true,
+      });
+      return;
+    }
+    if (this.granularity === 'province') {
+      this.ctx.renderer.setProvinceMode(true, { inset: true, allowDrill: false });
+      this.ctx.renderer.render({
+        colorOf: () => 'gray',
+        hideLabels,
+        showAllProvinceLabels: !hideLabels,
+        disableTooltip: true,
+      });
+      return;
+    }
+    this.ctx.renderer.setProvinceMode(false, { inset: false });
+    if (this.scope) this.ctx.renderer.drillToProvince(this.scope);
+    this.ctx.renderer.render({
+      colorOf: () => 'gray',
+      hideLabels,
+      showAllLabels: !hideLabels,
+      labelZoomThreshold: 0,
+      disableTooltip: true,
+    });
+  }
+
   refresh() {
     if (!this.entered) return;
-    const rect = this.puzzleEl()?.getBoundingClientRect();
-    if (rect && rect.width > 0) this.view?.refreshScale();
+    if (!this.boardPhase()) {
+      this.renderScopeMap();
+      return;
+    }
+    this.view?.refreshScale();
     this.view?.refreshStyle();
     this.view?.setEnabled(this.started && !this.paused);
     this.renderStatus();
@@ -107,76 +374,56 @@ export class PuzzleMode extends BaseMode {
     const actions = `<button id="puzzle-start" class="start-action">${t('common.start')}</button>`;
     setHint(
       `<div class="start-panel"><div class="start-title">${t('puzzle.startTitle')}</div>` +
-        `<div class="start-subtitle">${t('puzzle.startSubtitle')}</div>${actions}</div>`,
+        `<div class="start-subtitle">${t('puzzle.startSubtitle', { scope: this.scopeLabel() })}</div>${actions}</div>`,
     );
     const btn = document.getElementById('puzzle-start') as HTMLButtonElement | null;
     if (btn) btn.onclick = () => this.startRun();
   }
 
-  /** 点「开始」：不重新打乱（卡槽里的预览就是这一局的起手），只启动计时与拖拽。 */
+  /** 点「开始」：按当前范围建碎片、隐藏地图、启动计时。 */
   private startRun() {
     this.started = true;
     this.finished = false;
     this.paused = false;
     this.elapsedMs = 0;
-    this.startTimer(); // 内部会把 runStart 设为此刻
-    setHint(''); // 左下角不留说明文字（用户口径）
-    this.renderBoard();
+    this.pieces = [];
+    this.state = null;
+    this.scopeSpanLng = 0;
+    this.ensureState();
+    if (!this.state) {
+      // 该范围没有可拼碎片（理论上不会发生）：退回选范围，别留在空白盘面上
+      this.started = false;
+      this.enter();
+      return;
+    }
+    this.showBoard(true);
+    setHint('');
+    this.startTimer();
     this.renderStatus();
-    this.ctx.syncChrome?.(); // 开始后收起「简单/困难」分段按钮（运行中不允许切换）
+    this.ctx.syncChrome?.();
   }
 
-  /** 重开一局：重新打乱 + 计时归零（完成卡片的「再来一局」走这里，直接接着玩）。 */
+  /** 完成卡片的「再来一局」：同范围内重新打乱并立刻开跑。 */
   private restartRun() {
     this.state?.start();
-    this.view?.refreshStyle();
-    this.view?.resetView();
-    this.startRun();
+    this.started = true;
+    this.finished = false;
+    this.paused = false;
+    this.elapsedMs = 0;
+    this.showBoard(true);
+    this.startTimer();
+    this.renderStatus();
+    this.ctx.syncChrome?.();
   }
 
-  /**
-   * 「重置」= 回到**开始卡片**（用户口径）：清空画布、重新打乱卡槽、计时归零、
-   * 并把「简单/困难」分段按钮重新放出来。
-   */
+  /** 「重置」= 回到开始卡片：清空画布、回到选范围阶段（地图重新出现）。 */
   private resetToStartCard() {
-    this.state?.start();
     this.started = false;
     this.finished = false;
     this.paused = false;
     this.elapsedMs = 0;
     this.clearTick();
-    this.view?.refreshStyle();
-    this.view?.resetView();
-    this.view?.setEnabled(false);
-    this.showStartCard();
-    this.renderBoard();
-    this.renderStatus();
-    this.ctx.syncChrome?.();
-  }
-
-  private mountView() {
-    const el = this.puzzleEl();
-    if (!el) return;
-    if (!this.view) {
-      this.view = new PuzzleView({
-        container: el,
-        state: this.state!,
-        baseScale: () => this.baseScale(),
-        labels: () => this.difficulty === 'easy',
-        theme: () => this.themeColors(),
-        onDrop: (result) => this.onDrop(result),
-        toast,
-      });
-      this.view.mount();
-      this.view.resetView();
-      return;
-    }
-    this.view.setEnabled(this.started && !this.paused);
-  }
-
-  private renderBoard() {
-    this.view?.refreshStyle();
-    this.view?.setEnabled(this.started && !this.paused);
+    this.enter(); // 选范围分支会拆掉画布、丢弃 state、渲染地图并出开始卡片
   }
 
   private onDrop(result: DropResult) {
@@ -185,14 +432,14 @@ export class PuzzleMode extends BaseMode {
     this.finish();
   }
 
-  /** 获胜：补上三沙岛礁 → 缩到整图 → 弹完成卡片。 */
+  /** 获胜：补三沙（仅省级档有）→ 缩到整图 → 弹完成卡片。 */
   private finish() {
     this.finished = true;
     this.started = false;
-    this.stopTimer();
+    this.commitElapsed();
+    this.clearTick();
     this.view?.revealSeaIslets();
-    // 补完三沙后取景要连带它们一起装进来（否则那句"自动补上"用户根本看不见），
-    // 因而允许比用户可操作的最小倍率更小一点。
+    // 补完三沙后取景要连带它们一起装进来（否则「自动补上」看不见），故允许比用户可操作的最小倍率更小
     window.setTimeout(() => this.view?.fitAll(56, true, { includeSeaIslets: true, minZoom: 0.3 }), 260);
     window.setTimeout(() => {
       showSummary(
@@ -203,12 +450,13 @@ export class PuzzleMode extends BaseMode {
         t('puzzle.again'),
       );
     }, 900);
-    this.ctx.syncChrome?.(); // 结束后重新放出「简单/困难」分段按钮
+    this.renderStatus();
+    this.ctx.syncChrome?.(); // 结束后难度按钮重新出现（运行中收起）
   }
 
   pause() {
     if (!this.started) return;
-    this.commitElapsed(); // 先把刚才这一段并入累计，再置暂停（顺序反了会丢掉整段）
+    this.commitElapsed();
     this.paused = true;
     this.clearTick();
     this.view?.setEnabled(false);
@@ -229,7 +477,6 @@ export class PuzzleMode extends BaseMode {
     this.pause();
   }
 
-  /** 「重置」= 回到开始卡片（碎片重新打乱，计时归零）。 */
   onReset() {
     this.resetToStartCard();
     toast(t('puzzle.restarted'));
@@ -241,12 +488,10 @@ export class PuzzleMode extends BaseMode {
 
   // ==================== 计时 ====================
 
-  /** 当前已用时间：暂停/停止时是累计值，运行中再加上当前这一段。 */
   private elapsed(): number {
     return this.started && !this.paused ? this.elapsedMs + (performance.now() - this.runStart) : this.elapsedMs;
   }
 
-  /** 把正在跑的一段并入累计值（暂停/切走/获胜都要先调它，否则这段时间会丢或被算错）。 */
   private commitElapsed() {
     if (!this.started || this.paused) return;
     this.elapsedMs += performance.now() - this.runStart;
@@ -262,13 +507,8 @@ export class PuzzleMode extends BaseMode {
 
   private startTimer() {
     this.clearTick();
-    this.runStart = performance.now(); // 重新起算：暂停期间的时间不累计
+    this.runStart = performance.now();
     this.tickTimer = window.setInterval(() => this.renderStatus(), TICK_MS);
-  }
-
-  private stopTimer() {
-    this.commitElapsed();
-    this.clearTick();
   }
 
   // ==================== 视图辅助 ====================
@@ -280,58 +520,114 @@ export class PuzzleMode extends BaseMode {
   private baseScale(): number {
     const rect = this.puzzleEl()?.getBoundingClientRect();
     const width = rect && rect.width > 0 ? rect.width : 1280;
-    return (width * DEFAULT_WIDTH_RATIO) / PUZZLE_SPAN_LNG;
+    const span = this.scopeSpanLng > 0 ? this.scopeSpanLng : spanLng(this.family());
+    return (width * DEFAULT_WIDTH_RATIO) / span;
   }
 
   private themeColors(): PuzzleThemeColors {
     const map = MAP_THEMES[this.ctx.settings.darkMode ? 'dark' : 'light'];
-    return {
-      fill: map.fill.gray,
-      stroke: map.boundary[this.ctx.settings.provinceBoundaryTone],
-      label: map.labelNeutral,
-      halo: map.labelBg,
-    };
+    const tone =
+      this.granularity === 'city'
+        ? this.ctx.settings.cityBoundaryTone
+        : this.granularity === 'world'
+          ? this.ctx.settings.worldBoundaryTone
+          : this.ctx.settings.provinceBoundaryTone;
+    return { fill: map.fill.gray, stroke: map.boundary[tone], label: map.labelNeutral, halo: map.labelBg };
   }
 
+  /** 建碎片与邻接（范围变化或开局时调用一次）。 */
   private ensureState() {
     if (this.state) return;
-    this.pieces = buildPieces(this.ctx.data);
-    const adjacency = buildPuzzleAdjacency(this.pieces, buildProvinceAdjacency(this.ctx.data));
-    this.state = new PuzzleState(this.pieces, adjacency, SNAP_TOLERANCE_PX);
-    // 进模式就把三个卡槽填上（用户口径：开始前卡槽已可见），点「开始」只是启动计时与拖拽
+    const scope = this.puzzleScope();
+    const pieces = buildPieces(this.ctx.data, scope);
+    if (!pieces.length) {
+      toast(t('puzzle.emptyScope'));
+      return;
+    }
+    this.pieces = pieces;
+    const adjacency = buildPuzzleAdjacency(pieces, (adcode) => this.neighboursOf(adcode, scope));
+    this.state = new PuzzleState(pieces, adjacency, SNAP_TOLERANCE_PX);
     this.state.start();
+    const minLng = Math.min(...pieces.map((p) => p.bbox[0]));
+    const maxLng = Math.max(...pieces.map((p) => p.bbox[2]));
+    this.scopeSpanLng = Math.max(maxLng - minLng, 1e-6);
+  }
+
+  /** 某片的陆地邻居（按范围取不同来源：国家 / 省聚合 / 地级单位）。 */
+  private neighboursOf(adcode: string, scope: PuzzleScope): string[] {
+    if (scope.granularity === 'world') {
+      return this.ctx.data.countries.find((c) => c.iso === adcode)?.neighbors ?? [];
+    }
+    if (scope.granularity === 'province') {
+      if (!this.provinceAdjacencyCache) this.provinceAdjacencyCache = buildProvinceAdjacency(this.ctx.data);
+      return this.provinceAdjacencyCache.get(adcode) ?? [];
+    }
+    return this.ctx.data.units.find((u) => u.adcode === adcode)?.neighbors ?? [];
+  }
+
+  /**
+   * 显示盘面：**先让外壳把 `#puzzle` 显出来**再量尺寸。
+   *
+   * 顺序很关键：`#puzzle` 在选范围阶段是 `display:none`，此时 `getBoundingClientRect()` 宽度为 0，
+   * 基比例与 `resetView()` 的居中都会算错（碎片被摆到视口外）。故先切类名
+   * （同步触发样式/布局失效），再量尺寸、定视角。
+   */
+  private showBoard(reset: boolean) {
+    // 盘面阶段要脱离地图态：省级全国的港澳放大框（#hkmac-inset）是独立 DOM，
+    // 不退出省级模式它会一直浮在拼图画布上。
+    this.ctx.renderer.setWorldMode(false, null, null);
+    this.ctx.renderer.setProvinceMode(false, { inset: false });
+    this.ctx.syncChrome?.();
+    this.mountView();
+    this.view?.refreshScale();
+    if (reset) this.view?.resetView();
+    this.view?.refreshStyle();
+    this.view?.setEnabled(this.started && !this.paused);
+  }
+
+  private mountView() {
+    const el = this.puzzleEl();
+    if (!el || !this.state) return;
+    if (this.view && this.viewState !== this.state) this.teardownView();
+    if (!this.view) {
+      this.viewState = this.state;
+      this.view = new PuzzleView({
+        container: el,
+        state: this.state,
+        baseScale: () => this.baseScale(),
+        family: () => this.family(),
+        labels: () => this.difficulty === 'easy',
+        theme: () => this.themeColors(),
+        onDrop: (result) => this.onDrop(result),
+        toast,
+      });
+      this.view.mount();
+      return;
+    }
+    this.view.setEnabled(this.started && !this.paused);
+  }
+
+  private teardownView() {
+    this.view?.unmount();
+    this.view = null;
+    this.viewState = null;
   }
 
   private renderStatus() {
-    if (!this.started && !this.finished) {
+    const state = this.state;
+    if (!this.boardPhase() || !state) {
       puzzleStatus('');
       return;
     }
-    const state = this.state;
-    if (!state) return;
-    // 「已拼」= 起始 1、每吸附一次 +1（不是从卡槽拿出来的片数）
     puzzleStatus(
       t('puzzle.status', { placed: state.assembledCount(), total: state.totalCount(), time: formatClock(this.elapsed()) }),
     );
   }
 
-  // ==================== 模式接口（本轮只支持省级） ====================
+  // ==================== 模式接口 ====================
 
   getModeSettings(): ModeSettingsPanel | null {
     return null; // 难度用分段按钮，不开每模式设置浮层
-  }
-
-  /** 顶部粒度按钮：只有省级可用，另两档提示"暂未开放"。 */
-  getGranularity(): Granularity {
-    return this.granularity;
-  }
-
-  setGranularity(g: Granularity) {
-    if (g === 'province') {
-      this.granularity = 'province';
-      return;
-    }
-    toast(t('puzzle.notYet'));
   }
 
   getDifficulty(): PuzzleDifficulty {
@@ -340,10 +636,11 @@ export class PuzzleMode extends BaseMode {
 
   setDifficulty(d: PuzzleDifficulty) {
     if (this.difficulty === d) return;
-    if (this.started) return; // 运行中不允许切换（分段按钮此时已收起，这里再兜一层）
+    if (this.started) return; // 运行中不允许切换
     this.difficulty = d;
     savePuzzleDifficulty(d);
-    this.renderBoard();
+    if (this.boardPhase()) this.view?.refreshStyle();
+    else this.renderScopeMap(); // 选范围阶段：地图上的名称标签跟着难度变
     this.renderStatus();
   }
 
@@ -354,8 +651,11 @@ export class PuzzleMode extends BaseMode {
       started: this.started,
       paused: this.paused,
       finished: this.finished,
+      phase: this.puzzlePhase(),
       difficulty: this.difficulty,
       granularity: this.granularity,
+      scope: this.scope,
+      scopeLabel: this.scopeLabel(),
       placed: this.state?.assembledCount() ?? 0,
       total: this.state?.totalCount() ?? 0,
       slots: [...(this.state?.slots ?? [])],
@@ -378,12 +678,22 @@ export class PuzzleMode extends BaseMode {
 
   /** 探针用：直接开一局（等价于点「开始」）。 */
   debugStart() {
-    this.startRun();
+    if (!this.started) this.startRun();
   }
 
-  /** 探针用：重开一局（等价于点两次「重置」）。 */
+  /** 探针用：重开一局。 */
   debugRestart() {
     this.restartRun();
+  }
+
+  /** 探针用：切范围/粒度（等价于点分段按钮或地图下钻）。 */
+  debugSetScope(granularity: Granularity, scope: string | null) {
+    if (this.boardPhase()) return this.snapshot();
+    this.granularity = granularity;
+    this.scope = scope;
+    this.persistGranularity();
+    this.enter();
+    return this.snapshot();
   }
 
   /** 探针用：把某片从卡槽/池子取出并放到指定拼图 px 位置（不经过指针，用于验证吸附）。 */
@@ -395,7 +705,7 @@ export class PuzzleMode extends BaseMode {
     const scale = this.baseScale();
     const group = state.takeAny(adcode);
     if (!group) return null;
-    const origin = project(def.origin, scale);
+    const origin = project(def.origin, scale, this.family());
     state.moveGroup(group.id, x - origin[0], y - origin[1]);
     const result = state.drop(group.id);
     this.view?.refreshStyle();
@@ -404,16 +714,16 @@ export class PuzzleMode extends BaseMode {
     return { ...result, groupId: group.id };
   }
 
-  /** 探针用：某片真值位置在拼图 px 下的坐标（把两片放到"接近正确"处时用）。 */
+  /** 探针用：某片真值位置在拼图 px 下的坐标。 */
   debugTruePosition(adcode: string) {
     const def = this.state?.def(adcode);
     if (!def) return null;
     const scale = this.baseScale();
-    const [x, y] = project(def.origin, scale);
+    const [x, y] = project(def.origin, scale, this.family());
     return { x, y, scale };
   }
 
-  /** 探针用：把剩余碎片按真值位置全部放下（用于验证获胜流程）。 */
+  /** 探针用：把剩余碎片按真值位置全部放下（验证获胜流程）。 */
   debugAutoSolve() {
     const state = this.state;
     if (!state) return false;
@@ -428,4 +738,9 @@ export class PuzzleMode extends BaseMode {
     if (state.isComplete() && !this.finished) this.finish();
     return state.isComplete();
   }
+}
+
+/** 供测试复用：按范围取碎片（不参与运行逻辑）。 */
+export function puzzlePiecesForScope(data: AppData, scope: PuzzleScope): PuzzlePieceDef[] {
+  return buildPieces(data, scope);
 }

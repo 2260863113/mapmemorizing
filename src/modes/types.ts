@@ -86,6 +86,11 @@ export interface ModeController {
   isWorldNation?(): boolean;
   /** 当前粒度（输入/点击/自由/熟练度分析用；其它模式返回 null）。 */
   getGranularity?(): Granularity | null;
+  /**
+   * 拼图模式的两阶段：`scope` = 选范围（显示地图，可下钻）、`board` = 拼图盘面（隐藏地图）。
+   * 外壳据此决定「地图 / 拼图画布 / 粒度行 / 进度行」的显隐；非拼图模式返回 undefined。
+   */
+  puzzlePhase?(): 'scope' | 'board';
   /** 切换全国层的世界/省级/市级粒度（输入/点击/自由模式；熟练度分析用 setAnalysisGranularity）。 */
   setGranularity?(g: Granularity): void;
   /** 世界粒度下的当前大洲范围（null=全世界；非世界粒度返回 null）。 */

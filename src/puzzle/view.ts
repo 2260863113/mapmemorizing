@@ -11,7 +11,7 @@
  * 指针事件统一挂在容器 `#puzzle` 上（槽与画布都是它的子节点）：槽上按下要捕获指针才能拿到
  * 后续 move/up，而捕获目标取同一个容器最省事。
  */
-import { PUZZLE_SPAN_LNG, pxBBoxOf, project, svgPathOf } from './projection';
+import { pxBBoxOf, project, spanLng, svgPathOf, type PuzzleFamily } from './projection';
 import { PuzzleState, type DropResult } from './state';
 
 export interface PuzzleThemeColors {
@@ -26,6 +26,8 @@ export interface PuzzleViewOptions {
   state: PuzzleState;
   /** 1x 时的每经度像素数（随视口宽度变化，由模式计算）。 */
   baseScale: () => number;
+  /** 当前投影族（世界档为 world，其余为 china）。 */
+  family: () => PuzzleFamily;
   /** 是否显示省名（简单档）。 */
   labels: () => boolean;
   theme: () => PuzzleThemeColors;
@@ -152,6 +154,10 @@ export class PuzzleView {
     return this.opts.baseScale();
   }
 
+  private get family(): PuzzleFamily {
+    return this.opts.family();
+  }
+
   // ==================== 渲染 ====================
 
   private ensurePieces(force = false): void {
@@ -169,7 +175,7 @@ export class PuzzleView {
         path.setAttribute('fill-rule', 'evenodd');
         this.paths.set(adcode, path);
       }
-      path.setAttribute('d', svgPathOf(def.polygons, scale));
+      path.setAttribute('d', svgPathOf(def.polygons, scale, this.family));
 
       let label = this.labelEls.get(adcode);
       if (!label) {
@@ -180,7 +186,7 @@ export class PuzzleView {
         this.labelEls.set(adcode, label);
       }
       label.textContent = def.label;
-      const [lx, ly] = project(def.labelAnchor, scale);
+      const [lx, ly] = project(def.labelAnchor, scale, this.family);
       label.setAttribute('x', lx.toFixed(1));
       label.setAttribute('y', ly.toFixed(1));
     }
@@ -254,7 +260,7 @@ export class PuzzleView {
       slot.className = 'puzzle-slot';
       slot.dataset.adcode = adcode;
       slot.title = def.name;
-      const bbox = pxBBoxOf(def.polygons, scale);
+      const bbox = pxBBoxOf(def.polygons, scale, this.family);
       const w = Math.max(bbox[2] - bbox[0], 1e-6);
       const h = Math.max(bbox[3] - bbox[1], 1e-6);
       const pad = 1 / 0.78; // 预览最长边占槽 78%
@@ -265,7 +271,7 @@ export class PuzzleView {
       mini.setAttribute('viewBox', `${(cx - (w * pad) / 2).toFixed(1)} ${(cy - (h * pad) / 2).toFixed(1)} ${(w * pad).toFixed(1)} ${(h * pad).toFixed(1)}`);
       mini.setAttribute('preserveAspectRatio', 'xMidYMid meet');
       const miniPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      miniPath.setAttribute('d', svgPathOf(def.polygons, scale));
+      miniPath.setAttribute('d', svgPathOf(def.polygons, scale, this.family));
       miniPath.setAttribute('fill', colors.fill);
       miniPath.setAttribute('stroke', colors.stroke);
       miniPath.setAttribute('stroke-width', String(Math.max(w, h) / 220));
@@ -414,7 +420,7 @@ export class PuzzleView {
     const def = state.def(adcode);
     const scale = this.baseScale;
     const [wx, wy] = this.toWorld(clientX, clientY);
-    const origin = def ? project(def.origin, scale) : [0, 0];
+    const origin = def ? project(def.origin, scale, this.family) : [0, 0];
     state.moveGroup(group.id, wx - origin[0], wy - origin[1]);
     this.dragGroupId = group.id;
     this.dragStart = { x: clientX, y: clientY, dx: group.dx, dy: group.dy };
@@ -480,10 +486,10 @@ export class PuzzleView {
     this.resetView();
   };
 
-  /** 回到默认视角：整幅中国约占视口宽 1.15 倍（略大于视口）。 */
+  /** 回到默认视角：当前范围整幅约占视口宽 1.15 倍（略大于视口）。 */
   resetView(): void {
     this.zoom = 1;
-    const width = PUZZLE_SPAN_LNG * this.baseScale;
+    const width = spanLng(this.family) * this.baseScale;
     const rect = this.svg?.getBoundingClientRect();
     const viewW = rect?.width ?? 0;
     const viewH = rect?.height ?? 0;
@@ -513,9 +519,9 @@ export class PuzzleView {
       for (const adcode of group.pieces) {
         const def = state.def(adcode);
         if (!def) continue;
-        include(pxBBoxOf(def.polygons, scale), group.dx, group.dy);
+        include(pxBBoxOf(def.polygons, scale, this.family), group.dx, group.dy);
         // 获胜时把刚补上的远海岛礁（三沙）也算进取景，否则它们会落在视口外看不见
-        if (includeIslets && def.seaIslets.length) include(pxBBoxOf(def.seaIslets, scale), group.dx, group.dy);
+        if (includeIslets && def.seaIslets.length) include(pxBBoxOf(def.seaIslets, scale, this.family), group.dx, group.dy);
       }
     }
     if (!Number.isFinite(minX)) return;
@@ -566,7 +572,7 @@ export class PuzzleView {
         if (!wrap) continue;
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('class', 'puzzle-piece puzzle-sea-islets');
-        path.setAttribute('d', svgPathOf(def.seaIslets, scale));
+        path.setAttribute('d', svgPathOf(def.seaIslets, scale, this.family));
         path.setAttribute('fill', colors.fill);
         path.setAttribute('stroke', colors.stroke);
         path.setAttribute('fill-rule', 'evenodd');
@@ -638,7 +644,7 @@ export class PuzzleView {
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('class', 'puzzle-ghost');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', svgPathOf(def.polygons, scale));
+      path.setAttribute('d', svgPathOf(def.polygons, scale, this.family));
       path.setAttribute('fill', colors.fill);
       path.setAttribute('stroke', colors.stroke);
       path.setAttribute('fill-rule', 'evenodd');
@@ -647,7 +653,7 @@ export class PuzzleView {
       this.ghost = g;
     }
     const [wx, wy] = this.toWorld(clientX, clientY);
-    const origin = project(def.origin, scale);
+    const origin = project(def.origin, scale, this.family);
     const dx = wx - origin[0];
     const dy = wy - origin[1];
     this.ghost.setAttribute('transform', `translate(${dx.toFixed(2)} ${dy.toFixed(2)})`);

@@ -1,20 +1,23 @@
 /**
- * 拼图碎片：把省级 plus 档（40%）几何切成 34 片。
+ * 拼图碎片：按**当前范围**把地图切成可拖拽的碎片。
  *
- * 三件与数据有关的事实决定了这里的规则（均在 grill 中与用户确认）：
- *   1. 省级档里共 **35 个 feature**：34 个省级单位 + 1 个装饰面「南海诸岛」（adcode `100000_JD`）。
- *      装饰面**不参与拼图**（它是个框，不是省）。
- *   2. 海南省的 feature 含 **204 个多边形**（三沙/南海岛礁一路向南到 3.84°N），bbox 达 9.22°×16.32°，
- *      而主岛只有 2.41°×1.99°。整片拿来当碎片会是一块"稀疏大块"，故拆成两部分：
- *        · `polygons`  = 主岛 + 主岛 bbox 外扩 0.5° 内的近岸小岛 → 参与拼图；
- *        · `seaIslets` = 其余远海岛礁 → **获胜后自动补上**（用户口径），不参与拼图/计数。
- *   3. 其它省的 feature 直接整片当作碎片。
+ * 三个来源（都与点击/输入模式同一套数据口径）：
+ *   1. **世界档**：`worldGeoJson` 的国家面（194 个答题国，装饰面如属地/南极不作碎片）；
+ *      大洲/次区域范围按 `country.continent` 与 `isoSubregion` 过滤。
+ *   2. **省级档（全国）**：`provincesPlusGeoJson` 的 34 个省级单位（排除装饰面「南海诸岛」）。
+ *      ⚠ 海南省的 feature 含 204 个多边形（三沙一路到 3.84°N），整片当碎片会是一块"稀疏大块"，
+ *      故拆成 **主岛 + 近岸小岛**（拼图用）与 `seaIslets`（获胜后自动补上，不参与拼图/计数）。
+ *   3. **市级档（全国 / 下钻某省）**：`plusGeoJson` 的 340 个真实地级单位（装饰面不作碎片，
+ *      由 `data.units` 已经排除；下钻某省时按其 `provinceAdcode` 过滤）。
+ *
+ * 每片都带 `bbox`（经纬度）、`area`（度²，用于画布的上下覆盖：小的压在大的之上）、
+ * `origin`（bbox 中心，碎片"摆到正确位置"时的落点）与 `labelAnchor`（主面质心，标签位置）。
  */
-import type { AppData } from '../types';
+import type { AppData, Continent, SubregionId } from '../types';
 import { normalizeProvince } from '../matcher';
+import type { Granularity } from '../province';
 import {
   bboxOfPolygons,
-  bboxOfRings,
   bestLabelAnchor,
   largestPolygon,
   polygonsOf,
@@ -23,6 +26,7 @@ import {
   type GeoPoint,
   type PolygonRings,
 } from '../map/geometry';
+import type { PuzzleFamily } from './projection';
 
 /** 主岛 bbox 外扩多少度以内的岛算"近岸小岛"（海南用）。 */
 export const NEAR_ISLET_MARGIN_DEG = 0.5;
@@ -32,13 +36,13 @@ export const SEA_DECORATIVE_ADCODE = '100000_JD';
 
 export interface PuzzlePieceDef {
   adcode: string;
-  /** 官方全名（如 内蒙古自治区）。 */
+  /** 官方全名（如 内蒙古自治区 / 津巴布韦）。 */
   name: string;
-  /** 简称（如 内蒙古），拼图"简单"档显示它。 */
+  /** 简称（如 内蒙古 / 阿克苏），拼图"简单"档显示它。 */
   label: string;
   /** 参与拼图的多边形。 */
   polygons: PolygonRings[];
-  /** 获胜后自动补上的远海岛礁多边形（目前只有海南非空）。 */
+  /** 获胜后自动补上的远海岛礁多边形（目前只有海南省档非空）。 */
   seaIslets: PolygonRings[];
   /** 本片（不含 seaIslets）的经纬度 bbox。 */
   bbox: [number, number, number, number];
@@ -50,6 +54,22 @@ export interface PuzzlePieceDef {
   area: number;
 }
 
+/** 一次拼图的范围（粒度 + 下钻层级）。 */
+export interface PuzzleScope {
+  granularity: Granularity;
+  /** 投影族：世界档用 world，其余用 china。 */
+  family: PuzzleFamily;
+  /** 市级档下钻到某省（省 adcode）；未下钻为 undefined。 */
+  province?: string;
+  continent?: Continent;
+  subregion?: SubregionId;
+}
+
+/** 粒度 → 投影族。 */
+export function familyOf(granularity: Granularity): PuzzleFamily {
+  return granularity === 'world' ? 'world' : 'china';
+}
+
 function withinMargin(inner: [number, number, number, number], outer: [number, number, number, number]): boolean {
   return !(inner[0] > outer[0] || inner[2] < outer[2] || inner[1] > outer[1] || inner[3] < outer[3]);
 }
@@ -58,7 +78,7 @@ function withinMargin(inner: [number, number, number, number], outer: [number, n
 export function splitHainan(polygons: PolygonRings[]): { body: PolygonRings[]; islets: PolygonRings[] } {
   if (polygons.length <= 1) return { body: polygons, islets: [] };
   const main = largestPolygon(polygons);
-  const mainBox = bboxOfRings(main);
+  const mainBox = bboxOfRingsOf(main);
   const expanded: [number, number, number, number] = [
     mainBox[0] - NEAR_ISLET_MARGIN_DEG,
     mainBox[1] - NEAR_ISLET_MARGIN_DEG,
@@ -68,23 +88,75 @@ export function splitHainan(polygons: PolygonRings[]): { body: PolygonRings[]; i
   const body: PolygonRings[] = [];
   const islets: PolygonRings[] = [];
   for (const poly of polygons) {
-    const box = bboxOfRings(poly);
+    const box = bboxOfRingsOf(poly);
     const area = Math.abs(ringArea(poly[0] ?? []));
     // "远且小" → 远海岛礁；近岸小岛（在 margin 内）与主岛本身归入 body
-    const isIslet = !withinMargin(box, expanded) && area < 1;
-    (isIslet ? islets : body).push(poly);
+    (withinMargin(box, expanded) || area >= 1 ? body : islets).push(poly);
   }
-  // 兜底：主岛本身一定要在 body 里
   if (!body.includes(main)) body.push(main);
   return { body, islets };
 }
 
-/**
- * 从省级 plus 档几何构建 34 片。
- *
- * @param data 应用数据（用 `provincesPlusGeoJson`；缺失时返回空数组，调用方降级）
- */
-export function buildPieces(data: AppData): PuzzlePieceDef[] {
+function bboxOfRingsOf(polygon: PolygonRings): [number, number, number, number] {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const ring of polygon) {
+    for (const [x, y] of ring) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  return [minX, minY, maxX, maxY];
+}
+
+/** 由多边形集合造一片。 */
+function makePiece(
+  adcode: string,
+  name: string,
+  label: string,
+  body: PolygonRings[],
+  seaIslets: PolygonRings[] = [],
+): PuzzlePieceDef {
+  const bbox = bboxOfPolygons(body);
+  const area = body.reduce((sum, poly) => sum + Math.abs(ringArea(poly[0] ?? [])), 0);
+  return {
+    adcode,
+    name,
+    label,
+    polygons: body,
+    seaIslets,
+    bbox,
+    area,
+    origin: [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2],
+    labelAnchor: bestLabelAnchor(body),
+  };
+}
+
+/** 世界档：国家面。 */
+function buildCountryPieces(data: AppData, scope: PuzzleScope): PuzzlePieceDef[] {
+  const geo = data.worldGeoJson as { features?: GeoFeature[] } | null | undefined;
+  const features = geo?.features ?? [];
+  const meta = new Map(data.countries.map((c) => [c.iso, c]));
+  const out: PuzzlePieceDef[] = [];
+  for (const feature of features) {
+    const iso = feature.properties.iso_a3 ? String(feature.properties.iso_a3) : '';
+    const country = meta.get(iso);
+    if (!country) continue; // 装饰面（属地/南极等）不作碎片
+    if (scope.continent && country.continent !== scope.continent) continue;
+    if (scope.subregion && data.isoSubregion[iso] !== scope.subregion) continue;
+    const polygons = polygonsOf(feature);
+    if (!polygons.length) continue;
+    out.push(makePiece(iso, country.fullName || country.name, country.name, polygons));
+  }
+  return out.sort((a, b) => a.adcode.localeCompare(b.adcode));
+}
+
+/** 省级档（全国）：34 个省级单位，海南拆主岛/远海岛礁。 */
+function buildProvincePieces(data: AppData): PuzzlePieceDef[] {
   const geo = data.provincesPlusGeoJson as { features?: GeoFeature[] } | null | undefined;
   const features = geo?.features ?? [];
   const byAdcode = new Map(data.provinces.map((p) => [p.adcode, p]));
@@ -96,19 +168,74 @@ export function buildPieces(data: AppData): PuzzlePieceDef[] {
     const all = polygonsOf(feature);
     if (!all.length) continue;
     const { body, islets } = adcode === '460000' ? splitHainan(all) : { body: all, islets: [] };
-    const bbox = bboxOfPolygons(body);
-    const area = body.reduce((sum, poly) => sum + Math.abs(ringArea(poly[0] ?? [])), 0);
-    out.push({
-      adcode,
-      name,
-      label: normalizeProvince(name),
-      polygons: body,
-      seaIslets: islets,
-      bbox,
-      area,
-      origin: [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2],
-      labelAnchor: bestLabelAnchor(body),
-    });
+    out.push(makePiece(adcode, name, normalizeProvince(name), body, islets));
   }
   return out.sort((a, b) => a.adcode.localeCompare(b.adcode));
+}
+
+/** 市级档：地级单位（全国 340 个；下钻某省时只用该省的）。 */
+function buildCityPieces(data: AppData, scope: PuzzleScope): PuzzlePieceDef[] {
+  const geo = data.plusGeoJson as { features?: GeoFeature[] } | null | undefined;
+  const features = geo?.features ?? [];
+  const featureByAdcode = new Map<string, GeoFeature>();
+  for (const f of features) {
+    const adcode = f.properties.adcode;
+    if (adcode) featureByAdcode.set(String(adcode), f);
+  }
+  const out: PuzzlePieceDef[] = [];
+  for (const unit of data.units) {
+    if (scope.province && unit.provinceAdcode !== scope.province) continue;
+    const feature = featureByAdcode.get(unit.adcode);
+    if (!feature) continue;
+    const polygons = polygonsOf(feature);
+    if (!polygons.length) continue;
+    out.push(makePiece(unit.adcode, unit.name, unit.shortName || unit.name, polygons));
+  }
+  return out.sort((a, b) => a.adcode.localeCompare(b.adcode));
+}
+
+/** 按范围构建碎片（顺序稳定：adcode 升序）。 */
+export function buildPieces(data: AppData, scope: PuzzleScope): PuzzlePieceDef[] {
+  if (scope.granularity === 'world') return buildCountryPieces(data, scope);
+  if (scope.granularity === 'province') return buildProvincePieces(data);
+  return buildCityPieces(data, scope);
+}
+
+/**
+ * 只数碎片个数（不解析几何）：开始卡片要写"把 xx 拼成…"，而那时还没开局。
+ *
+ * 过滤条件与三个 builder **逐条对齐**（单测断言与 `buildPieces().length` 相等），
+ * 但不做 `polygonsOf`，所以是毫秒级的；省/市/世界三档都不解析坐标。
+ */
+export function countScopePieces(data: AppData, scope: PuzzleScope): number {
+  if (scope.granularity === 'world') {
+    const geo = data.worldGeoJson as { features?: GeoFeature[] } | null | undefined;
+    const available = new Set<string>();
+    for (const f of geo?.features ?? []) {
+      const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
+      if (iso) available.add(iso);
+    }
+    return data.countries.filter((c) => {
+      if (!available.has(c.iso)) return false;
+      if (scope.continent && c.continent !== scope.continent) return false;
+      if (scope.subregion && data.isoSubregion[c.iso] !== scope.subregion) return false;
+      return true;
+    }).length;
+  }
+  if (scope.granularity === 'province') {
+    const geo = data.provincesPlusGeoJson as { features?: GeoFeature[] } | null | undefined;
+    let n = 0;
+    for (const f of geo?.features ?? []) {
+      const adcode = f.properties.adcode;
+      if (adcode && adcode !== SEA_DECORATIVE_ADCODE) n += 1;
+    }
+    return n;
+  }
+  const geo = data.plusGeoJson as { features?: GeoFeature[] } | null | undefined;
+  const available = new Set<string>();
+  for (const f of geo?.features ?? []) {
+    const adcode = f.properties.adcode;
+    if (adcode) available.add(String(adcode));
+  }
+  return data.units.filter((u) => (!scope.province || u.provinceAdcode === scope.province) && available.has(u.adcode)).length;
 }

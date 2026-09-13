@@ -473,6 +473,21 @@ export function installProbe(app: AppController) {
       return true;
     },
 
+    /** 探针用：切范围（等价于点「世界/省级/市级」、大洲行或下钻某单位）。 */
+    puzzleSetScope(granularity: string, scope: string | null) {
+      const app = anyApp as unknown as {
+        puzzleMode?: { debugSetScope?: (g: string, s: string | null) => Record<string, unknown> };
+      };
+      return app.puzzleMode?.debugSetScope?.(granularity, scope) ?? null;
+    },
+
+    /** 探针用：模拟「点空白返回上一层」（等价于地图空白点击后的模式回调）。 */
+    puzzleBack() {
+      const app = anyApp as unknown as { puzzleMode?: { onBackToNation?: () => void } };
+      app.puzzleMode?.onBackToNation?.();
+      return true;
+    },
+
     /** 探针用：把某片放到指定拼图 px 处（验证吸附判定，不经过指针）。 */
     puzzlePlaceAt(adcode: string, x: number, y: number) {
       const app = anyApp as unknown as {

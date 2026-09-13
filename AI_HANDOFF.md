@@ -1,18 +1,68 @@
 # 给下一个 AI 的交接文档
 
-## 本轮（新增拼图模式）
+## 本轮（拼图模式补齐：两阶段 + 世界/省级/市级三档）
 
-需求：在输入模式右边、无尽闯关左边加一个**拼图模式**；进入时没有地图；左侧三个玻璃态方槽装着地图单位；拖出即 1:1 大小、可任意摆放；相邻两片接近时吸合成组、整组可拖；岛类（台湾/海南）以最近单位当邻居；碎片取 plus（40%）档；本轮只做全国省级；34 片拼成一整块即获胜。
+需求（用户一次给了 7 条，前 6 条是上一轮的细节修正，第 7 条是本轮主体）：
 
-四轮 grill 定稿的口径（详见 `DESIGN.md` §17 与 `CONTEXT.md` 的「拼图模式 / 卡槽 / 拼图组 / 拼图邻接 / 拼图难度」）：
+1. 碎片上下覆盖改成**面积小的压在面积大的之上**（北京/天津陷在河北的环里）。
+2. 去掉左下角那段解释文字。
+3. 运行中**收起「简单/困难」分段按钮**（不允许中途切换），结束后重新显现。
+4. 「重置」= **回到开始卡片界面**。
+5. 难度分段按钮的**选中样式仿造其他模式**（其它分段按钮的 active 深色渐变 + 白字）。
+6. 顶部「已拼」= **拼合进度**：起始 1，每发生一次吸附 +1，而不是"从卡槽拿出了几片"。
+7. 加上**世界/省级/市级**三档分段按钮（世界支持全世界+下钻大洲/次区域，省级支持全国+下钻某省地级市，市级支持全国+下钻），并写好各范围的拼图逻辑。
+
+用户追加的两条口径（问过才做）：**开始之前仍然显示完整地图**，方便下钻确定范围；**开始之后清空画布**；**单击空白 = 返回上一层**。
+
+### 本轮真正的结构变化：拼图从"一阶段"变成"两阶段"
+
+| | 选范围阶段（`puzzlePhase() === 'scope'`） | 拼图盘面（`'board'`） |
+|---|---|---|
+| 画面 | `#map` 可见（灰面 + 名称标签按难度） | `#map` 隐藏、`#puzzle` 显示（港澳放大框必须显式收起） |
+| 按钮 | 粒度行 + 世界档的大洲行/次区域行 + 难度行 + 「重置」 | 「暂停」「重置」（难度行收起，结束后重现） |
+| 地图交互 | 单击单位下钻、点空白退回上一层 | 无地图 |
+| 出口 | 点「开始」→ 盘面 | 「重置」→ 选范围 |
+
+- 三档**共用点击/输入模式的 scope 哨兵**，所以大洲行、次区域行、`isNationLikeScope` 等现成接线全部复用；`ModeController` 新增可选 `puzzlePhase?()`，`chromeSync` 用它决定地图/画布/粒度行/进度行/缩放角标的显隐。
+- 片数：省级全国 **34**、世界 **194**（→亚洲 48、东亚 5…）、市级全国 **340**（→河北 11、四川 21…）。副标题与分母都由 `countScopePieces()` 现算（只数不解析几何）。
+- 三个范围各自的获胜都已在真机验收里跑通（34/194/11 片自动解 → 一整块）。
+
+### 本轮踩到并修掉的四个真 bug
+
+1. **次区域哨兵里不含大洲**：选中东亚后 `continentFromScope('__subregion_EAS__')` 返回 null，于是洲行掉高亮、`setWorldMode(true, null, 'EAS')` 被渲染器当成"没有大洲"而**忽略次区域**（地图退回全世界、`hasDrillLevel()` 变 false、**点空白也返回不了**）。修法：模式的 `getWorldContinent()` 在次区域档用 `subregions` 元数据反查大洲（`setWorldSubregion()` 同样）。
+2. **邻接图不连通 → 世界档拼不完**：兜底只给孤立片一条边，实测世界档分成 **6 块**（澳洲—巴新、新西兰、马达加斯加、日本…），`autoSolve` 只能拼到 6 组。`buildPuzzleAdjacency()` 新增**连通性修补**（按跨块 bbox 最小间距逐次搭桥）；单测对 9 个范围断言 `puzzleComponents(...).length === 1`。**这是"每局都有解"的硬保证，别删。**
+3. **装饰面把答题池洗成 372**：`data.ts` 的 `isPureDecoration()` 只认南海诸岛，`{...u, decorative: false}` 把 2026-09 数据管线标的 32 个县级/兵团装饰面洗成了可答题单位（会出"仙桃市"、进度 372 格、拼图市级 372 片）。改成**数据标注优先**，加 `src/data.test.ts` 守住 33 装饰 / 340 答题。**这会同时影响点击/输入/无尽模式的出题池**（这是修正到文档口径，不是新特性）。
+4. **量尺寸必须在显示之后**：`#puzzle` 在选范围阶段是 `display:none`，`getBoundingClientRect()` 宽度为 0 时算出的基比例与居中会把碎片摆到视口外。`showBoard()` 固定顺序：先让外壳切类名 → 再量尺寸/定视角。
+
+### 新增/改动文件
+
+- `src/puzzle/projection.ts`：加 `PuzzleFamily = 'china' | 'world'` 与两套 bbox（`spanLng/spanLat`），全部换算函数带可选 `family`（缺省 `'china'`，老调用点不用改）。
+- `src/puzzle/pieces.ts`：`PuzzleScope`（granularity + family + province/continent/subregion）、`familyOf()`、`buildCountryPieces`（世界，按大洲/次区域过滤）、`buildProvincePieces`、`buildCityPieces`（按省过滤）、`countScopePieces()`（只数不解析几何，与 `buildPieces().length` 逐档相等，有单测）。
+- `src/puzzle/adjacency.ts`：`buildPuzzleAdjacency(pieces, neighboursOf)`（第二个参数从 Map 改成**取邻居的函数**，按范围给不同来源）+ 兜底 + **连通性修补** + `puzzleComponents()`。
+- `src/puzzle/view.ts`：`family: () => PuzzleFamily` 选项（所有投影调用带族）；`resetView()` 用 `spanLng(this.family)`；`fitAll(..., { includeSeaIslets, minZoom })`；`applyHint` 的 class 缓存。
+- `src/modes/puzzle.ts`：**重写**为两阶段模式（粒度持久化 `china-admin-mode-granularity:puzzle`、下钻、`onBackToNation`、`showBoard()` 的顺序约定、`puzzlePhase()`、范围副标题、各范围邻居来源、`renderStatus` 在盘面阶段常显）。
+- `src/ui/chromeSync.ts`：地图/画布按**阶段**显隐、粒度行只在选范围阶段、世界档洲/次区域行对拼图开放、难度行按"运行中"显隐、盘面阶段收起缩放角标、`provinceInset` 含拼图的省级全国选范围阶段。
+- `src/modes/types.ts`：`ModeController.puzzlePhase?()`。
+- `src/data.ts` + `src/data.test.ts`：装饰面判定改为数据标注优先（bug 3）。
+- `src/probe.ts`：新增 `puzzleSetScope/puzzleBack`，`puzzle()` 快照加 `phase`。
+- `scripts/verify-puzzle.mjs`：**重写为 47 项**（两阶段 × 三粒度：选范围/下钻/空白返回/开始清空/拖拽/磁吸/难度收起与重现/暂停/三种获胜/重置）。
+- 文档：`DESIGN.md` §17（重写 + 新增 17.1/17.4）、`CONTEXT.md`（拼图范围、拼图邻接三层、难度两阶段作用）、`README.md`、`docs/shots/puzzle-*.png`。
+
+验收：`npx tsc --noEmit` 干净；`npx vitest run` 255 例全绿（拼图 32 例含 9 个范围的连通性）；`verify-puzzle` 47/47、`verify-round2` 38/38、`verify-round3` 38/38。
+
+## 上一轮（拼图模式首次落地）
+
+需求：在输入模式右边、无尽闯关左边加一个**拼图模式**；进入时没有地图；左侧三个玻璃态方槽装着地图单位；拖出即 1:1 大小、可任意摆放；相邻两片接近时吸合成组、整组可拖；岛类（台湾/海南）以最近单位当邻居；碎片取 plus（40%）档；34 片拼成一整块即获胜。
+
+四轮 grill 定稿的口径（详见 `DESIGN.md` §17 与 `CONTEXT.md` 的「拼图模式 / 卡槽 / 拼图组 / 拼图范围 / 拼图邻接 / 拼图难度」）：
 
 - **入口**：mode id 新增 `puzzle`（按 ADR-0001 分配新 id）；页签顺序 点击/输入/**拼图**/无尽/自由；不提交排行榜（服务端白名单仍是 self/click/endless）。
-- **画面**：`#map` 隐藏、新的 `#puzzle` SVG 画布显示（与留言板/管理同一套做法）；投影与地图页一致；默认比例 = 中国 bbox 宽 ≈ 视口宽 ×1.15；滚轮 0.6–6x、拖空白平移、双击空白复位。
-- **卡槽**：左侧浮层竖排 3 个 96×96 玻璃态方槽、竖直居中；预览按最长边占槽 78%；随拖随补；**开始前卡槽已填满**（点「开始」只启动计时，不重新打乱）；不能退回卡槽。
+- **画面**：**本轮起先选范围再拼图**——选范围阶段显示地图，点「开始」后 `#map` 隐藏、`#puzzle` SVG 画布显示（与留言板/管理同一套做法）；投影与地图页一致（分中国/世界两族）；默认比例 = 当前范围 bbox 宽 ≈ 视口宽 ×1.15；滚轮 0.6–6x、拖空白平移、双击空白复位。
+- **卡槽**：左侧浮层竖排 3 个 96×96 玻璃态方槽、竖直居中；预览按最长边占槽 78%；随拖随补；开局时卡槽已填满（「开始」只切阶段并启动计时，不重新打乱）；不能退回卡槽。
 - **磁吸**：只在**松手**时判定，容差 15 拼图像素（真实比例），对齐到**被拖动的一方**；拖动中只高亮"可吸附"；可连锁合并；不相邻的两片即使重叠也不吸。
 - **海南与南海**：海南片只含主岛 + 近岸小岛；三沙等远海岛礁在**获胜后自动补上**（淡入并入海南组）；「南海诸岛」装饰面全程不出现。
-- **难度**：简单/困难**只影响是否显示省名**，默认简单、存 localStorage。
-- **计时/暂停/获胜**：点「开始」才计时；暂停与切走都不累计；**不计步数**；34 片吸成一整块 → 补三沙 → 镜头连带岛礁缩到整图 → 完成卡片（用时 + 再来一局/关闭）。
+- **难度**：简单/困难**只影响是否显示名称**（本轮起：选范围阶段作用于地图标签、拼图阶段作用于碎片与卡槽名称），默认简单、存 localStorage；运行中收起、不允许切换。
+- **计时/暂停/获胜**：点「开始」才计时；暂停与切走都不累计；**不计步数**；当前范围全部碎片吸成一整块 → 补三沙（省级档）→ 镜头连带岛礁缩到整图 → 完成卡片（用时 + 再来一局/关闭）。
 
 新增/改动文件：
 
@@ -21,7 +71,7 @@
 - `src/map/geometry.ts`：新增 `bboxOfPolygons`（按子集算海南主岛 bbox 用）
 - `src/types.ts`（Mode 加 `puzzle`）、`src/ui/dom.ts`（`puzzleStatus`、`showSummary` 支持自定义「再来一局」文案）、`src/modeSettings.ts`（难度持久化）、`src/ui/chromeSync.ts`（`#puzzle`/`#map` 显隐、进度行、粒度/难度行、暂停与重置按钮分支）、`src/appController.ts`（注册模式、帮助文案、难度接线、切模式时不 resize 隐藏画布）、`index.html`（页签 + `#puzzle` + `#puzzle-status` + 难度分段按钮）、`messages.json`、`src/styles.css`
 - `src/probe.ts`：新增 `puzzle/puzzleStart/puzzleAutoSolve/puzzleDifficulty/puzzlePlaceAt/puzzleTruePosition`
-- `scripts/verify-puzzle.mjs`（新，22 项，含 CDP 真实鼠标拖拽）
+- `scripts/verify-puzzle.mjs`（新，22 项，含 CDP 真实鼠标拖拽；本轮已重写为 47 项）
 - `docs/adr/0006-puzzle-uses-own-svg-canvas.md`（新）、`DESIGN.md` §17、`CONTEXT.md`、`README.md`
 
 ⚠ 实现中踩过的两个坑（都已修）：`pause()` 里必须**先 `commitElapsed()` 再置暂停标志**，否则整段时间被丢弃；获胜取景必须**连带 seaIslets 一起装进视口**，否则"自动补上"用户看不见。探针的 `puzzlePlaceAt` 走 `state.takeAny()`（能取池里的片），游戏内的拖拽仍只能从卡槽取。

@@ -10,18 +10,32 @@ import {
   projectX,
   projectY,
   pxBBoxOf,
+  spanLat,
+  spanLng,
   svgPathOf,
   unproject,
 } from './projection';
 
 const SCALE = 27; // 默认比例下约 27px/°（1440 宽视口）
+const CN = PUZZLE_BBOX.china;
 
 describe('拼图投影', () => {
   it('bbox 左上角映射到原点，右下角映射到幅面尺寸', () => {
-    expect(projectX(PUZZLE_BBOX.minLng, SCALE)).toBeCloseTo(0, 9);
-    expect(projectY(PUZZLE_BBOX.maxLat, SCALE)).toBeCloseTo(0, 9);
-    expect(projectX(PUZZLE_BBOX.maxLng, SCALE)).toBeCloseTo(PUZZLE_SPAN_LNG * SCALE, 6);
-    expect(projectY(PUZZLE_BBOX.minLat, SCALE)).toBeCloseTo(PUZZLE_SPAN_LAT * SCALE * PUZZLE_LAT_PER_LNG, 6);
+    expect(projectX(CN.minLng, SCALE)).toBeCloseTo(0, 9);
+    expect(projectY(CN.maxLat, SCALE)).toBeCloseTo(0, 9);
+    expect(projectX(CN.maxLng, SCALE)).toBeCloseTo(PUZZLE_SPAN_LNG * SCALE, 6);
+    expect(projectY(CN.minLat, SCALE)).toBeCloseTo(PUZZLE_SPAN_LAT * SCALE * PUZZLE_LAT_PER_LNG, 6);
+  });
+
+  it('世界族用自己的一套 bbox（-180..180 / -90..83.6），与地图页一致', () => {
+    expect(spanLng('world')).toBeCloseTo(360, 6);
+    expect(spanLat('world')).toBeCloseTo(173.6, 6);
+    expect(projectX(-180, SCALE, 'world')).toBeCloseTo(0, 6);
+    expect(projectY(83.6, SCALE, 'world')).toBeCloseTo(0, 6);
+    // 同一经度在两族下的 x 不同（族是显式参数，不会串味）
+    expect(projectX(100, SCALE, 'world')).not.toBeCloseTo(projectX(100, SCALE, 'china'), 3);
+    // 缺省族仍是中国（老调用点不用改）
+    expect(projectX(100, SCALE)).toBeCloseTo(projectX(100, SCALE, 'china'), 9);
   });
 
   it('纬度是反向的（纬度越高 y 越小），且每度纬度比每度经度长 1/aspectScale 倍', () => {
