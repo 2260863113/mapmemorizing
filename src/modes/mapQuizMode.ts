@@ -375,6 +375,7 @@ export abstract class MapQuizMode extends BaseMode {
     this.started = false;
     this.paused = false;
     this.rollbacking = false;
+    this.ctx.setTestRunning?.(false); // 重置也是「结束」：展开排行榜侧栏
     if (this.rollbackTimer !== null) {
       window.clearTimeout(this.rollbackTimer);
       this.rollbackTimer = null;
@@ -622,6 +623,7 @@ export abstract class MapQuizMode extends BaseMode {
     }
     this.started = true;
     this.paused = false;
+    this.ctx.setTestRunning?.(true); // 开始测验：收起排行榜侧栏
     this.onStarted(first);
     this.stopwatch.start((elapsedMs) => this.ctx.showStopwatch(elapsedMs));
     this.ask(first);
@@ -730,6 +732,7 @@ export abstract class MapQuizMode extends BaseMode {
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
+    this.ctx.setTestRunning?.(false); // 结算：自动展开排行榜侧栏
     this.ctx.showTimer(null);
     this.ctx.showStopwatch(null);
     this.ctx.updateProgress();

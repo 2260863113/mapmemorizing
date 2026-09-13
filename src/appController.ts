@@ -146,6 +146,7 @@ export class AppController {
       hideSummary,
       updateProgress: () => this.updateProgress(),
       randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
+      setTestRunning: (running: boolean) => this.setTestRunning(running),
     };
 
     this.selfMode = new InputMode(ctx);
@@ -318,6 +319,19 @@ export class AppController {
   private syncSegmentedToggle(containerId: string, value: string) { this.chrome.syncSegmentedToggle(containerId, value); }
   private updateProgress() { this.chrome.updateProgress(); }
   private syncSegments() { this.chrome.syncSegments(); }
+
+  /**
+   * 测验开始/结束时收起或展开排行榜侧栏。
+   *
+   * 开始测验时收起，答题过程中不占视野；结算或重置后自动展开，方便看榜与提交成绩。
+   * 仅对**排行榜**侧栏生效——熟练度分析侧栏（free 模式）与测验无关，不在这里动。
+   */
+  private setTestRunning(running: boolean) {
+    // 熟练度分析模式没有测验生命周期，防御一下避免误改它的侧栏
+    if (this.current?.id === 'free') return;
+    this.sidePanel.setLeaderboardOpen(!running);
+    this.syncModeChrome();
+  }
 
   private backToNationFromMap() {
     hideSummary();

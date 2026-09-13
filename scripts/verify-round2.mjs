@@ -152,10 +152,10 @@ try {
   console.log('\n=== 5. 世界自动跟随：缩放与国家面积成反比 ===');
   const zoom = await evaluate('window.__probe.worldFollowZoom()');
   const fmt = (o) => Object.entries(o).map(([k, v]) => `${k}=${v.zoom.toFixed(2)}x(目标${v.want})`).join(' ');
-  check('命中用户标定的三个锚点（安/马/列→28x，法→13x，俄→2x）', zoom.anchorsHit === true, fmt(zoom.anchors));
-  check('缩放落在设计区间 [2, 28]', zoom.small <= 28.0001 && zoom.big >= 1.9999, `${zoom.small.toFixed(2)} / ${zoom.big.toFixed(2)}`);
+  check('命中用户标定的三档锚点（立陶宛 11x / 法国 8x / 俄罗斯 3x）', zoom.anchorsHit === true, fmt(zoom.anchors));
+  check('缩放落在设计区间 [3, 28]', zoom.small <= 28.0001 && zoom.big >= 2.9999, `${zoom.small.toFixed(2)} / ${zoom.big.toFixed(2)}`);
   check('全池单调不增（面积↑ ⇒ 缩放↓）', zoom.monotonic === true, `${zoom.countries} 国`);
-  check('小国顶到地图上限（28x）', zoom.small === 28, `顶到上限 ${zoom.atCeiling} 国`);
+  check('最大国最小倍率、最小国最大倍率', zoom.big <= 3.0001 && zoom.maxZoom < 28, `池内最大 ${zoom.maxZoom.toFixed(2)}x`);
 
   // 集成：真的调 renderer，证明「输入模式 ask() 走的那条路径」能驱动相机
   const af = await evaluate('window.__probe.worldAutoFollow()');
@@ -168,6 +168,19 @@ try {
   check('镜头中心已移动', pan.moved === true, `${pan.fromCenter} → ${pan.toCenter}`);
   check('缩放保持不变', Math.abs(pan.zoomFrom - pan.zoomTo) < 1e-6, `${pan.zoomFrom} → ${pan.zoomTo}`);
   check('平移后镜头对准正确答案所在国（澳大利亚）', pan.targeted === true, `目标 ${pan.ausCenter} vs 实际 ${pan.toCenter}`);
+
+  console.log('\n=== 7. 顺序模式出题不越界（下钻后不出范围外国家）===');
+  const scope = await evaluate('window.__probe.seqScopeRespected()');
+  check('出的每一题都在当前地图范围内（亚洲）', scope.outOfScopeCount === 0, `越界 ${scope.outOfScopeCount} 题 ${scope.outOfScopeSample.join(',')}`);
+  check('出的每一题都属于当前大洲', scope.wrongContinentCount === 0, `错洲 ${scope.wrongContinentCount} 题 ${scope.wrongContinentSample.join(',')}`);
+  check('无重复出题且跑满全池', scope.duplicates === 0 && scope.coveredAll === true, `${scope.askedCount}/${scope.poolSize} 题，重复 ${scope.duplicates}`);
+
+  console.log('\n=== 8. 开始测验收起排行榜、结束展开 ===');
+  const lb = await evaluate('window.__probe.leaderboardAutoToggle()');
+  check('测验确实开始了（基线有效）', lb.testActuallyStarted === true);
+  check('开始前排行榜可见（基线）', lb.visibleBeforeStart === true, JSON.stringify(lb.detailBefore));
+  check('测验进行中排行榜自动收起（不可见）', lb.visibleDuringTest === false, JSON.stringify(lb.detailDuring));
+  check('结束（重置）后排行榜自动展开（可见）', lb.visibleAfterEnd === true, JSON.stringify(lb.detailAfter));
 
   const failed = results.filter((r) => !r.pass);
   console.log(`\n===== ${results.length - failed.length}/${results.length} 通过 =====`);

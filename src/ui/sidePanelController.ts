@@ -74,6 +74,17 @@ export class SidePanelController {
     return this.leaderboardOpen;
   }
 
+  /**
+   * 按下测验收起/展开排行榜侧栏（开始测验时收起、结算时展开）。
+   *
+   * **不写回 localStorage**：这是跟着「测验进行中」走的临时 UI 状态，不是用户的偏好。
+   * 落盘会在「浏览器在测验中途被关掉」时把「收起」固化成偏好，下次进来侧栏就是关的，
+   * 而用户从没这么选过。用户手动开关（toggle）照旧持久化。
+   */
+  setLeaderboardOpen(open: boolean) {
+    this.leaderboardOpen = open;
+  }
+
   /** 开始拖拽（记录起点）。 */
   beginDrag(pointerId: number, x: number, isAnalysis: boolean) {
     this.drag = { pointerId, x, width: this.widthPx, moved: false, wasOpen: this.isOpen(isAnalysis) };

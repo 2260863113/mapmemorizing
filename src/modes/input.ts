@@ -15,6 +15,7 @@ import {
   type ModeSettingsPanel,
 } from '../modeSettings';
 import { MapQuizMode } from './mapQuizMode';
+import { bfsStep } from './bfsOrder';
 import { WorldMatcher } from '../worldNames';
 
 /**
@@ -29,6 +30,10 @@ export class InputMode extends MapQuizMode {
   readonly title = t('mode.self.title');
   private lastGreen: string | null = null;
   private activeProvince: string | null = null;
+  /** BFS 前沿队列（顺序模式）：队首是下一题，队尾是刚发现的邻居。 */
+  private bfsQueue: string[] = [];
+  /** 当前 BFS 域（'world' / 'province' / 'city:<省 adcode>'）；换域即重新播种。 */
+  private bfsDomain = '';
   private requireEnter = loadSelfRequireEnter(); // 按下 Enter 确认
   private autoFollow = loadSelfAutoFollow(); // 自动跟随（倍率固定默认值）
   private worldMatcher: WorldMatcher;
@@ -223,11 +228,13 @@ export class InputMode extends MapQuizMode {
   protected resetSessionSpecific() {
     this.lastGreen = null;
     this.activeProvince = this.scopeProvince;
+    this.bfsQueue = [];
+    this.bfsDomain = '';
   }
 
   protected onEntered() { this.ctx.search.clear(); }
-  protected onScopeChanged() { this.activeProvince = this.scopeProvince; }
-  protected onDrill(provinceAdcode: string) { this.activeProvince = provinceAdcode; }
+  protected onScopeChanged() { this.activeProvince = this.scopeProvince; this.bfsQueue = []; this.bfsDomain = ''; }
+  protected onDrill(provinceAdcode: string) { this.activeProvince = provinceAdcode; this.bfsQueue = []; this.bfsDomain = ''; }
   protected onAnswerStart() { this.ctx.showTimer(null); }
   protected onCorrect(q: string) { this.lastGreen = q; }
   protected onRollbackRestored() { this.ctx.search.clear(); this.ctx.search.focus(); }
@@ -242,11 +249,21 @@ export class InputMode extends MapQuizMode {
   protected canDoubleClickDrill(): boolean { return !this.paused; }
   protected legacyResults(): boolean { return true; }
   protected persistExtra(): Record<string, unknown> {
-    return { lastGreen: this.lastGreen, activeProvince: this.activeProvince, wrongToastShown: this.wrongOrder.toastShown };
+    return {
+      lastGreen: this.lastGreen,
+      activeProvince: this.activeProvince,
+      wrongToastShown: this.wrongOrder.toastShown,
+      // BFS 队列一并持久化：刷新后继续按同一顺序出题，而不是重新播种
+      bfsQueue: this.bfsQueue,
+      bfsDomain: this.bfsDomain,
+    };
   }
   protected restoreSessionSpecific(record: Record<string, unknown>) {
     this.lastGreen = typeof record.lastGreen === 'string' && this.green.has(record.lastGreen) ? record.lastGreen : null;
     this.activeProvince = typeof record.activeProvince === 'string' ? record.activeProvince : this.scopeProvince;
+    // 旧存档没有这两个字段 → 空队列，bfsNext 会按 lastGreen 重新播种，不会出错
+    this.bfsQueue = Array.isArray(record.bfsQueue) ? record.bfsQueue.filter((x): x is string => typeof x === 'string') : [];
+    this.bfsDomain = typeof record.bfsDomain === 'string' ? record.bfsDomain : '';
   }
 
   // ==================== 输入特有：BFS 顺序出题 ====================
@@ -256,29 +273,46 @@ export class InputMode extends MapQuizMode {
     return p ? normalizeProvince(p.name) : provinceAdcode;
   }
 
+  /**
+   * 顺序模式出题：**严格广度优先**（实现与「不可能出现空洞」的论证见 bfsOrder.ts）。
+   *
+   * 这里只负责按分支选定「池」与「BFS 域」，真正的排队逻辑在纯函数 bfsStep 里
+   * （抽出去是为了让那条性质可被单测断言）。
+   */
+  private bfsNext(domain: string, pool: Unit[], seedRef: [number, number]): Unit {
+    // 换域（世界 / 省级全国 / 某一个省）就丢弃旧队列：不同域的邻接图不可混用
+    if (domain !== this.bfsDomain) {
+      this.bfsDomain = domain;
+      this.bfsQueue = [];
+    }
+    const byAdcode = new Map(pool.map((u) => [u.adcode, u]));
+    const step = bfsStep({
+      ids: pool.map((u) => u.adcode),
+      neighborsOf: (id) => byAdcode.get(id)?.neighbors ?? [],
+      isDone: (id) => this.green.has(id) || this.red.has(id),
+      queue: this.bfsQueue,
+      seedRef,
+      centerOf: (id) => byAdcode.get(id)?.center ?? seedRef,
+    });
+    this.bfsQueue = step.queue;
+    const u = step.next ? byAdcode.get(step.next) : undefined;
+    return u ?? pool[0];
+  }
+
   private pickNext(pool: Unit[]): Unit {
-    // 世界全国：从上一个绿国沿国家邻接随机挑未测国；耗尽则回退最近未测国
+    // 世界全国：在**当前范围**的国家邻接图上 BFS。
+    // 注意 last/邻居都从 pool 取（不能从 worldPool 取）——否则下钻到某洲后
+    // 会顺着邻接关系把别的洲的国家当成下一题，出现「出题国家在地图上没显示」。
     if (this.isWorldNation()) {
-      const last = this.lastGreen ? this.worldPool.find((u) => u.adcode === this.lastGreen) ?? null : null;
-      if (last) {
-        const neighborCandidates = last.neighbors
-          .map((a) => this.worldPool.find((u) => u.adcode === a))
-          .filter((u): u is Unit => !!u && !this.green.has(u.adcode) && !this.red.has(u.adcode));
-        if (neighborCandidates.length) return this.ctx.randomUnit(neighborCandidates);
-      }
-      return this.closestUnvisited(pool, last?.center ?? [10, 25]);
+      const last = this.lastGreen ? pool.find((u) => u.adcode === this.lastGreen) ?? null : null;
+      return this.bfsNext('world', pool, last?.center ?? [10, 25]);
     }
-    // 省级全国：从上一个绿省沿省邻接随机挑未测省；耗尽则回退最近未测省
+    // 省级全国：省-省邻接图上 BFS
     if (this.isProvinceNation()) {
-      const last = this.lastGreen ? this.provincePool.find((u) => u.adcode === this.lastGreen) ?? null : null;
-      if (last) {
-        const neighborCandidates = last.neighbors
-          .map((a) => this.provincePool.find((u) => u.adcode === a))
-          .filter((u): u is Unit => !!u && !this.green.has(u.adcode) && !this.red.has(u.adcode));
-        if (neighborCandidates.length) return this.ctx.randomUnit(neighborCandidates);
-      }
-      return this.closestUnvisited(pool, last?.center ?? [104.5, 35]);
+      const last = this.lastGreen ? pool.find((u) => u.adcode === this.lastGreen) ?? null : null;
+      return this.bfsNext('province', pool, last?.center ?? [104.5, 35]);
     }
+    // 市级：保留「一个省练完再换省」的既有手感，省内在市-市邻接图上 BFS
     const last = this.lastGreen ? this.ctx.byAdcode.get(this.lastGreen) ?? null : null;
     if (!this.activeProvince || (!this.scopeProvince && !this.hasUnvisitedInProvince(this.activeProvince))) {
       this.activeProvince = this.pickNextProvince(last);
@@ -286,20 +320,11 @@ export class InputMode extends MapQuizMode {
     const province = this.activeProvince;
     const inProvince = this.unvisited().filter((u) => u.provinceAdcode === province);
     if (!inProvince.length) return this.unvisited()[0];
-    if (last) {
-      const neighbors = last.neighbors
-        .map((a) => this.ctx.byAdcode.get(a))
-        .filter((u): u is Unit => !!u && u.provinceAdcode === province && !this.green.has(u.adcode) && !this.red.has(u.adcode));
-      if (neighbors.length) return this.ctx.randomUnit(neighbors);
-    }
-    const ref = last?.provinceAdcode === province ? last.center : this.ctx.data.provinces.find((p) => p.adcode === province)?.center ?? [104.5, 35];
-    inProvince.sort((a, b) => dist2(a.center, ref) - dist2(b.center, ref));
-    return inProvince[0];
-  }
-
-  private closestUnvisited(pool: Unit[], ref: [number, number]): Unit {
-    const sorted = [...pool].sort((a, b) => dist2(a.center, ref) - dist2(b.center, ref));
-    return sorted[0];
+    const ref =
+      last?.provinceAdcode === province
+        ? last.center
+        : this.ctx.data.provinces.find((p) => p.adcode === province)?.center ?? [104.5, 35];
+    return this.bfsNext('city:' + province, inProvince, ref);
   }
 
   private hasUnvisitedInProvince(provinceAdcode: string) {

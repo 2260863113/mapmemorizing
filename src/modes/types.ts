@@ -24,6 +24,11 @@ export interface ModeCtx {
   hideSummary: () => void;
   updateProgress: () => void;
   randomUnit: (pool: Unit[]) => Unit;
+  /**
+   * 通知外壳「测验是否进行中」：开始测验时收起排行榜侧栏（答题时不干扰），
+   * 结算/重置时自动打开。可选，未提供时不影响模式本身。
+   */
+  setTestRunning?: (running: boolean) => void;
 }
 
 export type ProgressSegment = 'pending' | 'green' | 'red';

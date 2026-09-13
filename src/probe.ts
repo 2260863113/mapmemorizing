@@ -20,9 +20,16 @@ export function installProbe(app: AppController) {
   const anyApp = app as unknown as {
     renderer: unknown;
     clickMode: unknown;
-    data: { countries: { iso: string; name: string; center: [number, number] }[]; countryArea: Record<string, number> };
+    selfMode: unknown;
+    data: {
+      countries: { iso: string; name: string; center: [number, number]; continent: string }[];
+      countryArea: Record<string, number>;
+    };
     settings: { ignoreTinyCountries: boolean };
     applyTinyCountrySetting: () => void;
+    // private 成员在运行时照常可达（TS 的 private 只是编译期约束），探针不额外开生产 API
+    sidePanel: { setLeaderboardOpen: (open: boolean) => void };
+    syncModeChrome: () => void;
   };
   const renderer = anyApp.renderer as unknown as Record<string, unknown> & {
     setWorldMode: (on: boolean, c: string | null, s: string | null) => void;
@@ -228,20 +235,20 @@ export function installProbe(app: AppController) {
       const zooms = sorted.map((i) => worldFollowZoom(area[i]));
       let monotonic = true;
       for (let i = 1; i < zooms.length; i++) if (zooms[i] > zooms[i - 1] + 1e-9) monotonic = false;
-      // 锚点：安道尔/马耳他/列支敦士登 → 28x；法国 → 13x；俄罗斯 → 2x
+      // 锚点：立陶宛 → 11x；法国 → 8x；俄罗斯 → 3x
       const anchors: Record<string, { area: number; zoom: number; want: number }> = {};
-      for (const [iso, want] of [['AND', 28], ['MLT', 28], ['LIE', 28], ['FRA', 13], ['RUS', 2]] as [string, number][]) {
+      for (const [iso, want] of [['LTU', 11], ['FRA', 8], ['RUS', 3]] as [string, number][]) {
         anchors[iso] = { area: area[iso], zoom: worldFollowZoom(area[iso]), want };
       }
-      const anchorsHit = Object.values(anchors).every((a) => Math.abs(a.zoom - a.want) <= 1);
+      const anchorsHit = Object.values(anchors).every((a) => Math.abs(a.zoom - a.want) <= 0.15);
       return {
-        small: worldFollowZoom(area.SGP),
+        small: worldFollowZoom(area.NRU),
         big: worldFollowZoom(area.RUS),
         monotonic,
         countries: pool.length,
         anchors,
         anchorsHit,
-        atCeiling: pool.filter((i) => worldFollowZoom(area[i]) >= 28 - 1e-9).length,
+        maxZoom: Math.max(...pool.map((i) => worldFollowZoom(area[i]))),
       };
     },
 
@@ -330,6 +337,140 @@ export function installProbe(app: AppController) {
       renderer.focusWorldCountry(iso);
       const area = anyApp.data.countryArea[iso] ?? 0;
       return { area: Number(area.toFixed(4)), zoom: worldFollowZoom(area) };
+    },
+
+    /**
+     * 7. 顺序模式出的题**必须都在当前地图范围内**（用户报的缺陷）。
+     *
+     * 做法：把输入模式切到「世界粒度 + 亚洲」，跑完整个顺序序列，逐题断言
+     * 该国的配图（大洲）就是当前范围。旧实现在邻居查找时用了 worldPool，
+     * 会顺着邻接关系把欧洲/非洲的国家出成题，而地图上并没有显示它们。
+     */
+    seqScopeRespected() {
+      const sm = anyApp.selfMode as unknown as {
+        setGranularity: (g: string) => void;
+        worldContinent: string | null;
+        worldSubregion: string | null;
+        orderMode: string;
+        green: Set<string>;
+        red: Set<string>;
+        lastGreen: string | null;
+        bfsQueue: string[];
+        bfsDomain: string;
+        activePool: () => { adcode: string; name: string }[];
+        nextUnit: (pool: { adcode: string; name: string }[]) => { adcode: string; name: string };
+      };
+      const saved = {
+        continent: sm.worldContinent,
+        subregion: sm.worldSubregion,
+        order: sm.orderMode,
+        green: new Set(sm.green),
+        red: new Set(sm.red),
+      };
+      try {
+        sm.setGranularity('world');
+        sm.worldContinent = 'AS';
+        sm.worldSubregion = null;
+        sm.orderMode = 'sequential';
+        sm.green = new Set();
+        sm.red = new Set();
+        sm.lastGreen = null;
+        sm.bfsQueue = [];
+        sm.bfsDomain = '';
+        const pool = sm.activePool();
+        const inScope = new Set(pool.map((u) => u.adcode));
+        const asked: string[] = [];
+        for (let i = 0; i <= pool.length + 3; i++) {
+          const remaining = pool.filter((u) => !sm.green.has(u.adcode) && !sm.red.has(u.adcode));
+          if (!remaining.length) break;
+          const u = sm.nextUnit(pool);
+          asked.push(u.adcode);
+          sm.green.add(u.adcode);
+        }
+        const continentOf = new Map(anyApp.data.countries.map((c) => [c.iso, c.continent]));
+        const outOfScope = asked.filter((iso) => !inScope.has(iso));
+        const wrongContinent = asked.filter((iso) => continentOf.get(iso) !== 'AS');
+        return {
+          poolSize: pool.length,
+          askedCount: asked.length,
+          duplicates: asked.length - new Set(asked).size,
+          outOfScopeCount: outOfScope.length,
+          outOfScopeSample: outOfScope.slice(0, 6),
+          wrongContinentCount: wrongContinent.length,
+          wrongContinentSample: wrongContinent.slice(0, 6),
+          coveredAll: asked.length === pool.length && new Set(asked).size === pool.length,
+        };
+      } finally {
+        sm.worldContinent = saved.continent;
+        sm.worldSubregion = saved.subregion;
+        sm.orderMode = saved.order;
+        sm.green = saved.green;
+        sm.red = saved.red;
+        sm.lastGreen = null;
+        sm.bfsQueue = [];
+        sm.bfsDomain = '';
+      }
+    },
+
+    /**
+     * 8. 开始测验自动收起排行榜、结束（结算/重置）自动展开。
+     *
+     * 注意「收起」的实现是给 `#side-panel` 加 `collapsed` 类（width:0 +
+     * content `visibility:hidden`），而不是给 `#leaderboard` 加 `hidden` ——
+     * 所以这里量的是**实际可见性**，不是某一个类名。
+     */
+    async leaderboardAutoToggle() {
+      const snapshot = () => {
+        const panel = document.getElementById('side-panel');
+        const lb = document.getElementById('leaderboard');
+        const content = document.getElementById('side-panel-content');
+        const cs = content ? getComputedStyle(content) : null;
+        return {
+          collapsed: !!panel?.classList.contains('collapsed'),
+          leaderboardHidden: !!lb?.classList.contains('hidden'),
+          contentVisibility: cs?.visibility ?? '',
+          contentOpacity: cs ? Number(cs.opacity) : 0,
+        };
+      };
+      const visible = (s: { collapsed: boolean; leaderboardHidden: boolean; contentVisibility: string; contentOpacity: number }) =>
+        !s.collapsed && !s.leaderboardHidden && s.contentVisibility !== 'hidden' && s.contentOpacity > 0.5;
+      const setPanel = (open: boolean) => {
+        anyApp.sidePanel.setLeaderboardOpen(open);
+        anyApp.syncModeChrome();
+      };
+      const cm = anyApp.clickMode as unknown as {
+        start: (cont: boolean) => void;
+        onReset: () => void;
+        started: boolean;
+      };
+      const settle = () => new Promise((r) => setTimeout(r, 420)); // 等 .24s 过渡结束
+      // 基线：先手动置于「展开」，确认收起确实由开始动作触发
+      setPanel(true);
+      await settle();
+      const before = snapshot();
+      let started = false;
+      let during: ReturnType<typeof snapshot>;
+      let after: ReturnType<typeof snapshot>;
+      try {
+        cm.start(false);
+        started = cm.started === true;
+        await settle();
+        during = snapshot();
+        cm.onReset();
+        await settle();
+        after = snapshot();
+      } finally {
+        setPanel(true);
+      }
+      return {
+        testActuallyStarted: started,
+        visibleBeforeStart: visible(before),
+        visibleDuringTest: visible(during!),
+        visibleAfterEnd: visible(after!),
+        detailBefore: before,
+        detailDuring: during!,
+        detailAfter: after!,
+      };
     },
 
     /** 还原：把视图切回世界全图（探针之间互不污染）。 */
