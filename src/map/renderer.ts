@@ -30,6 +30,41 @@ const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
+/**
+ * 跟随钳制的边距比例：视口**短边**的 10%。
+ *
+ * 一个数同时承担三件事（见 `clampFollowCenter` / `isComfortablyVisible`）：
+ *   1. 钳制时允许镜头偏离目标正中的上限；
+ *   2. 目标正好落在取景边界上时被容忍的露白上限（推导：露白 ≤ m）；
+ *   3. 只平移的跟随里判定"目标已舒适可见、无需移动"的距离阈值。
+ */
+const FOLLOW_MARGIN_RATIO = 0.1;
+export { FOLLOW_MARGIN_RATIO };
+
+/** 投影 bbox（[[lng0,lat0],[lng1,lat1]]）拉平成 [lng0, lat0, lng1, lat1]（与 CONTINENT_VIEWS 同构）。 */
+function flattenBBox(bb: [[number, number], [number, number]]): [number, number, number, number] {
+  return [bb[0][0], bb[0][1], bb[1][0], bb[1][1]];
+}
+
+/**
+ * 单轴跟随钳制（纯函数，便于单测）：`clamp( clamp(t, min+hw, max−hw), t−(hw−m), t+(hw−m) )`。
+ *
+ * @param t    目标坐标（lng 或 lat）
+ * @param span 该轴视口跨度（数据单位，目标倍率下）
+ * @param m    边距（数据单位，目标倍率下）
+ * @param min  取景边界下界
+ * @param max  取景边界上界
+ */
+export function clampFollowAxis(t: number, span: number, m: number, min: number, max: number): number {
+  const hw = Math.max(span, 0) / 2;
+  const lo = min + hw;
+  const hi = max - hw;
+  // 内层：视口不越出取景边界；边界比视口还小时（区间为空）退化为边界中心
+  const inner = lo > hi ? (min + max) / 2 : Math.min(hi, Math.max(lo, t));
+  // 外层：目标离屏幕边至少 m；与内层冲突时让步（允许 ≤ m 的露白）
+  const slack = Math.max(hw - m, 0);
+  return Math.min(t + slack, Math.max(t - slack, inner));
+}
 // 五档缩放档位的阈值与地图名映射统一放在 ./tiers.ts（纯逻辑 + 单测覆盖），
 // renderer 只经 activeTier() / chinaTierMapName() / provinceTierMapName() 间接使用，
 // 避免地级与省级各写一套阈值而漂移。见该文件顶部注释的精细度阶梯表。
@@ -186,6 +221,11 @@ export class MapRenderer {
   private provinceNameToAdcode = new Map<string, string>(); // 省全名 → 省 adcode（省级地图命中）
   private inset: InsetMap;
   private viewProvince: string | null = null;
+  /**
+   * 下钻省的几何 bbox（该省全部地级单位并集，与 `drillToProvince` 的取景框同源）。
+   * 钻省期间它就是**取景边界**：邻省是透明的，跟随越出这个框就会露出纯背景。
+   */
+  private viewProvinceBox: [number, number, number, number] | null = null;
   /** 当前相机中心（数据坐标）。地图切换/复位时按 DEFAULT_VIEWS 回该地图 bbox 中心。 */
   private center: [number, number] = [104.3, 28.5];
   private zoom = 1;
@@ -550,6 +590,7 @@ export class MapRenderer {
       // 世界 → 中国：恢复中国记忆（省级/地级共用一槽），无记忆则默认居中
       this.savedNationView = null;
       this.viewProvince = null;
+      this.viewProvinceBox = null;
       this.labelMode = 'none';
       const v = this.pickViewFor(this.currentMapName());
       this.center = [v.center[0], v.center[1]];
@@ -560,6 +601,7 @@ export class MapRenderer {
       const saved = this.savedNationView;
       this.savedNationView = null;
       this.viewProvince = null;
+      this.viewProvinceBox = null;
       this.center = saved ? saved.center : this.defaultViewFor(this.currentMapName()).center;
       this.zoom = saved ? saved.zoom : this.defaultViewFor(this.currentMapName()).zoom;
       this.labelMode = 'none';
@@ -597,6 +639,7 @@ export class MapRenderer {
       // 进入目标族：恢复其记忆（无则默认居中）
       this.savedNationView = null;
       this.viewProvince = null;
+      this.viewProvinceBox = null;
       this.labelMode = 'none';
     }
     if (on && nextSub) {
@@ -1405,35 +1448,173 @@ export class MapRenderer {
     if (!u) return;
     if (this.viewProvince && this.viewProvince !== u.provinceAdcode) {
       this.viewProvince = null;
+      this.viewProvinceBox = null;
       if (this.lastState) this.render(this.lastState);
     }
-    this.animateViewTo(u.center, this.followZoomFor(u.provinceAdcode));
+    const extent = this.framingExtent();
+    const zoom = this.followZoomFloor(extent, this.followZoomFor(u.provinceAdcode));
+    const center = this.clampFollowCenter(u.center, zoom, extent);
+    if (this.isNegligibleMove(center, zoom)) return; // 钳制后基本没动，就别白跑一趟动画
+    this.animateViewTo(center, zoom);
   }
 
   /**
    * 世界模式自动跟随：镜头移到某国，**缩放倍率与国家面积成反比**（面积越小放得越大）。
    *
-   * 倍率由 `worldFollowZoom(面积)` 按绝对映射算出（`K / √面积`，夹到 [2, 28]）：
-   * 极小国顶到地图上限 28x、法国约 13x、俄罗斯 2x，标定见该函数的注释。
+   * 倍率由 `worldFollowZoom(面积)` 按绝对映射算出（`A − B·ln(面积)`，夹到 [3, 28]）：
+   * 极小国顶到地图上限 28x、法国约 8x、俄罗斯 3x，标定见该函数的注释；
+   * 再取 `followZoomFloor()` 的倍率下限（取景边界必须覆盖视口）。落点经 `clampFollowCenter()` 钳制。
    */
   focusWorldCountry(iso: string) {
     if (!this.worldMode) return;
     const center = this.worldLabelAnchors.get(iso);
     if (!center) return;
-    this.animateViewTo([center[0], center[1]], worldFollowZoom(this.countryArea(iso)));
+    const extent = this.framingExtent();
+    const zoom = this.followZoomFloor(extent, worldFollowZoom(this.countryArea(iso)));
+    const next = this.clampFollowCenter([center[0], center[1]], zoom, extent);
+    if (this.isNegligibleMove(next, zoom)) return;
+    this.animateViewTo(next, zoom);
   }
 
   /** 把镜头移到某国**但不改变缩放**（所有模式答错时跟随到正确答案位置用）。 */
   panWorldCountry(iso: string) {
     if (!this.worldMode) return;
     const center = this.worldLabelAnchors.get(iso);
-    if (center) this.animateViewTo([center[0], center[1]], this.zoom);
+    if (center) this.panFollow([center[0], center[1]]);
   }
 
   /** 把镜头移到某地级单位**但不改变缩放**（中国族答错时跟随）。 */
   panUnit(adcode: string) {
     const u = this.units.find((item) => item.adcode === adcode);
-    if (u) this.animateViewTo(u.center, this.zoom);
+    if (u) this.panFollow(u.center);
+  }
+
+  // ==================== 跟随钳制（取景边界 + 边距） ====================
+
+  /**
+   * 当前视图的**取景边界**：视口允许显示的数据矩形（lng0/lat0/lng1/lat1）。
+   *
+   * 视口越出它就会露出纯背景色 —— 这正是「跟随把边界附近的目标顶到正中 → 半屏空白」的根因。
+   * 分层取值：下钻省 = 该省地级单位并集 bbox；世界次区域/大洲 = 各自标定框；
+   * 否则按地图族用钉死的投影 bbox（中国 / 世界）。
+   */
+  private framingExtent(): [number, number, number, number] {
+    if (this.worldMode) {
+      if (this.worldSubregion) return MapRenderer.SUBREGION_VIEWS[this.worldSubregion];
+      if (this.worldContinent) return MapRenderer.CONTINENT_VIEWS[this.worldContinent];
+      return flattenBBox(MAP_PROJECTION_BBOX.world);
+    }
+    if (this.viewProvince && this.viewProvinceBox) return this.viewProvinceBox;
+    return flattenBBox(MAP_PROJECTION_BBOX.china);
+  }
+
+  /** geo 坐标系（读数用）：`pointToData` 把画布像素换算成经纬度。 */
+  private geoCoordSystem(): { pointToData?: (p: number[]) => number[] } | null {
+    const geoModel = (this.chart as unknown as {
+      getModel: () => { getComponent: (t: string) => { coordinateSystem?: unknown } | null };
+    }).getModel().getComponent('geo');
+    const cs = geoModel?.coordinateSystem as { pointToData?: (p: number[]) => number[] } | undefined;
+    return cs?.pointToData ? cs : null;
+  }
+
+  /**
+   * 当前视口在数据坐标下的矩形 + 每像素度数。
+   *
+   * 投影经 `boundingCoords` 钉死后 lng/lat → 像素是线性映射（与 cull.ts 同一假设），
+   * 故取画布两角经 `pointToData` 换算即可；geo 未就绪时返回 null（调用方按"未钳制"处理）。
+   */
+  private viewportWindow(): { box: [number, number, number, number]; perPxX: number; perPxY: number; width: number; height: number } | null {
+    const cs = this.geoCoordSystem();
+    if (!cs?.pointToData) return null;
+    const width = this.chart.getWidth();
+    const height = this.chart.getHeight();
+    if (!(width > 0) || !(height > 0)) return null;
+    const a = cs.pointToData([0, 0]);
+    const b = cs.pointToData([width, height]);
+    if (!a || !b || ![a[0], a[1], b[0], b[1]].every((v) => Number.isFinite(v))) return null;
+    const box: [number, number, number, number] = [
+      Math.min(a[0], b[0]),
+      Math.min(a[1], b[1]),
+      Math.max(a[0], b[0]),
+      Math.max(a[1], b[1]),
+    ];
+    return { box, perPxX: (box[2] - box[0]) / width, perPxY: (box[3] - box[1]) / height, width, height };
+  }
+
+  /**
+   * 跟随钳制：把目标从正中推开，使视口不越出**取景边界**，推开的幅度又不超过边距 m。
+   *
+   * 逐轴 `center = clamp( clamp(t, min+hw, max−hw), t−(hw−m), t+(hw−m) )`：
+   *   · 内层 = 视口不越出取景边界（露白 0）；取景边界比视口还小时（且已顶到 28x 上限）
+   *     区间为空，退化为边界中心 —— 这时的空白是"范围本身就这么小"，钳制无能为力；
+   *   · 外层 = 目标离屏幕边至少 m；当目标正好落在取景边界上、两条约束冲突时，
+   *     本层让步 → 允许露出 **≤ m** 的空白（用户口径：优先保证目标不贴屏幕边）。
+   */
+  private clampFollowCenter(target: [number, number], zoom: number, extent: [number, number, number, number]): [number, number] {
+    const win = this.viewportWindow();
+    if (!win) return [target[0], target[1]];
+    const k = this.zoom / Math.max(zoom, 1e-6); // 当前倍率下的视口跨度 → 目标倍率下的跨度
+    const spanX = (win.box[2] - win.box[0]) * k;
+    const spanY = (win.box[3] - win.box[1]) * k;
+    const marginPx = Math.min(win.width, win.height) * FOLLOW_MARGIN_RATIO;
+    const marginX = marginPx * win.perPxX * k;
+    const marginY = marginPx * win.perPxY * k;
+    return [
+      clampFollowAxis(target[0], spanX, marginX, extent[0], extent[2]),
+      clampFollowAxis(target[1], spanY, marginY, extent[1], extent[3]),
+    ];
+  }
+
+  /**
+   * 跟随倍率的**下限**：取景边界必须覆盖视口，否则无论怎么摆中心都会露白。
+   *
+   * 只抬高不压低：全国/世界/大洲档算出来约 1.25x，低于梯子最低档（世界 3x、中国 6x 起），
+   * 故这些档位不受影响；真正生效的是**下钻后的小省**（宁夏 12x → 约 22x），
+   * 夹在 [MIN_ZOOM, MAX_ZOOM] 内 —— 边界比 28x 视口还小的极小范围仍会留白，属固有代价。
+   */
+  private followZoomFloor(extent: [number, number, number, number], zoom: number): number {
+    const win = this.viewportWindow();
+    if (!win) return clampZoom(zoom);
+    // 该轴跨度 × 当前倍率 = 1x 时的跨度；它除以边界跨度即"覆盖视口所需倍率"
+    const extW = Math.max(extent[2] - extent[0], 1e-6);
+    const extH = Math.max(extent[3] - extent[1], 1e-6);
+    const needX = ((win.box[2] - win.box[0]) * this.zoom) / extW;
+    const needY = ((win.box[3] - win.box[1]) * this.zoom) / extH;
+    return clampZoom(Math.max(zoom, needX, needY));
+  }
+
+  /** 目标是否已"舒适可见"：在视口内且距四边 ≥ 边距 m（只平移的跟随用它决定动不动）。 */
+  private isComfortablyVisible(p: [number, number]): boolean {
+    const win = this.viewportWindow();
+    if (!win) return false;
+    const marginPx = Math.min(win.width, win.height) * FOLLOW_MARGIN_RATIO;
+    const mX = marginPx * win.perPxX;
+    const mY = marginPx * win.perPxY;
+    return (
+      p[0] >= win.box[0] + mX && p[0] <= win.box[2] - mX && p[1] >= win.box[1] + mY && p[1] <= win.box[3] - mY
+    );
+  }
+
+  /** 钳制后与当前镜头几乎重合（<1px）→ 不值得跑那 650ms 动画。 */
+  private isNegligibleMove(center: [number, number], zoom: number): boolean {
+    const win = this.viewportWindow();
+    if (!win) return false;
+    const k = this.zoom / Math.max(zoom, 1e-6);
+    const dx = (Math.abs(center[0] - this.center[0]) * k) / Math.max(win.perPxX, 1e-9);
+    const dy = (Math.abs(center[1] - this.center[1]) * k) / Math.max(win.perPxY, 1e-9);
+    return dx < 1 && dy < 1;
+  }
+
+  /**
+   * 只平移的跟随（答错跟随，缩放不变）：目标已舒适可见就**完全不动**（闪红本身已是反馈），
+   * 否则钳制后平移。
+   */
+  private panFollow(target: [number, number]) {
+    if (this.isComfortablyVisible(target)) return;
+    const extent = this.framingExtent();
+    const center = this.clampFollowCenter(target, this.zoom, extent);
+    if (this.isNegligibleMove(center, this.zoom)) return;
+    this.animateViewTo(center, this.zoom);
   }
 
   private countryArea(iso: string): number {
@@ -1527,6 +1708,8 @@ export class MapRenderer {
       this.savedNationView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
     }
     this.viewProvince = adcode;
+    // 该省几何 bbox 同时充当钻省期间的**取景边界**（邻省透明，越出即露白）
+    this.viewProvinceBox = [minX, minY, maxX, maxY];
     this.center = [(minX + maxX) / 2, (minY + maxY) / 2];
     this.zoom = zoom;
     this.labelMode = this.desiredLabelMode();
@@ -1543,6 +1726,7 @@ export class MapRenderer {
       // 世界无下钻概念：回到默认世界视野
       this.savedNationView = null;
       this.viewProvince = null;
+      this.viewProvinceBox = null;
       const def = this.defaultViewFor('world');
       this.center = [def.center[0], def.center[1]];
       this.zoom = def.zoom;
@@ -1556,6 +1740,7 @@ export class MapRenderer {
     const saved = this.savedNationView;
     this.savedNationView = null; // 快照一次性使用：返回全国后清除
     this.viewProvince = null;
+    this.viewProvinceBox = null;
     if (saved) {
       this.center = saved.center;
       this.zoom = saved.zoom;

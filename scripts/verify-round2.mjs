@@ -158,8 +158,12 @@ try {
   check('最大国最小倍率、最小国最大倍率', zoom.big <= 3.0001 && zoom.maxZoom < 28, `池内最大 ${zoom.maxZoom.toFixed(2)}x`);
 
   // 集成：真的调 renderer，证明「输入模式 ask() 走的那条路径」能驱动相机
+  // 注：跟随钳制（2026-09）之后，贴着取景边界的目标不再被顶到正中，
+  //     故断言从「落点误差 <1.5°」改为「目标仍在视口内 + 内容不越出边界（边距允许的例外除外）」。
   const af = await evaluate('window.__probe.worldAutoFollow()');
-  check('集成：相机真的落到目标点（标签锚点，误差<1.5°）', af.cameraMovedOnEach === true, `sgp=${af.sgpLanded.toFixed(2)}° chn=${af.chnLanded.toFixed(2)}° rus=${af.rusLanded.toFixed(2)}°`);
+  check('集成：跟随落点合法（目标仍在视口内、内容不越出取景边界）', af.cameraMovedOnEach === true, `sgp=${af.sgpLanded.toFixed(2)}° chn=${af.chnLanded.toFixed(2)}° rus=${af.rusLanded.toFixed(2)}°（俄罗斯被钳制=${af.rusClamped}）`);
+  check('集成：三个样例的目标都还在视口内', af.eachInside === true);
+  check('集成：三个样例内容都未越出取景边界（边距 m 之内）', af.eachOverrunOk === true);
   check('集成：缩放随面积反比（新>中>俄）', af.inverse === true, `sgp=${af.sgpZoom.toFixed(2)} chn=${af.chnZoom.toFixed(2)} rus=${af.rusZoom.toFixed(2)}`);
   check('集成：三档缩放都在设计区间内', af.allInRange === true);
 
@@ -167,7 +171,8 @@ try {
   const pan = await evaluate('window.__probe.panOnWrong()');
   check('镜头中心已移动', pan.moved === true, `${pan.fromCenter} → ${pan.toCenter}`);
   check('缩放保持不变', Math.abs(pan.zoomFrom - pan.zoomTo) < 1e-6, `${pan.zoomFrom} → ${pan.zoomTo}`);
-  check('平移后镜头对准正确答案所在国（澳大利亚）', pan.targeted === true, `目标 ${pan.ausCenter} vs 实际 ${pan.toCenter}`);
+  check('平移后正确答案在视口内（被钳制时不再要求正中）', pan.ausVisible === true, `锚点 ${pan.ausAnchor} vs 镜头 ${pan.toCenter}`);
+  check('目标已舒适可见时，答错跟随不再移动镜头', pan.stayedStill === true);
 
   console.log('\n=== 7. 顺序模式出题不越界（下钻后不出范围外国家）===');
   const scope = await evaluate('window.__probe.seqScopeRespected()');

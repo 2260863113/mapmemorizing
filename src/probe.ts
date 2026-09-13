@@ -10,7 +10,7 @@
  */
 import type { AppController } from './appController';
 import { ROLLBACK_RED_MS } from './modes/mapQuizMode';
-import { worldFollowZoom, WORLD_FOLLOW_MAX_ZOOM, WORLD_FOLLOW_MIN_ZOOM } from './map/renderer';
+import { FOLLOW_MARGIN_RATIO, worldFollowZoom, WORLD_FOLLOW_MAX_ZOOM, WORLD_FOLLOW_MIN_ZOOM } from './map/renderer';
 import { applyIgnoreTiny, ensureTinyCountries } from './tinyCountries';
 
 export function installProbe(app: AppController) {
@@ -33,6 +33,9 @@ export function installProbe(app: AppController) {
   };
   const renderer = anyApp.renderer as unknown as Record<string, unknown> & {
     setWorldMode: (on: boolean, c: string | null, s: string | null) => void;
+    setProvinceMode: (on: boolean, opts?: { inset?: boolean; allowDrill?: boolean }) => void;
+    drillToProvince: (adcode: string) => void;
+    focusUnit: (adcode: string, zoom: number) => void;
     currentContinent: () => string | null;
     currentSubregion: () => string | null;
     setExcludedCountries: (s: Iterable<string>) => void;
@@ -272,12 +275,27 @@ export function installProbe(app: AppController) {
       const aus = anyApp.data.countries.find((c) => c.iso === 'AUS');
       const moved = Math.hypot(to.center[0] - from.center[0], to.center[1] - from.center[1]) > 1;
       const targeted = !!aus && Math.hypot(to.center[0] - aus.center[0], to.center[1] - aus.center[1]) < 25;
+      // 新语义（跟随钳制）：被钳制时不再要求正中，改为要求"锚点仍在视口内"；
+      // 并且再平移一次 —— 此时澳洲已舒适可见，应当**完全不动**。
+      const anchor = (renderer as unknown as { worldLabelAnchors: Map<string, [number, number]> }).worldLabelAnchors.get('AUS') ?? null;
+      const win = (renderer as unknown as { viewportWindow?: () => { box: [number, number, number, number] } | null })?.viewportWindow?.() ?? null;
+      const ausVisible =
+        !!win && !!anchor && anchor[0] >= win.box[0] && anchor[0] <= win.box[2] && anchor[1] >= win.box[1] && anchor[1] <= win.box[3];
+      renderer.panWorldCountry('AUS');
+      await new Promise((res) => setTimeout(res, 900));
+      const again = readView();
+      const stayedStill =
+        Math.hypot(again.center[0] - to.center[0], again.center[1] - to.center[1]) < 1e-6 &&
+        Math.abs(again.zoom - to.zoom) < 1e-6;
       return {
         moved,
         targeted,
+        ausVisible,
+        stayedStill,
         fromCenter: from.center.join(','),
         toCenter: to.center.join(','),
         ausCenter: aus?.center.join(','),
+        ausAnchor: anchor ? anchor.join(',') : null,
         zoomFrom: from.zoom,
         zoomTo: to.zoom,
       };
@@ -302,6 +320,10 @@ export function installProbe(app: AppController) {
           center: r.center,
           zoom: r.zoom,
         };
+      const geo = renderer as unknown as {
+        framingExtent?: () => [number, number, number, number];
+        viewportWindow?: () => { box: [number, number, number, number]; perPxX: number; perPxY: number; width: number; height: number } | null;
+      };
       const shoot = async (iso: string) => {
         // 断言基准取**实际使用的目标点**（标签锚点，主面质心），
         // 而不是 countries.json 的 center —— 对俄罗斯这类大国两者相差很远，
@@ -311,13 +333,45 @@ export function installProbe(app: AppController) {
         await new Promise((res) => setTimeout(res, 1000)); // 等镜头动画结束
         const view = readView();
         const landed = anchor ? Math.hypot(view.center[0] - anchor[0], view.center[1] - anchor[1]) : Number.NaN;
-        return { view, anchor, landed };
+        // 跟随钳制（2026-09 需求）：贴着取景边界的目标不再被顶到正中，
+        // 断言因此从「必然居中」改成「目标仍在视口内 + 内容不越出边界（边距 m 之内算合规）」。
+        const extent = geo.framingExtent?.() ?? null;
+        const win = geo.viewportWindow?.() ?? null;
+        const marginPx = win ? Math.min(win.width, win.height) * FOLLOW_MARGIN_RATIO : 0;
+        const allowX = win ? marginPx * win.perPxX : 0;
+        const allowY = win ? marginPx * win.perPxY : 0;
+        const inside =
+          !!win && !!anchor && anchor[0] >= win.box[0] && anchor[0] <= win.box[2] && anchor[1] >= win.box[1] && anchor[1] <= win.box[3];
+        // 越界量 = 视口超出取景边界的那一段（负值表示视口在边界内，属正常）
+        const overrun = win && extent
+          ? {
+              west: +(extent[0] - win.box[0]).toFixed(2),
+              east: +(win.box[2] - extent[2]).toFixed(2),
+              south: +(extent[1] - win.box[1]).toFixed(2),
+              north: +(win.box[3] - extent[3]).toFixed(2),
+            }
+          : null;
+        const overrunOk = !!overrun
+          ? Math.max(overrun.west, 0) <= allowX + 1e-6 &&
+            Math.max(overrun.east, 0) <= allowX + 1e-6 &&
+            Math.max(overrun.south, 0) <= allowY + 1e-6 &&
+            Math.max(overrun.north, 0) <= allowY + 1e-6
+          : false;
+        const detail = win && extent && overrun
+          ? {
+              ...overrun,
+              allowX: +allowX.toFixed(2),
+              allowY: +allowY.toFixed(2),
+              window: win.box.map((v) => +v.toFixed(2)),
+              extent,
+            }
+          : null;
+        return { view, anchor, landed, inside, overrunOk, detail };
       };
       const sgp = await shoot('SGP'); // 极小：新加坡
-      const rus = await shoot('RUS'); // 极大：俄罗斯
+      const rus = await shoot('RUS'); // 极大：俄罗斯（3x，北界贴边 → 会被钳制）
       const chn = await shoot('CHN'); // 中等：中国
       const inRange = (z: number) => z >= WORLD_FOLLOW_MIN_ZOOM - 1e-4 && z <= WORLD_FOLLOW_MAX_ZOOM + 1e-4;
-      const close = (s: { landed: number }) => Number.isFinite(s.landed) && s.landed < 1.5; // 度
       return {
         sgpZoom: sgp.view.zoom,
         rusZoom: rus.view.zoom,
@@ -325,7 +379,15 @@ export function installProbe(app: AppController) {
         sgpLanded: sgp.landed,
         rusLanded: rus.landed,
         chnLanded: chn.landed,
-        cameraMovedOnEach: close(sgp) && close(rus) && close(chn),
+        /** 三个样例：目标仍在视口内，且内容没有越出取景边界（边距允许的例外之外） */
+        cameraMovedOnEach: sgp.inside && rus.inside && chn.inside && sgp.overrunOk && rus.overrunOk && chn.overrunOk,
+        eachInside: sgp.inside && rus.inside && chn.inside,
+        eachOverrunOk: sgp.overrunOk && rus.overrunOk && chn.overrunOk,
+        /** 俄罗斯确实被钳制（锚点约 60°N，而 3x 视口的中心纬度上限约 47°N） */
+        rusClamped: rus.landed > 5,
+        sgpDetail: sgp.detail,
+        rusDetail: rus.detail,
+        chnDetail: chn.detail,
         inverse: sgp.view.zoom > chn.view.zoom && chn.view.zoom > rus.view.zoom,
         allInRange: [sgp.view.zoom, rus.view.zoom, chn.view.zoom].every(inRange),
       };
@@ -337,6 +399,36 @@ export function installProbe(app: AppController) {
       renderer.focusWorldCountry(iso);
       const area = anyApp.data.countryArea[iso] ?? 0;
       return { area: Number(area.toFixed(4)), zoom: worldFollowZoom(area) };
+    },
+
+    /** 截图用：把某单位/国家标成"闪烁"高亮（截图里看得见被跟随的目标）。 */
+    flashTarget(adcode: string) {
+      (renderer as unknown as { flash: (a: string) => void }).flash(adcode);
+      return true;
+    },
+
+    /** 截图用：可选先下钻某省，再跟随某地级单位（不等待动画，由调用方截图）。 */
+    followUnitShot(adcode: string, drill: string | null = null) {
+      renderer.setWorldMode(false, null, null);
+      renderer.setProvinceMode(false, { inset: false });
+      if (drill) renderer.drillToProvince(drill);
+      renderer.focusUnit(adcode, 12);
+      const r = renderer as unknown as { center: number[]; zoom: number };
+      return { center: r.center.join(','), zoom: r.zoom };
+    },
+
+    /** 截图/体检用：当前取景边界与视口数据矩形（跟随钳制的两个输入，只读）。 */
+    followFrames() {
+      const geo = renderer as unknown as {
+        framingExtent?: () => [number, number, number, number];
+        viewportWindow?: () => { box: [number, number, number, number]; perPxX: number; perPxY: number; width: number; height: number } | null;
+      };
+      return JSON.stringify({
+        extent: geo.framingExtent?.() ?? null,
+        window: geo.viewportWindow?.() ?? null,
+        center: (renderer as unknown as { center: number[] }).center,
+        zoom: (renderer as unknown as { zoom: number }).zoom,
+      });
     },
 
     /**

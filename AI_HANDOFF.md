@@ -1,6 +1,18 @@
 # 给下一个 AI 的交接文档
 
-## 本轮（UI 收尾）完成的六条需求
+## 本轮（跟随钳制）：边缘目标不再被顶到正中
+
+需求：世界跟随与省级/市级自动跟随，在目标已贴近当前地图范围边缘时不要把它挪到视觉正中，以免半屏空白。
+
+已定口径（三轮 grill 收敛）：
+- **取景边界**分层：全国=中国 bbox、**下钻省=该省几何 bbox**（邻省透明）、世界全国=世界 bbox、世界大洲/次区域=标定框。
+- **中心钳制**（逐轴）：`center = clamp( clamp(t, min+hw, max−hw), t±(hw−m) )`；冲突时**外层让步**（优先保证目标不贴屏幕边），露白 ≤ m。
+- **倍率下限**：`zoom = clampZoom(max(梯子倍率, 覆盖视口所需倍率))`；只有下钻小省真正生效（宁夏 12x → 28x 上限）。
+- **答错跟随**：目标已舒适可见（视口内且距四边 ≥ m）→ 完全不动。
+- **边距 m = 视口短边的 10%**（`FOLLOW_MARGIN_RATIO`），同时是"允许偏离上限/容忍露白上限/已可见判定阈值"。
+- 即时取景（下钻省、切大洲/次区域）**不改**。
+
+## 上一轮（UI 收尾）完成的六条需求
 
 1. **熟练度分析左下角新增「设置」**：与其他模式同一套浮层（`#btn-mode-settings` → `#mode-settings-panel`），内含「隐藏地图标签」。
 2. **熟练度分析阶梯改为 -10 / -5 / -1 / 0 / +1 / +5 / +10**：七档区间随之变为 糟糕≤-10、较差 -9~-5、陌生 -4~-1、一般 0、初识 +1~+4、熟练 +5~+9、炉火纯青≥+10。
@@ -17,7 +29,21 @@
   - 明主题：关闭 = 浅灰轨道 + **左侧黑点**；打开 = **全黑**
 - **自由模式与熟练度分析的三档地图默认显示地图标签**：新增 `RenderState.worldLabelZoomThreshold`（默认 2.2），这两个模式的地级/市级档传 `labelZoomThreshold: 0`、世界档传 `worldLabelZoomThreshold: 0`，即**任何倍率（含默认 1.00x 全景）都画标签**。原先地级档阈值是 4（自由模式是 1，而默认 zoom 恰好等于 1 → `zoom > 1` 为假），世界档 2.2，所以默认视图下**一个标签都不显示**，这正是用户反馈的问题。
 
-## 关键文件与实现位置
+## 关键文件与实现位置（跟随钳制）
+
+- `src/map/renderer.ts`
+  - `framingExtent()` 取景边界、`viewportWindow()` 视口数据矩形（画布两角 `pointToData`，**无窗口尺寸模型假设**）、`clampFollowCenter()` 中心钳制、`followZoomFloor()` 倍率下限、`isComfortablyVisible()` / `isNegligibleMove()` / `panFollow()`。
+  - 纯函数 `clampFollowAxis()`（导出，供单测）与 `FOLLOW_MARGIN_RATIO`（导出，供探针复用）。
+  - `viewProvinceBox` 字段：`drillToProvince` 里存下钻省的几何 bbox，**所有把 `viewProvince` 置 null 的地方都要一起清掉**（现有 6 处）。
+- `src/map/followClamp.test.ts`（新，7 例）：钳制数学、露白 ≤ m、边界外目标仍在视口内、退化为边界中心。
+- `src/probe.ts`
+  - `worldAutoFollow()` 断言改写：从"误差 <1.5° 必然居中"改成"目标仍在视口内 + 内容不越出取景边界（边距之内）"，并返回 `sgpDetail/rusDetail/chnDetail` 原始数字。**注意越界量的符号**：west/south 是 `extent − window`，east/north 是 `window − extent`（第一版写反过，导致误报）。
+  - `panOnWrong()` 增加 `ausVisible` 与 `stayedStill`（已舒适可见则不动）。
+  - 新增截图用只读助手：`followShot` / `followUnitShot` / `flashTarget` / `followFrames`。
+- `scripts/shot-follow-clamp.mjs`（新）：9 张边界/对照截图 + 每张打印取景边界/视口/中心/越界量。
+- `scripts/verify-round2.mjs`：第 5、6 节的两条集成断言按新语义改写（现 38/38 通过）。
+
+## 上一轮（UI 收尾）关键文件与实现位置
 
 - `src/modes/analysis.ts`
   - 新增导出常量 `SCORE_BREAKPOINTS = [-10,-5,-1,0,1,5,10]`，`scoreColor()` / `provinceLevelOf()` 按它重写（地级/省级/世界三档共用）。
