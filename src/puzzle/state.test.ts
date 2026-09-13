@@ -128,6 +128,21 @@ describe('PuzzleState', () => {
     expect(state.snapCandidates(b.id).map((g) => g.pieces)).toEqual([['A']]);
   });
 
+  it('candidatesFor：点选→点放时按"将要落下的偏移"预告会拼上谁（不改状态）', () => {
+    const state = makeState();
+    state.start();
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    // 幽灵预览：B 若落在偏移 (8,6) 处会与 A 吸上
+    expect(state.candidatesFor(8, 6, ['B']).map((g) => g.pieces)).toEqual([['A']]);
+    // 超出容差 / 不相邻 / 同组，都不算
+    expect(state.candidatesFor(40, 40, ['B'])).toHaveLength(0);
+    expect(state.candidatesFor(2, 2, ['D'])).toHaveLength(0);
+    expect(state.candidatesFor(0, 0, ['A'])).toHaveLength(0);
+    expect(state.groups).toHaveLength(1); // 只读，没改状态
+  });
+
   it('四片全部吸成一组才算完成', () => {
     const state = makeState();
     state.start();

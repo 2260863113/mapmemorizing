@@ -66,6 +66,8 @@ export class PuzzleView {
   private slotPointer: SlotPointer | null = null;
   private selectedAdcode: string | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  /** 上一次的可吸附提示签名（避免每帧重排 class）。 */
+  private hintSignature = '';
 
   constructor(private opts: PuzzleViewOptions) {}
 
@@ -413,7 +415,8 @@ export class PuzzleView {
     const dy = this.dragStart.dy + (clientY - this.dragStart.y) / this.zoom;
     this.opts.state.moveGroup(this.dragGroupId, dx, dy);
     this.applyGroupTransform(this.dragGroupId);
-    this.highlightCandidates(this.dragGroupId);
+    const group = this.opts.state.groups.find((g) => g.id === this.dragGroupId);
+    this.applyHint(dx, dy, group?.pieces ?? [], this.dragGroupId);
     this.dragMoved = true;
   }
 
@@ -566,15 +569,39 @@ export class PuzzleView {
     g.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
   }
 
-  private highlightCandidates(groupId: number): void {
+  /**
+   * 可吸附提示：把"若在此偏移放下就会拼上"的目标组描成绿色高亮，并给手里那块也加上高亮类。
+   *
+   * 拖动中与**点选→点放**的幽灵预览共用（后者还没有真正的组，只有"将要落下的偏移"）。
+   * 困难模式下所有碎片都是同一种灰面、又没有省名，提示必须足够显眼——故目标组除了加粗描边
+   * 还会带一层绿色辉光（见 styles.css 的 .can-snap / .can-snap-self）。
+   */
+  private applyHint(dx: number, dy: number, pieces: string[], selfGroupId: number | null): void {
+    const world = this.world;
+    if (!world) return;
+    const candidates = this.opts.state.candidatesFor(dx, dy, pieces);
+    const signature = candidates.map((g) => g.id).sort((a, b) => a - b).join(',') + '|' + (candidates.length ? selfGroupId ?? '' : '');
+    if (signature === this.hintSignature) return; // 避免每帧重排 class
+    this.hintSignature = signature;
     this.clearHighlights();
-    for (const candidate of this.opts.state.snapCandidates(groupId)) {
-      this.world?.querySelector(`g[data-group="${candidate.id}"]`)?.classList.add('can-snap');
+    if (!candidates.length) return;
+    for (const candidate of candidates) {
+      world.querySelector(`g[data-group="${candidate.id}"]`)?.classList.add('can-snap');
+    }
+    if (selfGroupId !== null) {
+      world.querySelector(`g[data-group="${selfGroupId}"]`)?.classList.add('can-snap-self');
     }
   }
 
+  private highlightCandidates(groupId: number): void {
+    const group = this.opts.state.groups.find((g) => g.id === groupId);
+    if (!group) return;
+    this.applyHint(group.dx, group.dy, group.pieces, groupId);
+  }
+
   private clearHighlights(): void {
-    this.world?.querySelectorAll('g.can-snap').forEach((g) => g.classList.remove('can-snap'));
+    this.hintSignature = '';
+    this.world?.querySelectorAll('g.can-snap, g.can-snap-self').forEach((g) => g.classList.remove('can-snap', 'can-snap-self'));
   }
 
   private updateGhost(adcode: string | null, clientX: number, clientY: number): void {
@@ -603,7 +630,11 @@ export class PuzzleView {
     }
     const [wx, wy] = this.toWorld(clientX, clientY);
     const origin = project(def.origin, scale);
-    this.ghost.setAttribute('transform', `translate(${(wx - origin[0]).toFixed(2)} ${(wy - origin[1]).toFixed(2)})`);
+    const dx = wx - origin[0];
+    const dy = wy - origin[1];
+    this.ghost.setAttribute('transform', `translate(${dx.toFixed(2)} ${dy.toFixed(2)})`);
+    // 点选→点放同样给"会拼上"的目标加绿色提示（此前这条路径完全没有提示）
+    this.applyHint(dx, dy, [adcode], null);
   }
 
   /** 点选模式下点击画布：把选中的片放到这里。 */

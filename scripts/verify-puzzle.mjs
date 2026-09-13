@@ -167,6 +167,72 @@ try {
     afterFar.groups.map((g) => g.pieces));
   await shot('puzzle-3-snapped.png');
 
+  // ---------------- 拖动中「可吸附」绿色提示（两种难度都要有） ----------------
+  /** 找到某片路径上可点中的屏幕坐标（bbox 中心可能落在凹形省的空洞里，故网格取点）。 */
+  const pointOnPiece = async (adcode) => JSON.parse(await ev(`JSON.stringify((function(){
+    var el = document.querySelector('#puzzle path[data-adcode="${adcode}"]');
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    for (var i = 1; i <= 5; i++) {
+      for (var j = 1; j <= 5; j++) {
+        var x = r.left + (r.width * i) / 6, y = r.top + (r.height * j) / 6;
+        if (document.elementFromPoint(x, y) === el) return { x: x, y: y };
+      }
+    }
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })())`));
+  /** 拖动中的可吸附提示：返回高亮组数、手里那块是否也高亮、以及目标片的实际描边。 */
+  const snapHintState = async () => JSON.parse(await ev(`JSON.stringify((function(){
+    var lit = document.querySelectorAll('#puzzle g.puzzle-group.can-snap');
+    var self = document.querySelectorAll('#puzzle g.puzzle-group.can-snap-self');
+    var target = lit.length ? lit[0].querySelector('path') : null;
+    return {
+      lit: lit.length,
+      selfLit: self.length,
+      stroke: target ? getComputedStyle(target).stroke : null,
+      width: target ? getComputedStyle(target).strokeWidth : null,
+      accent: getComputedStyle(document.body).getPropertyValue('--accent').trim(),
+    };
+  })())`));
+
+  const checkSnapHint = async (difficulty, shotDuringDrag) => {
+    await ev(`window.__probe.puzzleDifficulty('${difficulty}')`);
+    // 干净重开：保证 110000 / 130000 都还没放置、且分属两组（否则"同一组内"根本没有可吸附对象）
+    await ev(`window.__probe.puzzleRestart()`);
+    await sleep(300);
+    const pBJ = await ev(`JSON.stringify(window.__probe.puzzleTruePosition('110000'))`).then((s) => JSON.parse(s));
+    const pHB = await ev(`JSON.stringify(window.__probe.puzzleTruePosition('130000'))`).then((s) => JSON.parse(s));
+    await ev(`window.__probe.puzzlePlaceAt('110000', ${pBJ.x}, ${pBJ.y})`);
+    await ev(`window.__probe.puzzlePlaceAt('130000', ${pHB.x + 60}, ${pHB.y + 60})`);
+    await sleep(150);
+    const from = await pointOnPiece('130000');
+    if (!from) return null;
+    // 按住河北，往北京方向挪 50px（偏移差变成 ~10px → 进入容差），**松手前**检查高亮
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let i = 1; i <= 6; i++) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x - (50 * i) / 6, y: from.y - (50 * i) / 6, button: 'left', buttons: 1 });
+      await sleep(20);
+    }
+    const hint = await snapHintState();
+    if (shotDuringDrag) await shot(shotDuringDrag); // 趁还在拖、提示亮着的时候截图
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: from.x - 50, y: from.y - 50, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(150);
+    return hint;
+  };
+
+  const hintEasy = await checkSnapHint('easy', 'puzzle-3b-snap-hint.png');
+  check('简单难度：拖到可吸附范围时给出绿色提示（目标组绿边 + 绿辉光、手里那块也加绿边）',
+    !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) >= 2 && hintEasy.stroke !== 'none',
+    hintEasy);
+  const hintHard = await checkSnapHint('hard', 'puzzle-3c-snap-hint-hard.png');
+  check('困难难度：拖到可吸附范围时同样给出绿色提示',
+    !!hintHard && hintHard.lit >= 1 && hintHard.selfLit >= 1 && parseFloat(hintHard.width) >= 2 && hintHard.stroke !== 'none',
+    hintHard);
+  check('困难模式下没有省名标签（提示不依赖标签）',
+    (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) === 0);
+  await ev(`window.__probe.puzzleDifficulty('easy')`);
+  await sleep(120);
+
   // ---------------- 难度：只影响省名标签 ----------------
   const labelsEasy = await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`);
   await ev(`(() => { document.getElementById('puzzle-hard').click(); return true })()`);

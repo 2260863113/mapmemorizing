@@ -445,7 +445,9 @@ interface MemoryState {
 
 **为什么自带 SVG 画布**：见 `docs/adr/0006`（ECharts 的 geo 无法给单个 region 独立平移，且全仓没有拖拽基建）。实现分三层：
 
-- `src/puzzle/projection.ts` —— 与地图页**同一套投影**（`MAP_PROJECTION_BBOX.china` + ECharts 对 GeoJSON 的默认 `aspectScale = 0.75`）的线性换算 + `PolygonRings → SVG path`。
+- `src/puzzle/projection.ts` —— 与地图页**同一套投影**的线性换算 + `PolygonRings → SVG path`：`x = (lng − 73.5)·scale`、`y = (53.6 − lat)·scale / 0.75`。
+  ⚠ **`aspectScale` 的方向极易搞反**：ECharts 的 `aspectScale = 0.75` 是**布局宽高比系数**（`geoCreator.resizeGeo`：`aspect = rect.width / rect.height * aspectScale`），不是"纬度缩放系数"。由 `viewW/viewH = (bboxW/bboxH)·aspectScale` 推出：**每度纬度占的像素 = 每度经度 / 0.75 ≈ 1.333 倍**。
+  第一版写成了 `y = …·0.75`（正好用反），碎片被上下压扁 1.78 倍（= 1/0.75²），用户一眼看出"横竖比例不对"。实测对照：同一浏览器里地图页的 `perPxY/perPxX`（度/像素）恒为 **0.7500** ⇒ 像素/度之比 1.333，与修正后的拼图一致。单测 `pieces.test.ts` 用 `px_w/px_h = (deg_w/deg_h) × 0.75` 钉住这条不变量（河北 0.733、内蒙古 1.360、新疆 1.156）。
 - `src/puzzle/pieces.ts` —— 把省级 plus（40%）档切成 34 片；**南海诸岛装饰面**（`100000_JD`）不作碎片；**海南**按"主岛 + 主岛 bbox 外扩 0.5° 内的近岸小岛"当碎片，其余 200 多个远海岛礁进 `seaIslets`，获胜后自动补上。
 - `src/puzzle/adjacency.ts` —— 陆地相邻复用 `buildProvinceAdjacency`；**零邻居的海南与台湾**按**两片 bbox 最小间距**各补一个最近片（实测台湾→福建、海南→广东）。
 - `src/puzzle/state.ts` —— 位置模型：`<path>` 的 `d` 永远是**真值投影**，用户拖动只改所属组的偏移 `(dx,dy)`；于是"两片摆对了"= 两组偏移相等，磁吸就是"把另一组偏移改成被拖动那组的值"（对齐到手里那块，避免松手瞬间跳走）。`drop()` 可连锁合并，`isComplete()` = 34 片同属一组。

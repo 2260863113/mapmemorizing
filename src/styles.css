@@ -860,9 +860,19 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 #puzzle .puzzle-group {
   filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22)); /* 已成组的块统一投影 */
 }
-#puzzle .puzzle-group.can-snap .puzzle-piece {
+/* 可吸附提示：目标组加粗绿边 + 绿色辉光（困难模式下所有碎片都是同一种灰面又没有省名，
+   提示必须足够显眼），手里那块同时加绿边表示"现在松手就会拼上"。 */
+#puzzle .puzzle-group.can-snap {
+  filter: drop-shadow(0 0 5px rgba(16, 185, 129, 0.85));
+}
+#puzzle .puzzle-group.can-snap .puzzle-piece,
+#puzzle .puzzle-group.can-snap-self .puzzle-piece {
   stroke: var(--accent);
-  stroke-width: 2;
+  stroke-width: 2.5;
+}
+#puzzle .puzzle-group.can-snap .puzzle-piece {
+  fill: var(--accent);
+  fill-opacity: 0.35;
 }
 #puzzle .puzzle-label {
   font-size: calc(14px / var(--pz, 1)); /* 屏幕字号恒定（不随缩放变粗），与地图页省名同档 */

@@ -365,6 +365,11 @@ export class PuzzleMode extends BaseMode {
     this.startRun();
   }
 
+  /** 探针用：重开一局（等价于点两次「重置」）。 */
+  debugRestart() {
+    this.restartRun();
+  }
+
   /** 探针用：把某片从卡槽/池子取出并放到指定拼图 px 位置（不经过指针，用于验证吸附）。 */
   debugPlaceAt(adcode: string, x: number, y: number) {
     const state = this.state;

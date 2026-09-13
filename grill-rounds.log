@@ -657,3 +657,8 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 改动：types/ui-dom/modeSettings/chromeSync/appController/index.html/messages.json/styles.css/probe.ts/map-geometry（新增 bboxOfPolygons）；文档 README/CONTEXT/DESIGN/AI_HANDOFF。
 - 口径：不做步数、不进排行榜；难度只影响是否显示省名；海南片只留主岛、三沙获胜后自动补上；非省级粒度点了只提示「暂未开放」。
 - ⚠ 已知取舍：默认比例下澳门只有约 1.6px 宽（从卡槽拖出不受影响，放下后要再挪需先放大）；世界/地级拼图未做，扩展只需换 buildPieces 的数据源与邻接表。
+================================================================
+2026-09-13 20:00  拼图模式两处修正（用户反馈）
+- ① 碎片被上下压扁：projection.ts 把 ECharts 的 aspectScale 用反了（它是布局宽高比系数，正确是"每度纬度像素 = 每度经度 / 0.75"）；修正后与地图页实测一致（perPxY/perPxX = 0.7500），pieces.test.ts 加不变量闸门 px_w/px_h = (deg_w/deg_h)×0.75。
+- ② 可吸附提示：原来只有目标组一条 2px 绿边，困难模式（无省名、全是同色灰面）几乎看不见，且"点选→点放"路径完全没有提示。现在目标组 2.5px 绿边 + 绿辉光 + 半透明绿填充，手里那块也加绿边；拖动与幽灵预览共用新增的 PuzzleState.candidatesFor()。
+- verify-puzzle.mjs 增至 25 项（两种难度各一条"松手前"断言 + 趁提示亮着截图 puzzle-3b/3c）；README/DESIGN §17/AI_HANDOFF 同步，附 aspectScale 方向警告。

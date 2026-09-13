@@ -7,20 +7,39 @@
  *
  * 但**投影必须与省级地图完全一致**，否则拼出来的图形与地图页对不上：
  *   · 同一份固定投影 bbox（renderer.ts 的 `MAP_PROJECTION_BBOX.china`）
- *   · 同一个纬度压缩比（ECharts 对 GeoJSON 源的默认 `aspectScale = 0.75`，本项目未覆盖）
- * 于是 x = (lng − minLng)·scale、y = (maxLat − lat)·scale·0.75 —— 纯线性，可单测。
+ *   · 同一个纬度比例（ECharts 对 GeoJSON 源的默认 `aspectScale = 0.75`，本项目未覆盖）
+ *
+ * **aspectScale 的方向很容易搞反**（本项目踩过：碎片被上下压扁）。ECharts 的用法是
+ * `geoCreator.resizeGeo`：`aspect = rect.width / rect.height * aspectScale`，
+ * 再把 geo 的视口按这个宽高比铺开（`layout.getLayoutRect`）——它是**布局宽高比**，
+ * 不是纬度缩放系数。于是：
+ *
+ *   viewW / viewH = (bboxW / bboxH) · aspectScale
+ *   ⇒ px/度(纬度) = viewH / bboxH = (viewW / bboxW) / aspectScale = px/度(经度) / 0.75
+ *
+ * 即 **1 度纬度占的像素是 1 度经度的 1/0.75 ≈ 1.333 倍**（纬度被"拉长"，等价于经度被压短），
+ * 这正是为了让中国纬度带（≈40°N，cos40° ≈ 0.766）的比例看起来正确。
+ * 实测印证：1440×762 视口下地图上可见经纬跨度之比 = 2.52 = (1440/762)/0.75。
+ *
+ * 于是 x = (lng − minLng)·scale、y = (maxLat − lat)·scale/0.75 —— 纯线性，可单测。
  */
 import type { PolygonRings } from '../map/geometry';
 
 /** 固定投影范围（与 `MAP_PROJECTION_BBOX.china` 逐字一致）。 */
 export const PUZZLE_BBOX = { minLng: 73.5, minLat: 3.4, maxLng: 135.1, maxLat: 53.6 } as const;
 
-/** ECharts geo 对 GeoJSON 源的默认纬度压缩比。 */
+/** ECharts geo 对 GeoJSON 源的默认 `aspectScale`（用于**布局宽高比**）。 */
 export const PUZZLE_ASPECT = 0.75;
+
+/** 每度纬度占的像素 ÷ 每度经度占的像素 = 1 / aspectScale ≈ 1.333。 */
+export const PUZZLE_LAT_PER_LNG = 1 / PUZZLE_ASPECT;
 
 /** 投影范围尺寸（度）。 */
 export const PUZZLE_SPAN_LNG = PUZZLE_BBOX.maxLng - PUZZLE_BBOX.minLng; // 61.6
 export const PUZZLE_SPAN_LAT = PUZZLE_BBOX.maxLat - PUZZLE_BBOX.minLat; // 50.2
+/** 整幅拼图在 1x 比例下的像素尺寸。 */
+export const PUZZLE_PX_W = PUZZLE_SPAN_LNG;
+export const PUZZLE_PX_H = PUZZLE_SPAN_LAT * PUZZLE_LAT_PER_LNG;
 
 /** 经纬度 → 拼图 px（scale = 每经度多少 px）。 */
 export function projectX(lng: number, scale: number): number {
@@ -28,7 +47,7 @@ export function projectX(lng: number, scale: number): number {
 }
 
 export function projectY(lat: number, scale: number): number {
-  return (PUZZLE_BBOX.maxLat - lat) * scale * PUZZLE_ASPECT;
+  return (PUZZLE_BBOX.maxLat - lat) * scale * PUZZLE_LAT_PER_LNG;
 }
 
 export function project(point: [number, number], scale: number): [number, number] {
@@ -37,7 +56,7 @@ export function project(point: [number, number], scale: number): [number, number
 
 /** 拼图 px → 经纬度（调试/探针用）。 */
 export function unproject(x: number, y: number, scale: number): [number, number] {
-  return [PUZZLE_BBOX.minLng + x / scale, PUZZLE_BBOX.maxLat - y / (scale * PUZZLE_ASPECT)];
+  return [PUZZLE_BBOX.minLng + x / scale, PUZZLE_BBOX.maxLat - y / (scale * PUZZLE_LAT_PER_LNG)];
 }
 
 /** 经纬度 bbox → 拼图 px 的 [minX, minY, maxX, maxY]。 */

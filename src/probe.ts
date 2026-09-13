@@ -451,6 +451,13 @@ export function installProbe(app: AppController) {
       return true;
     },
 
+    /** 探针用：重开一局（清空画布、重新打乱卡槽）。 */
+    puzzleRestart() {
+      const app = anyApp as unknown as { puzzleMode?: { debugRestart?: () => void } };
+      app.puzzleMode?.debugRestart?.();
+      return true;
+    },
+
     /** 探针用：把剩余碎片按真值位置一次性放下（验证"拼成一整块 → 获胜"流程）。 */
     puzzleAutoSolve() {
       const app = anyApp as unknown as {

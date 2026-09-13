@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PUZZLE_ASPECT,
   PUZZLE_BBOX,
+  PUZZLE_LAT_PER_LNG,
   PUZZLE_SPAN_LAT,
   PUZZLE_SPAN_LNG,
   project,
@@ -20,13 +21,15 @@ describe('拼图投影', () => {
     expect(projectX(PUZZLE_BBOX.minLng, SCALE)).toBeCloseTo(0, 9);
     expect(projectY(PUZZLE_BBOX.maxLat, SCALE)).toBeCloseTo(0, 9);
     expect(projectX(PUZZLE_BBOX.maxLng, SCALE)).toBeCloseTo(PUZZLE_SPAN_LNG * SCALE, 6);
-    expect(projectY(PUZZLE_BBOX.minLat, SCALE)).toBeCloseTo(PUZZLE_SPAN_LAT * SCALE * PUZZLE_ASPECT, 6);
+    expect(projectY(PUZZLE_BBOX.minLat, SCALE)).toBeCloseTo(PUZZLE_SPAN_LAT * SCALE * PUZZLE_LAT_PER_LNG, 6);
   });
 
-  it('纬度是反向的（纬度越高 y 越小），并带 ECharts 的 0.75 压缩比', () => {
+  it('纬度是反向的（纬度越高 y 越小），且每度纬度比每度经度长 1/aspectScale 倍', () => {
     expect(projectY(40, SCALE)).toBeLessThan(projectY(30, SCALE));
-    const oneDegree = Math.abs(projectY(40, SCALE) - projectY(39, SCALE));
-    expect(oneDegree).toBeCloseTo(SCALE * PUZZLE_ASPECT, 6);
+    const perLat = Math.abs(projectY(40, SCALE) - projectY(39, SCALE));
+    const perLng = projectX(101, SCALE) - projectX(100, SCALE);
+    expect(perLat).toBeCloseTo(perLng / PUZZLE_ASPECT, 6);
+    expect(perLat).toBeGreaterThan(perLng); // 纬度被"拉长"（经度被压短），与地图页一致
   });
 
   it('unproject 是 project 的逆', () => {

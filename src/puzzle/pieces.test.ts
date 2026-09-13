@@ -4,6 +4,7 @@ import path from 'node:path';
 import { feature } from 'topojson-client';
 import { buildPieces, splitHainan, SEA_DECORATIVE_ADCODE } from './pieces';
 import { buildPuzzleAdjacency, bboxGap, neighboursInPuzzle, pairKey } from './adjacency';
+import { PUZZLE_ASPECT, PUZZLE_LAT_PER_LNG, PUZZLE_SPAN_LAT, PUZZLE_SPAN_LNG, pxBBoxOf } from './projection';
 import { buildProvinceAdjacency } from '../province';
 import { makeAppData } from '../testFixture';
 import type { AppData, Unit } from '../types';
@@ -68,6 +69,25 @@ describe('buildPieces', () => {
       expect(Number.isFinite(piece.labelAnchor[1])).toBe(true);
     }
     expect(pieces.find((p) => p.adcode === '150000')?.label).toBe('内蒙古');
+  });
+
+  it('碎片的像素宽高比 = 经纬度宽高比 × aspectScale（与地图页同一套比例）', () => {
+    // 回归闸门：aspectScale 曾被用反（纬度被压扁 0.75 倍 → 视觉上"上下压扁"）。
+    // ECharts 的 aspectScale 是**布局宽高比**系数，故 px_w/px_h = (deg_w/deg_h) × 0.75。
+    const scale = 26.32; // 1440 宽视口下的默认比例
+    for (const adcode of ['150000', '650000', '710000', '110000']) {
+      const piece = pieces.find((p) => p.adcode === adcode)!;
+      const degW = piece.bbox[2] - piece.bbox[0];
+      const degH = piece.bbox[3] - piece.bbox[1];
+      const box = pxBBoxOf(piece.polygons, scale);
+      const pxW = box[2] - box[0];
+      const pxH = box[3] - box[1];
+      expect(pxW / pxH).toBeCloseTo((degW / degH) * PUZZLE_ASPECT, 6);
+    }
+    // 整幅拼图：宽高比 = (61.6 / 50.2) × 0.75 ≈ 0.92（地图页上中国就是"竖着略高"）
+    const mapAspect = (PUZZLE_SPAN_LNG * scale) / (PUZZLE_SPAN_LAT * PUZZLE_LAT_PER_LNG * scale);
+    expect(mapAspect).toBeCloseTo((PUZZLE_SPAN_LNG / PUZZLE_SPAN_LAT) * PUZZLE_ASPECT, 6);
+    expect(mapAspect).toBeLessThan(1);
   });
 
   it('海南被拆成主岛（拼图用）与远海岛礁（获胜后补）', () => {

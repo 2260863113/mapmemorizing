@@ -130,8 +130,21 @@ export class PuzzleState {
   /** 若此刻松手，哪些组会与本组吸上（拖动中高亮提示用，只读）。 */
   snapCandidates(groupId: number): PuzzleGroup[] {
     const group = this.groups.find((g) => g.id === groupId);
-    if (!group) return [];
-    return this.groups.filter((other) => other.id !== groupId && this.pairWithinTolerance(group, other));
+    return group ? this.candidatesFor(group.dx, group.dy, group.pieces) : [];
+  }
+
+  /**
+   * 给定"若把 `pieces` 放在偏移 (dx,dy)"，会与哪些现有组吸合（只读，不改状态）。
+   *
+   * 拖动中的高亮提示与**点选→点放**的幽灵预览共用它：后者此刻还没有真正的组，
+   * 只能按"将要落下的偏移"来算。
+   */
+  candidatesFor(dx: number, dy: number, pieces: string[]): PuzzleGroup[] {
+    return this.groups.filter((other) => {
+      if (other.pieces.some((p) => pieces.includes(p))) return false; // 同组不算
+      if (Math.hypot(other.dx - dx, other.dy - dy) > this.tolerance) return false;
+      return pieces.some((pa) => other.pieces.some((pb) => this.adjacency.has(pairKey(pa, pb))));
+    });
   }
 
   /**
