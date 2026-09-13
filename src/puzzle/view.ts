@@ -187,7 +187,14 @@ export class PuzzleView {
     this.builtScale = scale;
   }
 
-  /** 按 state 重建组结构（组 → 片 + 标签），复用已生成的 path/标签元素。 */
+  /**
+   * 按 state 重建画布结构：**每片一个 `<g>` 包装**，包装按面积从大到小排列。
+   *
+   * 为什么不做"一组一个 `<g>`"：SVG 的上下覆盖关系就是 DOM 顺序，而用户要求
+   * **面积小的碎片压在面积大的之上**（北京/天津压在河北的环里、港澳压在广东之上、
+   * 世界档的莱索托压在南部非洲诸国之上）。只有把每片做成同级节点才能全局按面积排序；
+   * 组的位置则由每片包装上的同一个 `translate(dx,dy)` 承担（拖动时批量更新）。
+   */
   renderStructure(): void {
     const world = this.world;
     if (!world) return;
@@ -195,26 +202,33 @@ export class PuzzleView {
     this.ghost = null;
     const colors = this.opts.theme();
     const showLabels = this.opts.labels();
+    const rows: { adcode: string; groupId: number; dx: number; dy: number; area: number }[] = [];
     for (const group of this.opts.state.groups) {
-      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', 'puzzle-group');
-      g.setAttribute('data-group', String(group.id));
-      g.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
       for (const adcode of group.pieces) {
-        const path = this.paths.get(adcode);
-        if (path) {
-          path.setAttribute('fill', colors.fill);
-          path.setAttribute('stroke', colors.stroke);
-          g.appendChild(path);
-        }
-        const label = this.labelEls.get(adcode);
-        if (label && showLabels) {
-          label.setAttribute('fill', colors.label);
-          label.setAttribute('stroke', colors.halo);
-          g.appendChild(label);
-        }
+        rows.push({ adcode, groupId: group.id, dx: group.dx, dy: group.dy, area: this.opts.state.def(adcode)?.area ?? 0 });
       }
-      world.appendChild(g);
+    }
+    // 面积大的先画（在下），面积小的后画（在上）
+    rows.sort((a, b) => b.area - a.area);
+    for (const row of rows) {
+      const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      wrap.setAttribute('class', 'puzzle-piece-wrap');
+      wrap.setAttribute('data-adcode', row.adcode);
+      wrap.setAttribute('data-group', String(row.groupId));
+      wrap.setAttribute('transform', `translate(${row.dx.toFixed(2)} ${row.dy.toFixed(2)})`);
+      const path = this.paths.get(row.adcode);
+      if (path) {
+        path.setAttribute('fill', colors.fill);
+        path.setAttribute('stroke', colors.stroke);
+        wrap.appendChild(path);
+      }
+      const label = this.labelEls.get(row.adcode);
+      if (label && showLabels) {
+        label.setAttribute('fill', colors.label);
+        label.setAttribute('stroke', colors.halo);
+        wrap.appendChild(label);
+      }
+      world.appendChild(wrap);
     }
     if (this.selectedAdcode) this.updateGhost(this.selectedAdcode, this.lastClient.x, this.lastClient.y);
     this.applyTransform();
@@ -547,15 +561,16 @@ export class PuzzleView {
       for (const adcode of group.pieces) {
         const def = this.opts.state.def(adcode);
         if (!def || !def.seaIslets.length) continue;
-        const g = world.querySelector(`g[data-group="${group.id}"]`);
-        if (!g) continue;
+        // 每片一个包装：南海岛礁挂在该片自己的包装里（跟着它所在的组一起动）
+        const wrap = world.querySelector(`g.puzzle-piece-wrap[data-adcode="${adcode}"]`);
+        if (!wrap) continue;
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('class', 'puzzle-piece puzzle-sea-islets');
         path.setAttribute('d', svgPathOf(def.seaIslets, scale));
         path.setAttribute('fill', colors.fill);
         path.setAttribute('stroke', colors.stroke);
         path.setAttribute('fill-rule', 'evenodd');
-        g.insertBefore(path, g.firstChild);
+        wrap.insertBefore(path, wrap.firstChild);
       }
     }
   }
@@ -564,9 +579,10 @@ export class PuzzleView {
 
   private applyGroupTransform(groupId: number): void {
     const group = this.opts.state.groups.find((g) => g.id === groupId);
-    const g = this.world?.querySelector(`g[data-group="${groupId}"]`);
-    if (!group || !g) return;
-    g.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
+    if (!group) return;
+    this.world?.querySelectorAll(`g[data-group="${groupId}"]`).forEach((g) => {
+      g.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
+    });
   }
 
   /**
@@ -586,10 +602,10 @@ export class PuzzleView {
     this.clearHighlights();
     if (!candidates.length) return;
     for (const candidate of candidates) {
-      world.querySelector(`g[data-group="${candidate.id}"]`)?.classList.add('can-snap');
+      world.querySelectorAll(`g[data-group="${candidate.id}"]`).forEach((el) => el.classList.add('can-snap'));
     }
     if (selfGroupId !== null) {
-      world.querySelector(`g[data-group="${selfGroupId}"]`)?.classList.add('can-snap-self');
+      world.querySelectorAll(`g[data-group="${selfGroupId}"]`).forEach((el) => el.classList.add('can-snap-self'));
     }
   }
 
@@ -601,7 +617,9 @@ export class PuzzleView {
 
   private clearHighlights(): void {
     this.hintSignature = '';
-    this.world?.querySelectorAll('g.can-snap, g.can-snap-self').forEach((g) => g.classList.remove('can-snap', 'can-snap-self'));
+    this.world
+      ?.querySelectorAll('g.can-snap, g.can-snap-self')
+      .forEach((g) => g.classList.remove('can-snap', 'can-snap-self'));
   }
 
   private updateGhost(adcode: string | null, clientX: number, clientY: number): void {

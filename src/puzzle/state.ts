@@ -40,6 +40,8 @@ export class PuzzleState {
   slots: string[] = [];
   groups: PuzzleGroup[] = [];
   private groupSeq = 1;
+  /** 累计"吸附吸收掉的组数"：进度行按用户口径显示 1 + 它（起始 1，每次吸附 +1）。 */
+  private absorbed = 0;
 
   constructor(
     pieces: PuzzlePieceDef[],
@@ -55,6 +57,7 @@ export class PuzzleState {
   start(): void {
     this.groups = [];
     this.groupSeq = 1;
+    this.absorbed = 0;
     this.pool = shuffle(this.all, this.rng);
     this.slots = [];
     this.refillSlots();
@@ -164,8 +167,17 @@ export class PuzzleState {
       root.pieces = [...root.pieces, ...target.pieces].sort();
       this.groups = this.groups.filter((g) => g.id !== target.id);
       merged += 1;
+      this.absorbed += 1;
     }
     return { mergedGroups: merged, complete: this.isComplete() };
+  }
+
+  /**
+   * 进度行里的「已拼」个数（用户口径）：**起始 1，每发生一次吸附 +1**，
+   * 而不是"从卡槽拿出来的片数"——它衡量的是拼合进度，全部拼好时正好等于总片数。
+   */
+  assembledCount(): number {
+    return Math.min(this.all.length, 1 + this.absorbed);
   }
 
   /** 两组的偏移差是否在容差内，且两组之间**存在相邻片对**。 */

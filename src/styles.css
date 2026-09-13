@@ -857,20 +857,21 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
   vector-effect: non-scaling-stroke; /* 描边恒定 1px，不随缩放变粗 */
   cursor: grab;
 }
-#puzzle .puzzle-group {
-  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22)); /* 已成组的块统一投影 */
+/* 每片一个包装 `<g>`（便于全局按面积排序决定上下覆盖），投影落在包装上 */
+#puzzle .puzzle-piece-wrap {
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22));
 }
-/* 可吸附提示：目标组加粗绿边 + 绿色辉光（困难模式下所有碎片都是同一种灰面又没有省名，
-   提示必须足够显眼），手里那块同时加绿边表示"现在松手就会拼上"。 */
-#puzzle .puzzle-group.can-snap {
+/* 可吸附提示：目标片加粗绿边 + 绿色辉光 + 半透明绿填充（困难模式下所有碎片都是同一种灰面
+   又没有省名，提示必须足够显眼），手里那块同时加绿边表示"现在松手就会拼上"。 */
+#puzzle .puzzle-piece-wrap.can-snap {
   filter: drop-shadow(0 0 5px rgba(16, 185, 129, 0.85));
 }
-#puzzle .puzzle-group.can-snap .puzzle-piece,
-#puzzle .puzzle-group.can-snap-self .puzzle-piece {
+#puzzle .puzzle-piece-wrap.can-snap .puzzle-piece,
+#puzzle .puzzle-piece-wrap.can-snap-self .puzzle-piece {
   stroke: var(--accent);
   stroke-width: 2.5;
 }
-#puzzle .puzzle-group.can-snap .puzzle-piece {
+#puzzle .puzzle-piece-wrap.can-snap .puzzle-piece {
   fill: var(--accent);
   fill-opacity: 0.35;
 }

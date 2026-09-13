@@ -46,6 +46,8 @@ export interface PuzzlePieceDef {
   origin: GeoPoint;
   /** 标签锚点（主面质心，经纬度）。 */
   labelAnchor: GeoPoint;
+  /** 本片面积（度²，各环 |area| 之和）：画布按它决定上下覆盖——**小的压在大的之上**。 */
+  area: number;
 }
 
 function withinMargin(inner: [number, number, number, number], outer: [number, number, number, number]): boolean {
@@ -95,6 +97,7 @@ export function buildPieces(data: AppData): PuzzlePieceDef[] {
     if (!all.length) continue;
     const { body, islets } = adcode === '460000' ? splitHainan(all) : { body: all, islets: [] };
     const bbox = bboxOfPolygons(body);
+    const area = body.reduce((sum, poly) => sum + Math.abs(ringArea(poly[0] ?? [])), 0);
     out.push({
       adcode,
       name,
@@ -102,6 +105,7 @@ export function buildPieces(data: AppData): PuzzlePieceDef[] {
       polygons: body,
       seaIslets: islets,
       bbox,
+      area,
       origin: [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2],
       labelAnchor: bestLabelAnchor(body),
     });

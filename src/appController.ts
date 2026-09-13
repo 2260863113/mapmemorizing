@@ -147,6 +147,7 @@ export class AppController {
       showSummary: (html, onRestart, result) => showSummary(html, onRestart, result ? () => this.submitRoundResult(result) : undefined),
       hideSummary,
       updateProgress: () => this.updateProgress(),
+      syncChrome: () => this.syncModeChrome(),
       randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
       setTestRunning: (running: boolean) => this.setTestRunning(running),
     };

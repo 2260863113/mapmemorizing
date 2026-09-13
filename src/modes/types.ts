@@ -23,6 +23,11 @@ export interface ModeCtx {
   showSummary: (html: string, onRestart: () => void, result?: RoundResult) => void;
   hideSummary: () => void;
   updateProgress: () => void;
+  /**
+   * 通知外壳重算本模式的 chrome（按钮/分段行显隐等）。用于**运行状态变化**时立即刷新，
+   * 例如拼图「开始」后要收起难度行、回到开始卡片后再放出。
+   */
+  syncChrome?: () => void;
   randomUnit: (pool: Unit[]) => Unit;
   /**
    * 通知外壳「测验是否进行中」：开始测验时收起排行榜侧栏（答题时不干扰），

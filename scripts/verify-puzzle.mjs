@@ -113,12 +113,28 @@ try {
   check('难度分段按钮与粒度分段按钮都显示（侧栏不出现）', entered.difficultyVisible && entered.granularityVisible && entered.sidePanelHidden, entered);
   await shot('puzzle-1-start.png');
 
+  // ---------------- 难度分段按钮：未开始时可见可切（看卡槽省名），开始后收起 ----------------
+  const slotNames = async () => ev(`document.querySelectorAll('#puzzle .puzzle-slot-name').length`);
+  check('未开始时「简单」显示省名（卡槽预览下的名称）', (await slotNames()) === (await ev(`document.querySelectorAll('#puzzle .puzzle-slot').length`)));
+  await ev(`(() => { document.getElementById('puzzle-hard').click(); return true })()`);
+  await sleep(250);
+  const hardNames = await slotNames();
+  const storedHard = await ev(`localStorage.getItem('china-admin-puzzle-difficulty-v1')`);
+  check('切到「困难」后省名全部消失，并持久化本机', hardNames === 0 && storedHard === 'hard', { hardNames, storedHard });
+  await shot('puzzle-4-start-hard.png');
+  await ev(`(() => { document.getElementById('puzzle-easy').click(); return true })()`);
+  await sleep(250);
+  check('切回「简单」后省名恢复', (await slotNames()) > 0);
+
   // ---------------- 开始 + 计时 ----------------
   await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
   await sleep(600);
   const started = await puzzle();
   const statusText = await ev(`document.getElementById('puzzle-status').textContent`);
-  check('点开始后：已拼 0/34、进度行出现「已拼/用时」', started.started === true && started.placed === 0 && /已拼 0\/34/.test(statusText) && /用时 \d\d:\d\d/.test(statusText), { statusText, placed: started.placed });
+  check('点开始后：进度行出现「已拼 1/34 ｜ 用时 mm:ss」（已拼起始为 1，不随拿出碎片增加）',
+    started.started === true && /已拼 1\/34/.test(statusText) && /用时 \d\d:\d\d/.test(statusText), { statusText, placed: started.placed });
+  check('开始后收起「简单/困难」分段按钮（运行中不允许切换）',
+    (await ev(`document.getElementById('puzzle-difficulty-toggle').classList.contains('hidden')`)) === true);
   const buttons = JSON.parse(await ev(`JSON.stringify({
     skip: document.getElementById('btn-skip').classList.contains('hidden'),
     pause: document.getElementById('btn-end').classList.contains('hidden'),
@@ -136,7 +152,7 @@ try {
     afterDrag.placed === 1 && afterDrag.groups.length === 1 && !afterDrag.slots.includes(firstAdcode) && afterDrag.slots.length === 3,
     { placed: afterDrag.placed, slots: afterDrag.slots, firstAdcode });
   const statusAfterDrag = await ev(`document.getElementById('puzzle-status').textContent`);
-  check('进度行随拖拽更新为「已拼 1/34」', /已拼 1\/34/.test(statusAfterDrag), statusAfterDrag);
+  check('从卡槽拖出碎片不增加「已拼」（只算吸附，起始 1）', /已拼 1\/34/.test(statusAfterDrag), statusAfterDrag);
   await shot('puzzle-2-dragged.png');
 
   // ---------------- 磁吸：相邻两片接近 → 合并；差太远 → 不合并 ----------------
@@ -183,8 +199,8 @@ try {
   })())`));
   /** 拖动中的可吸附提示：返回高亮组数、手里那块是否也高亮、以及目标片的实际描边。 */
   const snapHintState = async () => JSON.parse(await ev(`JSON.stringify((function(){
-    var lit = document.querySelectorAll('#puzzle g.puzzle-group.can-snap');
-    var self = document.querySelectorAll('#puzzle g.puzzle-group.can-snap-self');
+    var lit = document.querySelectorAll('#puzzle g.puzzle-piece-wrap.can-snap');
+    var self = document.querySelectorAll('#puzzle g.puzzle-piece-wrap.can-snap-self');
     var target = lit.length ? lit[0].querySelector('path') : null;
     return {
       lit: lit.length,
@@ -196,9 +212,14 @@ try {
   })())`));
 
   const checkSnapHint = async (difficulty, shotDuringDrag) => {
-    await ev(`window.__probe.puzzleDifficulty('${difficulty}')`);
-    // 干净重开：保证 110000 / 130000 都还没放置、且分属两组（否则"同一组内"根本没有可吸附对象）
-    await ev(`window.__probe.puzzleRestart()`);
+    // 走真实用户路径：重置回开始卡片 →（此时难度按钮已放出）切难度 → 开始 → 拖拽
+    await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+    await sleep(120);
+    await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+    await sleep(600);
+    await ev(`(() => { document.getElementById('puzzle-${difficulty}').click(); return true })()`);
+    await sleep(200);
+    await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
     await sleep(300);
     const pBJ = await ev(`JSON.stringify(window.__probe.puzzleTruePosition('110000'))`).then((s) => JSON.parse(s));
     const pHB = await ev(`JSON.stringify(window.__probe.puzzleTruePosition('130000'))`).then((s) => JSON.parse(s));
@@ -228,23 +249,10 @@ try {
   check('困难难度：拖到可吸附范围时同样给出绿色提示',
     !!hintHard && hintHard.lit >= 1 && hintHard.selfLit >= 1 && parseFloat(hintHard.width) >= 2 && hintHard.stroke !== 'none',
     hintHard);
-  check('困难模式下没有省名标签（提示不依赖标签）',
+  check('困难模式下画布上没有省名标签（提示不依赖标签）',
     (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) === 0);
-  await ev(`window.__probe.puzzleDifficulty('easy')`);
-  await sleep(120);
-
-  // ---------------- 难度：只影响省名标签 ----------------
-  const labelsEasy = await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`);
-  await ev(`(() => { document.getElementById('puzzle-hard').click(); return true })()`);
-  await sleep(300);
-  const labelsHard = await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`);
-  const storedHard = await ev(`localStorage.getItem('china-admin-puzzle-difficulty-v1')`);
-  check('难度=简单时显示省名，切到困难后标签全部消失（并持久化）',
-    labelsEasy > 0 && labelsHard === 0 && storedHard === 'hard', { labelsEasy, labelsHard, storedHard });
-  await shot('puzzle-4-hard.png');
   await ev(`(() => { document.getElementById('puzzle-easy').click(); return true })()`);
   await sleep(300);
-  check('切回简单后标签恢复', (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) > 0);
 
   // ---------------- 未开放的粒度 ----------------
   await ev(`(() => { document.getElementById('granularity-world').click(); return true })()`);
@@ -291,18 +299,37 @@ try {
   check('获胜后自动补上三沙等远海岛礁（归入海南所在组）', winDom.seaIslets >= 1, { seaIslets: winDom.seaIslets });
   await shot('puzzle-6-win.png');
 
-  // ---------------- 重置 = 重开一局 ----------------
+  // ---------------- 重置 = 回到开始卡片 ----------------
   await ev(`(() => { document.getElementById('summary-close').click(); return true })()`);
   await sleep(200);
   await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
   await sleep(150);
   await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`); // 二次确认
-  await sleep(600);
+  await sleep(700);
   const restarted = await puzzle();
-  const restartStatus = await ev(`document.getElementById('puzzle-status').textContent`);
-  check('「重置」= 重开一局：已拼回到 0/34、卡槽重新填满三片',
-    restarted.placed === 0 && restarted.slots.length === 3 && restarted.complete === false && /已拼 0\/34/.test(restartStatus),
-    { placed: restarted.placed, slots: restarted.slots, restartStatus });
+  const restartDom = JSON.parse(await ev(`JSON.stringify({
+    startCard: !!document.getElementById('puzzle-start'),
+    statusHidden: document.getElementById('puzzle-status').classList.contains('hidden'),
+    difficultyVisible: !document.getElementById('puzzle-difficulty-toggle').classList.contains('hidden'),
+    pieces: document.querySelectorAll('#puzzle .puzzle-piece').length,
+    slots: document.querySelectorAll('#puzzle .puzzle-slot').length,
+  })`));
+  check('「重置」= 回到开始卡片界面：画布清空、卡槽重新填满三片、进度行隐藏',
+    restarted.started === false && restartDom.pieces === 0 && restartDom.slots === 3 && restartDom.statusHidden && restartDom.startCard,
+    { started: restarted.started, ...restartDom });
+  check('回到开始卡片后「简单/困难」分段按钮重新显现', restartDom.difficultyVisible === true, restartDom);
+
+  // ---------------- 难度按钮的选中样式（与其它模式的分段按钮一致） ----------------
+  const segStyle = JSON.parse(await ev(`JSON.stringify((function(){
+    var cs = function(el){ var s = getComputedStyle(el); return { active: el.classList.contains('active'), bgImage: (s.backgroundImage || '').slice(0, 30), color: s.color }; };
+    return { easy: cs(document.getElementById('puzzle-easy')), hard: cs(document.getElementById('puzzle-hard')), current: window.__probe.puzzle().difficulty };
+  })())`));
+  const activeSeg = segStyle.current === 'hard' ? segStyle.hard : segStyle.easy;
+  const idleSeg = segStyle.current === 'hard' ? segStyle.easy : segStyle.hard;
+  check('难度分段按钮的选中态用与其它模式同一套样式（active 类 + 深色渐变填充 + 白字）',
+    activeSeg.active === true && activeSeg.bgImage.indexOf('gradient') >= 0 && idleSeg.active === false && idleSeg.bgImage === 'none',
+    segStyle);
+  await shot('puzzle-7-back-to-start.png');
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 通过`);

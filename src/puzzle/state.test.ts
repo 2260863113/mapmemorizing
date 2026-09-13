@@ -4,7 +4,7 @@ import { pairKey } from './adjacency';
 import type { PuzzlePieceDef } from './pieces';
 
 /** 造最简碎片：只要 adcode（几何/bbox 由状态机之外的地方使用）。 */
-function piece(adcode: string): PuzzlePieceDef {
+function piece(adcode: string, area = 1): PuzzlePieceDef {
   return {
     adcode,
     name: adcode,
@@ -12,6 +12,7 @@ function piece(adcode: string): PuzzlePieceDef {
     polygons: [],
     seaIslets: [],
     bbox: [0, 0, 1, 1],
+    area,
     origin: [0.5, 0.5],
     labelAnchor: [0.5, 0.5],
   };
@@ -141,6 +142,45 @@ describe('PuzzleState', () => {
     expect(state.candidatesFor(2, 2, ['D'])).toHaveLength(0);
     expect(state.candidatesFor(0, 0, ['A'])).toHaveLength(0);
     expect(state.groups).toHaveLength(1); // 只读，没改状态
+  });
+
+  it('「已拼」按用户口径：起始 1，每次吸附 +1（与从卡槽拿出的片数无关）', () => {
+    const state = makeState();
+    state.start();
+    expect(state.assembledCount()).toBe(1); // 起始 1
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    expect(state.assembledCount()).toBe(1); // 只是拿出来，没有吸附 → 不变
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 5, 0);
+    state.drop(b.id); // 吸上 A
+    expect(state.assembledCount()).toBe(2);
+    const c = state.take('C')!;
+    state.moveGroup(c.id, 8, 0);
+    state.drop(c.id); // 吸上 A+B
+    expect(state.assembledCount()).toBe(3);
+    expect(state.placedCount()).toBe(3);
+    expect(state.isComplete()).toBe(false); // D 还没放
+  });
+
+  it('一次放下连锁吸收两个组时，计数按吸收的组数累加', () => {
+    const state = makeState();
+    state.start();
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 20, 0);
+    state.drop(b.id); // 20 > 15 → 不相邻（B 与 A 相邻但不进容差）
+    expect(state.assembledCount()).toBe(1);
+    // C 落在 A、B 之间：先吸 B，再因 B 已并入而连锁吸 A（一次 drop 吸收两个组 → +2）
+    const c = state.take('C')!;
+    state.moveGroup(c.id, 10, 0);
+    const result = state.drop(c.id);
+    expect(result.mergedGroups).toBe(2);
+    expect(state.assembledCount()).toBe(3);
+    expect(state.groups).toHaveLength(1);
   });
 
   it('四片全部吸成一组才算完成', () => {

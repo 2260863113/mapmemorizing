@@ -83,9 +83,10 @@ export class ChromeSync {
     $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap && mode !== 'memory' && !isPuzzle);
     this.syncSegments();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
-    // 拼图难度行：只在本模式显示，并把当前档位同步到按钮高亮
-    $('puzzle-break').classList.toggle('hidden', !isPuzzle);
-    $('puzzle-difficulty-toggle').classList.toggle('hidden', !isPuzzle);
+    // 拼图难度行：只在本模式显示；**开始后收起**（运行中不允许中途切换），结束/回开始卡片后再放出
+    const puzzleRunning = isPuzzle && !!current?.isStarted();
+    $('puzzle-break').classList.toggle('hidden', !isPuzzle || puzzleRunning);
+    $('puzzle-difficulty-toggle').classList.toggle('hidden', !isPuzzle || puzzleRunning);
     if (isPuzzle) {
       this.syncSegmentedToggle('puzzle-difficulty-toggle', (current as { getDifficulty?: () => string })?.getDifficulty?.() ?? 'easy');
     }
@@ -102,6 +103,7 @@ export class ChromeSync {
         btn.dataset.order ??
         btn.dataset.granularity ??
         btn.dataset.analysisGranularity ??
+        btn.dataset.puzzleDifficulty ??
         btn.dataset.subregion ??
         btn.dataset.continent ??
         btn.dataset.mode;

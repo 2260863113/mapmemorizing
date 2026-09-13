@@ -59,7 +59,6 @@ export class PuzzleMode extends BaseMode {
   private elapsedMs = 0;
   private runStart = 0;
   private tickTimer: number | null = null;
-  private statusPlaced = 0;
 
   constructor(private ctx: ModeCtx) {
     super();
@@ -74,10 +73,9 @@ export class PuzzleMode extends BaseMode {
     this.ensureState();
     this.mountView();
     if (!this.started) {
-      this.setHint_(t('puzzle.readyHint'));
       this.showStartCard();
     } else {
-      this.setHint_(t('puzzle.playHint'));
+      setHint('');
       if (!this.paused) this.startTimer();
     }
     this.refresh();
@@ -122,17 +120,38 @@ export class PuzzleMode extends BaseMode {
     this.paused = false;
     this.elapsedMs = 0;
     this.startTimer(); // 内部会把 runStart 设为此刻
-    this.setHint_(t('puzzle.playHint'));
+    setHint(''); // 左下角不留说明文字（用户口径）
     this.renderBoard();
     this.renderStatus();
+    this.ctx.syncChrome?.(); // 开始后收起「简单/困难」分段按钮（运行中不允许切换）
   }
 
-  /** 重开一局：重新打乱 + 计时归零（「重置」与完成卡片的「再来一局」都走这里）。 */
+  /** 重开一局：重新打乱 + 计时归零（完成卡片的「再来一局」走这里，直接接着玩）。 */
   private restartRun() {
     this.state?.start();
     this.view?.refreshStyle();
     this.view?.resetView();
     this.startRun();
+  }
+
+  /**
+   * 「重置」= 回到**开始卡片**（用户口径）：清空画布、重新打乱卡槽、计时归零、
+   * 并把「简单/困难」分段按钮重新放出来。
+   */
+  private resetToStartCard() {
+    this.state?.start();
+    this.started = false;
+    this.finished = false;
+    this.paused = false;
+    this.elapsedMs = 0;
+    this.clearTick();
+    this.view?.refreshStyle();
+    this.view?.resetView();
+    this.view?.setEnabled(false);
+    this.showStartCard();
+    this.renderBoard();
+    this.renderStatus();
+    this.ctx.syncChrome?.();
   }
 
   private mountView() {
@@ -183,8 +202,8 @@ export class PuzzleMode extends BaseMode {
         undefined,
         t('puzzle.again'),
       );
-      this.setHint_('');
     }, 900);
+    this.ctx.syncChrome?.(); // 结束后重新放出「简单/困难」分段按钮
   }
 
   pause() {
@@ -210,9 +229,9 @@ export class PuzzleMode extends BaseMode {
     this.pause();
   }
 
-  /** 「重置」= 重开一局（重新打乱、计时归零）。 */
+  /** 「重置」= 回到开始卡片（碎片重新打乱，计时归零）。 */
   onReset() {
-    this.restartRun();
+    this.resetToStartCard();
     toast(t('puzzle.restarted'));
   }
 
@@ -283,20 +302,16 @@ export class PuzzleMode extends BaseMode {
     this.state.start();
   }
 
-  private setHint_(html: string) {
-    setHint(html);
-  }
-
   private renderStatus() {
     if (!this.started && !this.finished) {
       puzzleStatus('');
       return;
     }
-    const placed = this.state?.placedCount() ?? 0;
-    const total = this.state?.totalCount() ?? 0;
-    this.statusPlaced = placed;
+    const state = this.state;
+    if (!state) return;
+    // 「已拼」= 起始 1、每吸附一次 +1（不是从卡槽拿出来的片数）
     puzzleStatus(
-      t('puzzle.status', { placed, total, time: formatClock(this.elapsed()) }),
+      t('puzzle.status', { placed: state.assembledCount(), total: state.totalCount(), time: formatClock(this.elapsed()) }),
     );
   }
 
@@ -325,6 +340,7 @@ export class PuzzleMode extends BaseMode {
 
   setDifficulty(d: PuzzleDifficulty) {
     if (this.difficulty === d) return;
+    if (this.started) return; // 运行中不允许切换（分段按钮此时已收起，这里再兜一层）
     this.difficulty = d;
     savePuzzleDifficulty(d);
     this.renderBoard();
@@ -340,7 +356,7 @@ export class PuzzleMode extends BaseMode {
       finished: this.finished,
       difficulty: this.difficulty,
       granularity: this.granularity,
-      placed: this.state?.placedCount() ?? 0,
+      placed: this.state?.assembledCount() ?? 0,
       total: this.state?.totalCount() ?? 0,
       slots: [...(this.state?.slots ?? [])],
       groups: (this.state?.groups ?? []).map((g) => ({
