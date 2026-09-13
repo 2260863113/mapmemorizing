@@ -3,7 +3,7 @@ import { Matcher } from './matcher';
 import { MapRenderer } from './map/renderer';
 import { AuthStore } from './authStore';
 import { LeaderboardStore, type LeaderboardMode } from './leaderboardStore';
-import { MemoryStore, loadSettings } from './store';
+import { MemoryStore, loadSettings, saveSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { AuthPanel } from './ui/authPanel';
 import { LeaderboardPanel } from './ui/leaderboardPanel';
@@ -116,7 +116,7 @@ export class AppController {
       onUnitHoverEnd: () => this.hideHoverStats(),
     });
     this.renderer.setDarkMode(this.settings.darkMode);
-    this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone);
+    this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
     this.zoomDisplay = this.renderer.currentZoom();
     this.renderer.onViewChange = () => {
       this.current?.onViewChange();
@@ -202,6 +202,7 @@ export class AppController {
     };
     void this.introCard.maybeShow();
     this.wireDom();
+    this.syncThemeButton();
     void this.initTinyCountrySetting(); // 全局设置：极小国家的清单是异步取的
     void this.applyScopeQuery(); // 落地页深链参数（Q26）：必须在 enter 之前应用
     this.switchMode('click'); // 默认展示点击模式
@@ -279,6 +280,27 @@ export class AppController {
     btn.classList.add('confirming');
     const timer = window.setTimeout(() => this.resetConfirmButton(btn), 3000);
     this.confirmTimers.set(btn.id, timer);
+  }
+
+  // ==================== 主题（黑夜/白天模式） ====================
+
+  /**
+   * 顶栏主题开关：切换黑夜/白天模式并立即持久化（与全局设置面板同一份 Settings）。
+   * 按钮文案始终显示「点击后会切到哪一边」，故需与主题同步刷新。
+   */
+  private toggleTheme() {
+    this.settings.darkMode = !this.settings.darkMode;
+    saveSettings(this.settings);
+    applyTheme(this.settings.darkMode);
+    this.renderer.setDarkMode(this.settings.darkMode);
+    this.syncThemeButton();
+  }
+
+  private syncThemeButton() {
+    const btn = $('btn-theme') as HTMLButtonElement;
+    const dark = this.settings.darkMode;
+    btn.textContent = dark ? t('topbar.themeLight') : t('topbar.themeDark');
+    btn.setAttribute('aria-pressed', String(dark));
   }
 
   // ==================== 模式切换 ====================
@@ -585,12 +607,14 @@ export class AppController {
         this.syncSegmentedToggle('click-order-toggle', mode);
       });
     });
-    // 点击/输入模式的省级/市级粒度切换（仅全国视图、未开始测试时可操作）
+    // 点击/输入/自由模式的「世界/省级/市级」粒度切换
+    // （测验模式仅全国视图、未开始测试时可操作；自由模式纯浏览，随时可切且不支持下钻）
     document.querySelectorAll<HTMLButtonElement>('#granularity-toggle button').forEach((btn) => {
       btn.addEventListener('click', () => {
         const g = btn.dataset.granularity as Granularity;
-        const target = this.current === this.selfMode ? this.selfMode : this.clickMode;
-        if (target.setGranularity) target.setGranularity(g);
+        // 以当前模式为准：输入/自由模式各自记住自己的粒度，其它情况回落点击模式
+        const target = this.current?.setGranularity ? this.current : this.clickMode;
+        target.setGranularity?.(g);
         this.syncSegments();
         this.syncModeChrome();
         this.updateProgress();
@@ -642,13 +666,17 @@ export class AppController {
       if (target?.closest?.('.start-action')) this.syncSegments();
     });
 
-    // 导航栏设置：个性化（黑夜模式、边界）+ 答题范围（忽略面积极小的国家）
+    // 顶栏「黑夜模式 / 白天模式」开关（位于全局设置按钮左侧）：文案显示点击后将切换到的主题
+    ($('btn-theme') as HTMLButtonElement).addEventListener('click', () => this.toggleTheme());
+
+    // 导航栏设置：个性化（地级/省级/世界边界深浅）+ 答题范围（忽略面积极小的国家）
     ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
       openSettings(this.settings, (s) => {
         Object.assign(this.settings, s);
         applyTheme(this.settings.darkMode);
+        this.syncThemeButton();
         this.renderer.setDarkMode(this.settings.darkMode);
-        this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone);
+        this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
         this.applyTinyCountrySetting();
       });
     });

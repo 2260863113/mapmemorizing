@@ -88,3 +88,14 @@ export function loadMemoryHideLabels(): boolean {
 export function saveMemoryHideLabels(v: boolean) {
   saveBool(MEMORY_HIDE_LABELS_KEY, v);
 }
+
+// ---------- 熟练度分析（free） ----------
+const ANALYSIS_HIDE_LABELS_KEY = 'china-admin-analysis-hide-labels-v1';
+
+/** 熟练度分析：隐藏地图标签（地级/省级/世界三档共用）。 */
+export function loadAnalysisHideLabels(): boolean {
+  return loadBool(ANALYSIS_HIDE_LABELS_KEY, false);
+}
+export function saveAnalysisHideLabels(v: boolean) {
+  saveBool(ANALYSIS_HIDE_LABELS_KEY, v);
+}

@@ -76,7 +76,7 @@ export class ChromeSync {
     $('side-panel-title').classList.toggle('hidden', !isAnalysis);
     $('side-panel-title').textContent = t('main.sideTitle');
     $('side-panel-tip').textContent = isAnalysis ? t('main.sideTipAnalysis') : t('main.sideTipLeaderboard');
-    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap);
+    $('mode-actions').classList.toggle('hidden', !isTest && !isAnalysis && !isNonMap && mode !== 'memory');
     this.syncSegments();
     ($('btn-reset') as HTMLButtonElement).textContent = isAnalysis ? t('common.resetMastery') : t('common.reset');
     this.syncViewChrome();
@@ -164,8 +164,10 @@ export class ChromeSync {
     // 搜索输入框：输入/自测仅测试开始时显示；无尽闯关输入框常驻
     const searchVisible = mode === 'endless' || (mode === 'self' && testStarted);
     $('search-row').classList.toggle('hidden', !searchVisible);
-    // 「世界/省级/市级」：仅全国范围且未开始测试时显示（下钻单省 / 测试中隐藏）
-    const granularityVisible = isGranularityMode && !testStarted && scopeIsNation;
+    // 「世界/省级/市级」：点击/输入模式（全国范围且未开始测试时）与自由模式（纯浏览，随时可切）显示。
+    // 自由模式沿用同一组分段按钮，但模式下钻能力已关闭（双击不下钻）。
+    const showsGranularity = isGranularityMode || mode === 'memory';
+    const granularityVisible = showsGranularity && !testStarted && (mode === 'memory' || scopeIsNation);
     $('granularity-toggle').classList.toggle('hidden', !granularityVisible);
     if (granularityVisible) {
       const g = (current?.getGranularity?.() ?? 'province') as Granularity;
@@ -173,8 +175,10 @@ export class ChromeSync {
     }
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
     // 熟练度分析（free）世界档无「开始测试」概念，故单独放行（Q21）。
+    // 自由模式世界档不显示洲/次区域行：该模式不支持下钻，这些按钮没有作用对象。
     const isAnalysisWorld = mode === 'free' && (current?.getGranularity?.() ?? 'city') === 'world';
-    const isWorldGranularity = isAnalysisWorld || (granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world');
+    const isWorldGranularity =
+      isAnalysisWorld || (granularityVisible && mode !== 'memory' && (current?.getGranularity?.() ?? 'province') === 'world');
     $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
     // 换行占位随洲按钮一同显隐，否则非世界粒度时会凭空多出一个空行
     $('continent-break').classList.toggle('hidden', !isWorldGranularity);

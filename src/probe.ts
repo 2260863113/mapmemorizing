@@ -478,6 +478,63 @@ export function installProbe(app: AppController) {
       renderer.setWorldMode(true, null, null);
       return true;
     },
+
+    /**
+     * 本轮 UI 验收（只读）：主题/边界深浅等全局设置、熟练度分析隐藏标签、
+     * 自由模式的粒度与「不支持下钻」能力位、当前渲染状态里的标签开关。
+     *
+     * 全部按名读取 private 成员（探针惯例），不修改任何状态。
+     */
+    round3Ui() {
+      const app = anyApp as unknown as {
+        settings: Record<string, unknown>;
+        current: { id?: string; getGranularity?: () => string | null } | null;
+        freeMode: { getGranularity: () => string };
+      };
+      const r = renderer as unknown as {
+        lastState: {
+          hideLabels?: boolean;
+          showAllLabels?: boolean;
+          showAllProvinceLabels?: boolean;
+          worldShowAllLabels?: boolean;
+        } | null;
+        worldMode: boolean;
+        worldBoundaryTone: string;
+        provinceMode: boolean;
+        provinceModeDrill: boolean;
+        provinceModeInset: boolean;
+        cityBoundaryTone: string;
+        provinceBoundaryTone: string;
+        currentProvince: () => string | null;
+      };
+      const state = r.lastState;
+      return {
+        mode: app.current?.id ?? null,
+        granularity: app.current?.getGranularity?.() ?? null,
+        freeGranularity: app.freeMode?.getGranularity() ?? null,
+        settings: { ...app.settings },
+        boundaries: {
+          city: r.cityBoundaryTone,
+          province: r.provinceBoundaryTone,
+          world: r.worldBoundaryTone,
+        },
+        view: {
+          worldMode: r.worldMode,
+          provinceMode: r.provinceMode,
+          provinceModeDrill: r.provinceModeDrill,
+          provinceModeInset: r.provinceModeInset,
+          drilledProvince: r.currentProvince(),
+        },
+        labels: state
+          ? {
+              hideLabels: state.hideLabels === true,
+              showAllLabels: state.showAllLabels === true,
+              showAllProvinceLabels: state.showAllProvinceLabels === true,
+              worldShowAllLabels: state.worldShowAllLabels === true,
+            }
+          : null,
+      };
+    },
   };
 
   w.__probe = probe;

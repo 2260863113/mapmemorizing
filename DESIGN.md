@@ -384,3 +384,16 @@ interface MemoryState {
    - 未开始测试时点击某国 → 下钻其所属大洲；已开始 → 正常判题（国家是世界的原子单位）。
    - 后端白名单同步放行该哨兵（`functions/_lib/validate.ts` 的 `isContinentScope`），排序与提交规则同「全国语义」（答对题数优先、允许未答完但必须全对）。
    - 按钮布局：洲按钮放在 `#mode-actions` **末尾**，由零高度换行占位 `#continent-break`（`flex-basis:100%; height:0`）推到下一行并保持**内容宽度**。不要用 `flex-basis:100%` 直接加在洲按钮上——那会把它拉伸到屏宽，并把「顺序/重置」挤到第三行。占位元素随洲按钮一同显隐（`chromeSync.syncSegments`），否则非世界粒度时会凭空多出一个空行。
+
+---
+
+## 15. UI 收尾（按钮风格与设置项，2026-09 轮）
+
+1. **按钮=DSH 胶囊（唯一按钮风格）**：全站按钮对齐 DeepSeek Harness Web GUI 的 Button 组件与设计令牌，实现集中在 `src/styles.css` 末尾的「DSH 按钮风格」段。
+   - 几何：胶囊，**圆角 = 高度的一半**；标准档 36 高 / `0 14px` / 圆角 18（primary、卡片按钮），紧凑档 28 高 / `0 10px` / 圆角 14（分段按钮内项），浮层与顶栏取 34 / 32 高对应圆角 17 / 16。
+   - 变体：**primary**（实心，明主题 `#0f1115`、暗主题 `#f9fafb`，文字取反）、**outline**（透明底 + `0.5px` 发丝描边）、**ghost**（透明底，hover 叠一层 `--dsw-alias-interactive-bg-hover`）、**toolbar**（浮在内容之上：`#54555780` → hover `#54555799`）。令牌名与 DSH 的 `--dsw-alias-*` 逐字一致，明暗值分别挂在 `:root` 与 `body.theme-dark`。
+   - 不要再为新组件自造按钮样式（渐变、粗描边、方角、不同圆角）——那会立刻与全站不一致；需要新形态时优先复用上表档位与变体。顶栏是**常暗**表面，故其胶囊用 `.topbar` 上的 `--topbar-pill-*`（半透明白）而非明主题令牌。
+2. **设置行对齐**：全局设置与每模式设置浮层共用 `.card .row` —— `justify-content: space-between`，说明文字靠左（`.row-label`），开关/下拉贴右。新增设置项必须写成 `<span class="row-label">文字</span><控件>` 的次序。
+3. **设置项归属**：黑夜/白天模式改为顶栏按钮（位于「设置」左侧，文案显示点击后切到的模式，选择立即持久化），不再放在设置面板里；全局设置面板只管**地级市/省级/世界**三族边界深浅。
+4. **熟练度分析**：左下角新增与其他模式同构的**设置**按钮（`#btn-mode-settings`），内含「隐藏地图标签」；渲染侧由 `RenderState.hideLabels` 统一关闭三档标签（地级市/省名/国名），优先于各 `show*Labels` 开关。
+5. **自由模式**：沿用「世界/省级/市级」分段按钮（`chromeSync.syncSegments` 的 `showsGranularity` 含 `memory`，且 `#mode-actions` 对该模式不再整体隐藏），但**不支持下钻**（`onUnitDblClick` 空实现 + 省级档 `allowDrill:false`）；世界档不显示大洲/次区域行（无作用对象）。

@@ -255,6 +255,7 @@ function finiteCount(value: unknown) {
 export const DEFAULT_SETTINGS: Settings = {
   cityBoundaryTone: 'light',
   provinceBoundaryTone: 'dark',
+  worldBoundaryTone: 'mid',
   darkMode: false,
   ignoreTinyCountries: false,
 };
@@ -268,6 +269,8 @@ export function loadSettings(): Settings {
         ...parsed,
         cityBoundaryTone: boundaryToneOf(parsed.cityBoundaryTone, DEFAULT_SETTINGS.cityBoundaryTone),
         provinceBoundaryTone: boundaryToneOf(parsed.provinceBoundaryTone, DEFAULT_SETTINGS.provinceBoundaryTone),
+        // 旧档没有该字段：回落到默认（世界边界原本硬编码为中间灰）
+        worldBoundaryTone: boundaryToneOf(parsed.worldBoundaryTone, DEFAULT_SETTINGS.worldBoundaryTone),
         // 旧档没有该字段：显式归一为布尔，避免 undefined 透传到开关与判定
         ignoreTinyCountries: parsed.ignoreTinyCountries === true,
       };

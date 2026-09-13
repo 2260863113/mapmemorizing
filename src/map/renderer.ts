@@ -203,6 +203,7 @@ export class MapRenderer {
   private themeName: ThemeName = 'light';
   private cityBoundaryTone: BoundaryTone = 'light';
   private provinceBoundaryTone: BoundaryTone = 'dark';
+  private worldBoundaryTone: BoundaryTone = 'mid'; // 世界地图国家边界（默认取中间灰，同历史视觉）
   private provinceMode = false; // 省级模式：不画地级边界、省界加粗、不支持下钻
   private provinceModeInset = true; // 省级模式是否显示港澳放大框
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
@@ -518,10 +519,17 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
-  setBoundaryTones(cityBoundaryTone: BoundaryTone, provinceBoundaryTone: BoundaryTone) {
-    if (cityBoundaryTone === this.cityBoundaryTone && provinceBoundaryTone === this.provinceBoundaryTone) return;
+  setBoundaryTones(cityBoundaryTone: BoundaryTone, provinceBoundaryTone: BoundaryTone, worldBoundaryTone: BoundaryTone = this.worldBoundaryTone) {
+    if (
+      cityBoundaryTone === this.cityBoundaryTone &&
+      provinceBoundaryTone === this.provinceBoundaryTone &&
+      worldBoundaryTone === this.worldBoundaryTone
+    ) {
+      return;
+    }
     this.cityBoundaryTone = cityBoundaryTone;
     this.provinceBoundaryTone = provinceBoundaryTone;
+    this.worldBoundaryTone = worldBoundaryTone;
     if (this.lastState) this.render(this.lastState);
   }
 
@@ -890,6 +898,7 @@ export class MapRenderer {
 
   private buildLabelData(state: RenderState): LabelPoint[] {
     if (this.worldMode) return []; // 世界国名标签走 world-labels 系列
+    if (state.hideLabels) return []; // 「隐藏地图标签」：地级市标签整组关闭
     if (this.labelMode !== 'city') return [];
     const theme = this.theme();
     return this.units.flatMap((u) => {
@@ -914,6 +923,7 @@ export class MapRenderer {
   /** 省名标签：已作答省（省级练习，绿/红）或省级地图常显全部省名（熟练度分析省级档，中性色）。 */
   private buildProvinceLabelData(state: RenderState): LabelPoint[] {
     if (!this.provinceMode) return [];
+    if (state.hideLabels) return []; // 「隐藏地图标签」：省名标签整组关闭
     const theme = this.theme();
     const out: LabelPoint[] = [];
     for (const p of this.data.provinces) {
@@ -1012,7 +1022,7 @@ export class MapRenderer {
         silent: gray,
         itemStyle: {
           areaColor: theme.fill[color],
-          borderColor: theme.boundary.mid, // 国家细边界
+          borderColor: theme.boundary[this.worldBoundaryTone], // 国家细边界（深浅可在全局设置里调）
           borderWidth: excluded ? 0.2 : 0.4,
         },
         emphasis: {
@@ -1029,6 +1039,7 @@ export class MapRenderer {
   /** 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。大洲视图只显本洲标签。 */
   private buildWorldLabelData(state: RenderState): LabelPoint[] {
     if (!this.worldMode) return [];
+    if (state.hideLabels) return []; // 「隐藏地图标签」：国名标签整组关闭
     const theme = this.theme();
     const out: LabelPoint[] = [];
     const visible = (iso: string) =>
@@ -1070,7 +1081,7 @@ export class MapRenderer {
     // 世界模式：地级市标签系列不参与；国名标签由 world-labels 系列渲染。
     // 世界分析档国名只在放大过阈值后显示——把该开关复用到 'city' 档位以驱动缩放后刷新。
     if (this.worldMode) {
-      if (state?.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) return 'city';
+      if (!state?.hideLabels && state?.worldShowAllLabels && this.zoom > WORLD_LABEL_ZOOM) return 'city';
       return 'none';
     }
     // 省级模式：彻底禁用地级市地名标签（省名标签由 province-labels 系列单独渲染）

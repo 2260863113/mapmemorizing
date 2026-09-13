@@ -5,6 +5,7 @@ import { t, type MessagesKey } from '../i18n';
 import type { Granularity } from '../province';
 import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
 import { CONTINENTS } from '../types';
+import { loadAnalysisHideLabels, saveAnalysisHideLabels, type ModeSettingsPanel } from '../modeSettings';
 
 /** 大洲 id → 中文名（侧栏「地图范围」说明用）。 */
 const CONTINENT_NAMES: Record<string, string> = Object.fromEntries(CONTINENTS.map((c) => [c.id, c.name]));
@@ -15,6 +16,8 @@ export class AnalysisMode extends BaseMode {
   title = t('mode.free.title');
   /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）| 'world'（世界，国家名熟练度分析）。 */
   private granularity: Granularity = this.loadGranularity();
+  /** 隐藏地图标签：三档分析共用一个开关（左下角「设置」里的「隐藏地图标签」）。 */
+  private hideLabels = loadAnalysisHideLabels();
   /** 世界档的大洲范围：null=全世界（Q21：给分析模式的世界档也加上大洲/次区域行）。 */
   private worldContinent: Continent | null = null;
   /** 世界档的次区域范围：null=全洲（必然属于 worldContinent）。 */
@@ -25,8 +28,18 @@ export class AnalysisMode extends BaseMode {
 
   constructor(private ctx: ModeCtx) { super(); }
 
-  getModeSettings() {
-    return null;
+  /** 左下角「设置」（同其他模式）：隐藏地图标签。 */
+  getModeSettings(): ModeSettingsPanel | null {
+    return {
+      title: t('mode.free.title'),
+      toggles: [{ key: 'hide-labels', label: t('settings.hideMapLabels'), value: this.hideLabels }],
+      onChange: (key, value) => {
+        if (key !== 'hide-labels') return;
+        this.hideLabels = value;
+        saveAnalysisHideLabels(value);
+        this.refresh();
+      },
+    };
   }
 
   getAnalysisGranularity(): Granularity {
@@ -127,14 +140,15 @@ export class AnalysisMode extends BaseMode {
 
   refresh() {
     if (this.granularity === 'world') {
-      // 世界熟练度分析：世界地图，七档着色（同一套 scoreColor 阈值），
+      // 世界熟练度分析：世界地图，七档着色（同一套分界线），
       // 不常显国名标签（放大过阈值后经渲染器显示）；悬停国家经 onUnitHover 显示卡片；
       // 大洲/次区域范围非空时聚焦并只渲染该范围（Q21）。
       this.ctx.renderer.setWorldMode(true, this.worldContinent, this.worldSubregion);
       this.ctx.renderer.render({
         colorOf: (iso) => worldColor(this.ctx.store, iso),
         disableTooltip: true,
-        worldShowAllLabels: true,
+        hideLabels: this.hideLabels,
+        worldShowAllLabels: !this.hideLabels,
       });
       // 侧栏聚合仍统计全世界（国家熟练度是共享分区），只加一行「地图范围」说明（Q29）
       this.ctx.stats.refreshWorldLevel(this.worldScopeLabel());
@@ -148,6 +162,8 @@ export class AnalysisMode extends BaseMode {
       this.ctx.renderer.render({
         colorOf: (adcode) => provinceColor(this.ctx.store, adcode),
         disableTooltip: true,
+        hideLabels: this.hideLabels,
+        showAllProvinceLabels: !this.hideLabels,
       });
       this.ctx.stats.refreshProvinceLevel();
       return;
@@ -157,6 +173,9 @@ export class AnalysisMode extends BaseMode {
     this.ctx.renderer.render({
       colorOf: (adcode) => scoreColor(this.ctx.store.getPractice(adcode).score),
       disableTooltip: true,
+      hideLabels: this.hideLabels,
+      showAllLabels: !this.hideLabels,
+      labelZoomThreshold: this.hideLabels ? Number.POSITIVE_INFINITY : undefined,
     });
     this.ctx.stats.refresh(this.ctx.renderer.currentProvince());
   }
@@ -225,18 +244,27 @@ export class AnalysisMode extends BaseMode {
   }
 }
 
-/** 分数 → 颜色：省级/地级熟练度共用同一套色阶（score≥1 绿阶、0 灰、负红阶）。 */
+/**
+ * 熟练度阶梯分界线（分数轴上的七个断点）：-10 / -5 / -1 / 0 / +1 / +5 / +10。
+ *
+ * 由此得到七档区间：
+ *   糟糕 ≤ -10 ｜ 较差 -9~-5 ｜ 陌生 -4~-1 ｜ 一般 0 ｜ 初识 +1~+4 ｜ 熟练 +5~+9 ｜ 炉火纯青 ≥ +10
+ * 地级/省级/世界三档分析共用这一套断点（改动只在此处一处生效）。
+ */
+export const SCORE_BREAKPOINTS = [-10, -5, -1, 0, 1, 5, 10] as const;
+
+/** 分数 → 颜色：省级/地级熟练度共用同一套色阶（score≥+1 绿阶、0 灰、负红阶）。 */
 export function scoreColor(score: number): UnitColor {
-  if (score >= 5) return 'scoreGreenDark';
-  if (score >= 3) return 'scoreGreenMedium';
+  if (score >= 10) return 'scoreGreenDark';
+  if (score >= 5) return 'scoreGreenMedium';
   if (score >= 1) return 'scoreGreenLight';
-  if (score <= -5) return 'scoreRedDark';
-  if (score <= -3) return 'scoreRedMedium';
+  if (score <= -10) return 'scoreRedDark';
+  if (score <= -5) return 'scoreRedMedium';
   if (score <= -1) return 'scoreRedLight';
   return 'gray';
 }
 
-/** 省级熟练度七档（从差到好）：糟糕(≤-5)/较差(-3~-4)/陌生(-1~-2)/一般(0)/初识(1~2)/熟练(3~4)/炉火纯青(≥5)。 */
+/** 省级熟练度七档（从差到好）：糟糕(≤-10)/较差(-9~-5)/陌生(-4~-1)/一般(0)/初识(+1~+4)/熟练(+5~+9)/炉火纯青(≥+10)。 */
 export type ProvinceLevel = 'terrible' | 'poor' | 'unfamiliar' | 'neutral' | 'beginner' | 'skilled' | 'master';
 
 /** 七档文案键。 */
@@ -252,12 +280,12 @@ export const PROVINCE_LEVEL_WORD_KEY: Record<ProvinceLevel, MessagesKey> = {
 
 /** 分数 → 七档档位。0 分统一为「一般」，不再区分未答与相抵。 */
 export function provinceLevelOf(score: number): ProvinceLevel {
-  if (score >= 5) return 'master';
-  if (score >= 3) return 'skilled';
+  if (score >= 10) return 'master';
+  if (score >= 5) return 'skilled';
   if (score >= 1) return 'beginner';
   if (score === 0) return 'neutral';
-  if (score <= -5) return 'terrible';
-  if (score <= -3) return 'poor';
+  if (score <= -10) return 'terrible';
+  if (score <= -5) return 'poor';
   return 'unfamiliar';
 }
 

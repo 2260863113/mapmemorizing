@@ -2,13 +2,17 @@ import { $ } from './dom';
 import type { ModeSettingsPanel } from '../modeSettings';
 import { t } from '../i18n';
 
-/** 每模式设置小浮层面板：显示该模式的开关选项，点击外部或关闭按钮收起。 */
+/**
+ * 每模式设置小浮层面板：显示该模式的开关选项，点击外部或关闭按钮收起。
+ *
+ * 行布局与全局设置一致：说明文字左对齐，开关（按钮）右对齐。
+ */
 export function openModeSettings(panel: ModeSettingsPanel) {
   const el = $('mode-settings-panel');
   const toggles = panel.toggles
     .map(
       (item) =>
-        `<label class="row mode-setting-toggle${item.fixed ? ' fixed' : ''}"><input type="checkbox" data-key="${item.key}" ${item.value ? 'checked' : ''} ${item.fixed ? 'disabled' : ''} /> ${item.label}</label>`,
+        `<label class="row mode-setting-toggle${item.fixed ? ' fixed' : ''}"><span class="row-label">${item.label}</span><input type="checkbox" data-key="${item.key}" ${item.value ? 'checked' : ''} ${item.fixed ? 'disabled' : ''} /></label>`,
     )
     .join('');
   el.innerHTML = `<div class="card mode-settings-card"><h3>${panel.title}</h3>${toggles}<div class="card-actions"><button id="mode-settings-close" class="ghost">${t('common.close')}</button></div></div>`;

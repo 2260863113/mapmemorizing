@@ -78,6 +78,8 @@
         <button id="btn-free" class="ghost">熟练度分析</button>
         <button id="btn-board" class="ghost">留言板</button>
         <button id="btn-announcement" class="ghost">公告</button>
+        <!-- 黑夜/白天模式开关：紧邻全局「设置」左侧，文案按当前主题显示「切到哪一边」 -->
+        <button id="btn-theme" class="ghost" type="button" aria-pressed="false">黑夜模式</button>
         <button id="btn-settings" class="ghost">设置</button>
         <div class="user-center-wrap">
           <button id="user-center" class="user-center" type="button" aria-haspopup="menu" aria-expanded="false"></button>
@@ -218,23 +220,29 @@
     <div class="card">
       <h3>设置</h3>
       <div class="settings-section-title">个性化</div>
-      <label class="row"><input type="checkbox" id="set-dark-mode" /> 黑夜模式</label>
-      <label class="row">地级市边界
+      <label class="row setting-row"><span class="row-label">地级市边界</span>
         <select id="set-city-boundary-tone">
           <option value="light">浅灰色</option>
           <option value="mid">灰色</option>
           <option value="dark">深灰色</option>
         </select>
       </label>
-      <label class="row">省级边界
+      <label class="row setting-row"><span class="row-label">省级边界</span>
         <select id="set-province-boundary-tone">
           <option value="light">浅灰色</option>
           <option value="mid">灰色</option>
           <option value="dark">深灰色</option>
         </select>
       </label>
+      <label class="row setting-row"><span class="row-label">世界边界</span>
+        <select id="set-world-boundary-tone">
+          <option value="light">浅灰色</option>
+          <option value="mid">灰色</option>
+          <option value="dark">深灰色</option>
+        </select>
+      </label>
       <div class="settings-section-title">答题范围</div>
-      <label class="row"><input type="checkbox" id="set-ignore-tiny" /> 忽略面积极小的国家<span class="row-hint" id="set-ignore-tiny-hint"></span></label>
+      <label class="row setting-row"><span class="row-label">忽略面积极小的国家<span class="row-hint" id="set-ignore-tiny-hint"></span></span><input type="checkbox" id="set-ignore-tiny" /></label>
       <div class="card-actions">
         <button id="set-save" class="primary">保存</button>
         <button id="set-cancel" class="ghost">取消</button>

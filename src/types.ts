@@ -128,6 +128,8 @@ export interface MemoryRecord extends PracticeRecord {
 export interface Settings {
   cityBoundaryTone: BoundaryTone;
   provinceBoundaryTone: BoundaryTone;
+  /** 世界地图国家边界的深浅（与地级/省级边界同三档）。 */
+  worldBoundaryTone: BoundaryTone;
   darkMode: boolean;
   /** 忽略面积极小的国家：不出题、不参与排行榜、地图上灰显且完全无交互。 */
   ignoreTinyCountries: boolean;
@@ -203,6 +205,7 @@ export interface RenderState {
   showAllLabels?: boolean; // 记忆模式：全部显示地名标签
   labelZoomThreshold?: number; // 地名标签显示倍率阈值
   disableTooltip?: boolean; // 记忆模式：关闭提示
+  hideLabels?: boolean; // 隐藏全部地名标签（熟练度分析「隐藏地图标签」；优先于各 show*Labels 开关）
   coin?: CoinLayer; // 无尽闯关：金币绿色深浅着色 + 中心金币/地名标签
   provinceLabel?: (provinceAdcode: string) => ProvinceLabel | null; // 省级练习：已作答省的省名标签（null = 不显示）
   showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）

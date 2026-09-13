@@ -79,8 +79,10 @@ export interface ModeController {
   isProvinceNation?(): boolean;
   /** 世界全国（世界地图 + 195 国池）视图标记。非测验模式返回 false。 */
   isWorldNation?(): boolean;
-  /** 当前粒度（输入/点击/熟练度分析用；其它模式返回 null）。 */
+  /** 当前粒度（输入/点击/自由/熟练度分析用；其它模式返回 null）。 */
   getGranularity?(): Granularity | null;
+  /** 切换全国层的世界/省级/市级粒度（输入/点击/自由模式；熟练度分析用 setAnalysisGranularity）。 */
+  setGranularity?(g: Granularity): void;
   /** 世界粒度下的当前大洲范围（null=全世界；非世界粒度返回 null）。 */
   getWorldContinent?(): Continent | null;
   /** 切换世界粒度下的大洲范围（仅世界粒度且未开始测试时生效）。 */
