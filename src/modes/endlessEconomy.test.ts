@@ -15,7 +15,6 @@ import {
 } from './endlessEconomy';
 
 const zeroRng = () => 0; // intBetween 总是取 min
-const halfRng = () => 0.499; // 落在区间中点附近
 
 describe('intBetween', () => {
   it('is inclusive on both ends', () => {

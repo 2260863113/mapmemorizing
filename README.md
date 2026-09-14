@@ -129,5 +129,14 @@ npm run build:seo   # 只重新生成次区域数据 + 落地页（build 已自�
 ```bash
 npm run build    # 生成次区域数据与落地页 + 类型检查 + 生产构建（dist/）
 npm run preview  # 预览生产构建
-npm test         # vitest（307 个用例）
+npm run check    # 三道门禁：类型检查（src + functions 两套 tsconfig）+ ESLint + 单测
+npm run lint     # 只跑 ESLint
+npm test         # vitest（321 个用例）
 ```
+
+**提交前跑 `npm run check`。** 它覆盖最容易因「改名 / 搬文件 / 漏改导入」而悄悄坏掉的那类回归。
+`.github/workflows/ci.yml` 在 push / PR 时跑同样的三道门禁。
+
+运行时验收（下面那三个 `verify-*.mjs`，149 项断言）**不在 CI 里** —— 它们要真实 headless Edge
+加一次生产构建，约 90 秒，且依赖「必须用 Edge」这类本机环境前提。涉及渲染 / 交互 / 相机行为的
+改动，改完请手工跑一遍。

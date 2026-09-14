@@ -1,4 +1,3 @@
-import type { Announcement } from '../api';
 import { AnnouncementStore } from '../announcementStore';
 import { escapeHtml } from './html';
 import { formatDate } from './dateFormat';

@@ -1,0 +1,36 @@
+name: CI
+
+# 只跑「无浏览器依赖」的三道门禁：类型检查（前端 + 后端）、ESLint、单测。
+#
+# 为什么**不**在 CI 里跑运行时验收（scripts/verify-*.mjs）：那三个脚本要真实 headless Edge
+# + 先 `npm run build` 出 dist，跑一次约 90 秒，且 README 明确记着「本机 Chrome 38 不支持
+# ES module、必须用 Edge」这类环境前提。它们目前是**提交前手工跑**的（149 项断言），
+# 如果要搬进 CI，得先固定一个带 Edge/Chromium 的 runner —— 那是另一件事。
+#
+# 本工作流覆盖的是最容易因「改名 / 搬文件 / 漏改导入」而悄悄坏掉的那一类回归：
+# 它们在新代码提交后几秒内就能被发现，不必等到有人手工跑验收。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # 前端（src）与后端（functions/）是两套 tsconfig，两边都要过
+      - name: Typecheck (app + functions)
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build

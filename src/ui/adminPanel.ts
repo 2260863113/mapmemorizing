@@ -1,6 +1,6 @@
 import type { AuthStore } from '../authStore';
 import type { AnnouncementStore } from '../announcementStore';
-import type { AdminUser, AccessLogEntry, AccessStats } from '../api';
+import type { AdminUser } from '../api';
 import { api } from '../api';
 import { avatarHtml } from './avatar';
 import { escapeAttr, escapeHtml } from './html';

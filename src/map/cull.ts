@@ -124,11 +124,7 @@ export type CullResult = { facesKept: number; facesTotal: number; linesKept: num
  *
  * @param lineBoxes 省界折线各元素的数据坐标 bbox，顺序须与 'province-lines' 系列 data 一致。
  */
-export function cullToViewport(
-  chart: unknown,
-  lineBoxes: CullBox[],
-  margin = CULL_MARGIN,
-): CullResult | null {
+export function cullToViewport(chart: unknown, lineBoxes: CullBox[], margin = CULL_MARGIN): CullResult | null {
   const c = chart as {
     getWidth: () => number;
     getHeight: () => number;
@@ -147,30 +143,38 @@ export function cullToViewport(
   const box = viewportBox(c, cs, margin);
   if (!box) return null;
 
-  let facesKept = 0;
-  let facesTotal = 0;
-  let linesKept = 0;
-  let linesTotal = 0;
+  const faces = cullFaces(chart, geoModel, cs, box);
+  const lines = cullLines(chart, lineBoxes, box);
+  return { facesKept: faces.kept, facesTotal: faces.total, linesKept: lines.kept, linesTotal: lines.total };
+}
 
-  // ---- 地级/省级面：按 region 名取几何 bbox（getBoundingRect 内部有缓存，重复调用很便宜） ----
+/** 地级/省级面：按 region 名取几何 bbox（getBoundingRect 内部有缓存，重复调用很便宜）。 */
+function cullFaces(chart: unknown, geoModel: unknown, cs: GeoCoordSys, box: CullBox): { kept: number; total: number } {
   const md = findMapDraw(chart, geoModel);
-  if (md?._regionsGroupByName && typeof cs.getRegion === 'function') {
-    md._regionsGroupByName.each((group, name) => {
-      facesTotal++;
-      const region = cs?.getRegion?.(name);
-      let visible = true;
-      if (region) {
-        const r = region.getBoundingRect();
-        visible = intersects([r.x, r.y, r.x + r.width, r.y + r.height], box);
-      }
-      // 拿不到几何时保守地保持可见，宁可多画也不留空洞
-      group.ignore = !visible;
-      if (visible) facesKept++;
-    });
-  }
+  if (!md?._regionsGroupByName || typeof cs.getRegion !== 'function') return { kept: 0, total: 0 };
+  let kept = 0;
+  let total = 0;
+  md._regionsGroupByName.each((group, name) => {
+    total++;
+    const region = cs.getRegion?.(name);
+    let visible = true;
+    if (region) {
+      const r = region.getBoundingRect();
+      visible = intersects([r.x, r.y, r.x + r.width, r.y + r.height], box);
+    }
+    // 拿不到几何时保守地保持可见，宁可多画也不留空洞
+    group.ignore = !visible;
+    if (visible) kept++;
+  });
+  return { kept, total };
+}
 
-  // ---- 省界折线：按预计算的 bbox 逐个标记（比 setOption 重建 series 快约 300 倍） ----
+/** 省界折线：按预计算的 bbox 逐个标记（比 setOption 重建 series 快约 300 倍）。 */
+function cullLines(chart: unknown, lineBoxes: CullBox[], box: CullBox): { kept: number; total: number } {
+  let kept = 0;
+  let total = 0;
   try {
+    const c = chart as { getModel?: () => { getSeries: () => { id?: string; getData: () => unknown }[] } };
     const series = c.getModel?.().getSeries().find((s) => s.id === 'province-lines') as
       | { getData: () => { count: () => number; getItemGraphicEl: (i: number) => Ignorable | null } }
       | undefined;
@@ -184,18 +188,17 @@ export function cullToViewport(
           if (!el) continue;
           const visible = intersects(lineBoxes[i], box);
           el.ignore = !visible;
-          if (visible) linesKept++;
-          linesTotal++;
+          if (visible) kept++;
+          total++;
         }
       } else {
-        linesTotal = count;
+        total = count;
       }
     }
   } catch {
     // lines 系列不存在（世界模式等）时忽略
   }
-
-  return { facesKept, facesTotal, linesKept, linesTotal };
+  return { kept, total };
 }
 
 /** 计算一组折线上所有顶点的数据坐标 bbox（构建时算一次，逐帧裁剪只做比较）。 */

@@ -109,28 +109,32 @@ export interface ScorePayload {
   level?: number;
 }
 
-/** 校验提交的成绩（复刻前端 canSubmit + 数值合理性，防接口刷垃圾分）。 */
-export function validateScore(body: unknown): ScorePayload {
-  if (!body || typeof body !== 'object') throw new ApiError(400, 'invalid_score', '成绩格式错误');
-  const row = body as Partial<ScorePayload>;
-  if (!validMode(row.mode)) throw new ApiError(400, 'invalid_mode', '无效的模式');
-  // 类型守卫：拒绝 undefined 与非字符串，此后 TS 收窄为 string | null
-  if (row.scopeProvince !== null && typeof row.scopeProvince !== 'string') throw new ApiError(400, 'invalid_scope', '无效的范围');
-  // scope 白名单：''（市级全国）、省级全国哨兵、世界全国哨兵、大洲榜哨兵、次区域榜哨兵、6 位 adcode（单省）。
-  // 拒绝任意非空字符串污染省级榜。
+/**
+ * scope 白名单：''（市级全国）、省级全国哨兵、世界全国哨兵、大洲榜哨兵、次区域榜哨兵、
+ * 6 位 adcode（单省）。拒绝任意非空字符串污染省级榜。
+ *
+ * 返回归一化后的 scope 而不是只做断言：`asserts` 谓词在调用点收窄跨函数引用不稳，
+ * 返回值的写法让调用方直接拿到 `string | null`。
+ */
+function normalizeScope(scopeProvince: unknown): string | null {
+  // 类型守卫：拒绝 undefined 与非字符串
+  if (scopeProvince !== null && typeof scopeProvince !== 'string') throw new ApiError(400, 'invalid_scope', '无效的范围');
   if (
-    typeof row.scopeProvince === 'string' &&
-    row.scopeProvince !== '' &&
-    row.scopeProvince !== PROVINCE_NATION_SCOPE &&
-    row.scopeProvince !== WORLD_NATION_SCOPE &&
-    !isContinentScope(row.scopeProvince) &&
-    !isSubregionScope(row.scopeProvince) &&
-    !/^\d{6}$/.test(row.scopeProvince)
+    typeof scopeProvince === 'string' &&
+    scopeProvince !== '' &&
+    scopeProvince !== PROVINCE_NATION_SCOPE &&
+    scopeProvince !== WORLD_NATION_SCOPE &&
+    !isContinentScope(scopeProvince) &&
+    !isSubregionScope(scopeProvince) &&
+    !/^\d{6}$/.test(scopeProvince)
   ) {
     throw new ApiError(400, 'invalid_scope', '无效的范围');
   }
-  if (typeof row.scopeLabel !== 'string' || !row.scopeLabel.trim()) throw new ApiError(400, 'invalid_scope_label', '缺少范围名称');
+  return scopeProvince;
+}
 
+/** 五个数值字段必须是有限非负数（挡住 NaN / Infinity / 字符串注入），并归一化成整数。 */
+function readScoreNumbers(row: Partial<ScorePayload>) {
   const totalUnits = Number(row.totalUnits);
   const correct = Number(row.correct);
   const wrong = Number(row.wrong);
@@ -141,32 +145,31 @@ export function validateScore(body: unknown): ScorePayload {
   if (!Number.isFinite(wrong) || wrong < 0) throw new ApiError(400, 'invalid_score', '无效的答错数');
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) throw new ApiError(400, 'invalid_score', '无效的用时');
   if (!Number.isFinite(finishedAt)) throw new ApiError(400, 'invalid_score', '无效的提交时间');
-
-  const now = Date.now();
-  if (Math.abs(finishedAt - now) > 5 * 60 * 1000) throw new ApiError(400, 'stale_result', '成绩已过期，请重新作答');
-
-  const payload: ScorePayload = {
-    mode: row.mode,
-    scopeProvince: row.scopeProvince === '' ? null : row.scopeProvince,
-    scopeLabel: row.scopeLabel.trim(),
+  return {
     totalUnits: Math.floor(totalUnits),
     correct: Math.floor(correct),
     wrong: Math.floor(wrong),
     elapsedMs: Math.round(elapsedMs),
     finishedAt: Math.floor(finishedAt),
   };
+}
 
-  // 提交资格：endless 需有金币（不统计题数，totalUnits 恒 0）；全国 self/click（null）与「世界全国」
-  // （__world_nation__）允许未答完（已答全对即可）；省级（含省级全国哨兵）维持全对。
+/**
+ * 提交资格（复刻前端 canSubmit）：
+ *   ·无尽的 endless 需有金币（不统计题数，totalUnits 恒 0），通过时就地补 coins/level；
+ *   ·拼图只有市级全国与世界全国两个范围，且「已拼」≥2、不得超过总片数、没有答错；
+ *   ·全国 self/click（null）、世界全国、大洲、次区域允许未答完（已答全对即可）；
+ *   ·省级（含省级全国哨兵）维持全对。
+ */
+function assertSubmittable(payload: ScorePayload, row: Partial<ScorePayload>): void {
   if (payload.mode === 'endless') {
     const coins = Number(row.coins);
     if (!Number.isFinite(coins) || coins <= 0) throw new ApiError(400, 'invalid_score', '尚未收集金币');
     payload.coins = Math.floor(coins);
     const level = Number(row.level);
     payload.level = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
-    return payload;
+    return;
   }
-  // 拼图：只有市级全国与世界全国两个范围，且「已拼」(correct) ≥ 2、不得超过总片数；没有答错。
   if (payload.mode === 'puzzle') {
     if (!PUZZLE_SCOPES.has(payload.scopeProvince ?? '')) throw new ApiError(400, 'invalid_scope', '该范围不支持拼图成绩');
     if (payload.totalUnits < PUZZLE_MIN_SUBMIT) throw new ApiError(400, 'invalid_score', '无效的总片数');
@@ -174,18 +177,40 @@ export function validateScore(body: unknown): ScorePayload {
     if (payload.correct < PUZZLE_MIN_SUBMIT || payload.correct > payload.totalUnits) {
       throw new ApiError(400, 'invalid_score', '至少吸上拼成一片才能提交成绩');
     }
-    return payload;
+    return;
   }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');
   if (payload.correct > payload.totalUnits) throw new ApiError(400, 'invalid_score', '无效的答对数');
   if (payload.scopeProvince === null || isWorldScope(payload.scopeProvince)) {
     // 全国/世界/大洲/次区域榜：答过题即可（不强制全对，允许部分作答上榜）
     if (!(payload.correct > 0 && payload.wrong === 0)) throw new ApiError(400, 'invalid_score', '全国榜需已答全对');
-    return payload;
+    return;
   }
   if (!(payload.correct + payload.wrong === payload.totalUnits && payload.correct === payload.totalUnits && payload.wrong === 0)) {
     throw new ApiError(400, 'invalid_score', '省级榜需全部答对');
   }
+}
+
+/** 校验提交的成绩。三段式：scope 白名单 → 数值守卫 → 提交资格（各自成函数）。 */
+export function validateScore(body: unknown): ScorePayload {
+  if (!body || typeof body !== 'object') throw new ApiError(400, 'invalid_score', '成绩格式错误');
+  const row = body as Partial<ScorePayload>;
+  if (!validMode(row.mode)) throw new ApiError(400, 'invalid_mode', '无效的模式');
+  const scope = normalizeScope(row.scopeProvince);
+  if (typeof row.scopeLabel !== 'string' || !row.scopeLabel.trim()) throw new ApiError(400, 'invalid_scope_label', '缺少范围名称');
+
+  const nums = readScoreNumbers(row);
+  const now = Date.now();
+  if (Math.abs(nums.finishedAt - now) > 5 * 60 * 1000) throw new ApiError(400, 'stale_result', '成绩已过期，请重新作答');
+
+  const payload: ScorePayload = {
+    mode: row.mode,
+    // '' 是「市级全国」的哨兵，对外统一成 null
+    scopeProvince: scope === '' ? null : scope,
+    scopeLabel: row.scopeLabel.trim(),
+    ...nums,
+  };
+  assertSubmittable(payload, row);
   return payload;
 }
 

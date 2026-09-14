@@ -70,7 +70,7 @@ export class BoardPanel {
         ${listHtml}
       </div>
     `;
-    this.bindEvents(user);
+    this.bindEvents();
     const textarea = document.getElementById('board-new-content') as HTMLTextAreaElement | null;
     if (textarea) {
       textarea.addEventListener('input', () => {
@@ -147,7 +147,7 @@ export class BoardPanel {
 
   // ---------- 事件 ----------
 
-  private bindEvents(user: ReturnType<AuthStore['currentUser']>) {
+  private bindEvents() {
     this.el.querySelector('#board-new-submit')?.addEventListener('click', () => this.submitPost());
     this.el.querySelector('#board-load-more')?.addEventListener('click', () => this.loadMore());
     this.el.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {

@@ -1,26 +1,26 @@
-import { json, readJson, handle } from '../../_lib/http';
+import { json, readJson, handle, ApiError, type Env } from '../../_lib/http';
 import { requireSession } from '../../_lib/guard';
 import { toPublicUser } from '../../_lib/rows';
-import { cleanUsername, normalizePasswordHash } from '../../_lib/validate';
-import { MAX_AVATAR_DATAURL_LEN, MAX_AVATAR_SIZE } from '../../_lib/limits';
+import { cleanUsername } from '../../_lib/validate';
+import { resolveAvatar, resolveHometown, resolvePassword, type ProfileBody } from '../../_lib/profile';
 
-interface Hometown {
-  provinceAdcode: string;
-  cityAdcode: string;
-}
-interface Avatar {
-  dataUrl: string;
-  name: string;
-  size: number;
-  type: string;
-}
-
-interface ProfileBody {
-  username?: unknown;
-  hometown?: Hometown | null;
-  avatar?: Avatar | null;
-  oldPasswordHash?: unknown;
-  newPasswordHash?: unknown;
+/**
+ * 校验并归一化新用户名；改名时查唯一性（排除自己）。
+ *
+ * 它是本路由**唯一**留在原地的校验 —— 因为它要查库。其余三条（头像 / 家乡 / 密码）都在
+ * `_lib/profile.ts`，无 DB 依赖、可当纯函数单测（见 `profile.test.ts`）。
+ *
+ * 校验失败一律 `throw ApiError`：`handle()` 会把它转成与原先手写
+ * `json({ error: { code, message } }, 4xx)` **逐字相同**的响应体。
+ */
+async function resolveUsername(env: Env, currentUsername: string, raw: unknown): Promise<string> {
+  const username = cleanUsername(raw);
+  if (!username) throw new ApiError(400, 'invalid_username', '请输入用户名');
+  if (username.toLowerCase() !== currentUsername.toLowerCase()) {
+    const clash = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
+    if (clash) throw new ApiError(409, 'username_exists', '用户名已存在');
+  }
+  return username;
 }
 
 export const onRequestPost = handle(
@@ -29,89 +29,26 @@ export const onRequestPost = handle(
     const user = context.session.user;
     const body = await readJson<ProfileBody>(context.request);
 
-  const username = cleanUsername(body.username);
-  if (!username) return json({ error: { code: 'invalid_username', message: '请输入用户名' } }, 400);
+    const username = await resolveUsername(env, user.username, body.username);
+    const avatarJson = resolveAvatar(body, user.avatar);
+    const hometownJson = resolveHometown(body, user.hometown);
+    const pwd = resolvePassword(user, body);
 
-  // 改用户名唯一性（排除自己）
-  if (username.toLowerCase() !== user.username.toLowerCase()) {
-    const clash = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
-    if (clash) return json({ error: { code: 'username_exists', message: '用户名已存在' } }, 409);
-  }
+    const now = Date.now();
+    await env.DB.prepare(
+      `UPDATE users SET username = ?, password_salt = ?, password_hash = ?, password_iterations = ?, hometown = ?, avatar = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+      .bind(username, pwd.salt, pwd.hash, pwd.iterations, hometownJson, avatarJson, now, user.id)
+      .run();
 
-  // 头像校验：dataUrl 长度与 size 上限
-  let avatarJson: string | null = user.avatar;
-  if (body.avatar !== undefined) {
-    if (body.avatar === null) {
-      avatarJson = null;
-    } else {
-      const av = body.avatar;
-      if (typeof av.dataUrl !== 'string' || !av.dataUrl.startsWith('data:image/')) {
-        return json({ error: { code: 'invalid_avatar', message: '头像格式错误' } }, 400);
-      }
-      if (typeof av.size !== 'number' || av.size < 0 || av.size > MAX_AVATAR_SIZE) {
-        return json({ error: { code: 'invalid_avatar', message: '头像不能超过 20KB' } }, 400);
-      }
-      // 服务端按 dataUrl 实际长度设上限，避免仅信客户端自报 size 的超大文本入库
-      if (av.dataUrl.length > MAX_AVATAR_DATAURL_LEN) {
-        return json({ error: { code: 'invalid_avatar', message: '头像体积过大' } }, 400);
-      }
-      avatarJson = JSON.stringify({ dataUrl: av.dataUrl, name: av.name ?? '', size: av.size, type: av.type ?? '' });
-    }
-  }
-
-  let hometownJson: string | null = user.hometown;
-  if (body.hometown !== undefined) {
-    if (body.hometown === null) {
-      hometownJson = null;
-    } else {
-      const ht = body.hometown;
-      if (typeof ht.provinceAdcode !== 'string' || typeof ht.cityAdcode !== 'string' || !/^\d{6}$/.test(ht.provinceAdcode) || !/^\d{6}$/.test(ht.cityAdcode)) {
-        return json({ error: { code: 'invalid_hometown', message: '家乡信息无效' } }, 400);
-      }
-      hometownJson = JSON.stringify({ provinceAdcode: ht.provinceAdcode, cityAdcode: ht.cityAdcode });
-    }
-  }
-
-  // 改密码：需要旧密码哈希一致 + 新密码哈希
-  let passwordSalt = user.password_salt;
-  let passwordHash = user.password_hash;
-  let passwordIterations = user.password_iterations;
-  const wantsPassword = body.oldPasswordHash || body.newPasswordHash;
-  if (wantsPassword) {
-    if (!body.oldPasswordHash || !body.newPasswordHash) {
-      return json({ error: { code: 'old_password_required', message: '请输入旧密码和新密码' } }, 400);
-    }
-    let oldPwd;
-    let newPwd;
-    try {
-      oldPwd = normalizePasswordHash(body.oldPasswordHash);
-      newPwd = normalizePasswordHash(body.newPasswordHash);
-    } catch {
-      return json({ error: { code: 'invalid_password_hash', message: '密码哈希格式错误' } }, 400);
-    }
-    if (oldPwd.hash !== user.password_hash || oldPwd.salt !== user.password_salt) {
-      return json({ error: { code: 'old_password_wrong', message: '旧密码不正确' } }, 400);
-    }
-    passwordSalt = newPwd.salt;
-    passwordHash = newPwd.hash;
-    passwordIterations = newPwd.iterations;
-  }
-
-  const now = Date.now();
-  await env.DB.prepare(
-    `UPDATE users SET username = ?, password_salt = ?, password_hash = ?, password_iterations = ?, hometown = ?, avatar = ?, updated_at = ?
-     WHERE id = ?`,
-  )
-    .bind(username, passwordSalt, passwordHash, passwordIterations, hometownJson, avatarJson, now, user.id)
-    .run();
-
-  const row = await env.DB.prepare(
-    `SELECT id, username, password_salt, password_hash, password_iterations, hometown, avatar, is_admin, created_at, updated_at
-     FROM users WHERE id = ?`,
-  )
-    .bind(user.id)
-    .first();
-  if (!row) return json({ error: { code: 'internal', message: '保存失败' } }, 500);
+    const row = await env.DB.prepare(
+      `SELECT id, username, password_salt, password_hash, password_iterations, hometown, avatar, is_admin, created_at, updated_at
+       FROM users WHERE id = ?`,
+    )
+      .bind(user.id)
+      .first();
+    if (!row) throw new ApiError(500, 'internal', '保存失败');
 
     return json({ user: toPublicUser(row as never) });
   }),

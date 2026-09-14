@@ -44,7 +44,7 @@ import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
 import { project, unitScale, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
-import { puzzleStatus, setHint, showSummary, toast } from '../ui/dom';
+import { puzzleStatus, setHint, toast } from '../ui/dom';
 
 /** 难度：简单 = 显示名称；困难 = 不显示（用户口径：难度只管标签，且运行中锁定）。 */
 export type PuzzleDifficulty = 'easy' | 'hard';

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalize, normalizeProvince, Matcher } from './matcher';
-import type { Unit, Province } from './types';
+import type { Unit } from './types';
 import { makeAppData } from './testFixture';
 
 describe('normalize', () => {

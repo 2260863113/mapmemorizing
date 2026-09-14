@@ -1052,7 +1052,6 @@ export class MapRenderer {
 
   /** geo 组件：地图名 + 投影钉死（boundingCoords）+ regions（世界 / 省级 / 地级三分支）。 */
   private buildGeoOption(mapName: string, ctx: LayerInput): echarts.EChartsOption['geo'] {
-    const state = ctx.state;
     const theme = ctx.theme;
     return {
       map: mapName, // 世界/省级用专属地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）

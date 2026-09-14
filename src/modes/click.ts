@@ -1,5 +1,5 @@
 import type { Mode, Unit } from '../types';
-import type { ClickOrderMode, ModeCtx, OrderMode } from './types';
+import type { ModeCtx, OrderMode } from './types';
 import { t } from '../i18n';
 import { formatElapsedSeconds } from '../ui/format';
 import { pickWrongNext } from './wrongOrder';

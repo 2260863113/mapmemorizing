@@ -1,5 +1,45 @@
 # 给下一个 AI 的交接文档
 
+## P4（工程守卫 + 后端收口）
+
+### 加了什么
+
+- **ESLint（`eslint.config.js`，平铺配置）** + `npm run check`（类型检查两套 tsconfig + lint + 单测）+ `.github/workflows/ci.yml`。
+  规则只挑「真实踩过的问题」：`no-unused-vars`（本轮搬文件后有 3 处导入静默失效，当时靠手写脚本才发现）、
+  `max-lines-per-function` / `max-lines`（防止刚砍下去的长函数长回去）、`no-explicit-any`（全仓 0 处，锁住它）、
+  `no-console`、`eqeqeq`、`prefer-const`。上线首轮跑出 **9 处真实死代码**（全是历史遗留，含 6 个 `.cnatlas-tmp/` 一次性脚本被误纳入 lint 范围 —— 已在 ignores 里排除）。
+
+- **`functions/_lib/profile.ts` + `profile.test.ts`（14 个用例）**。原先「个人资料」接口的字段校验内联在
+  `api/auth/profile.ts` 的 79 行 handler 里，**没有任何测试**，而它们做的是安全相关的检查（头像两个体积上限、
+  家乡 adcode 格式、改密码时的旧哈希比对）。按 `_lib/board.ts` 的既有做法抽出来后可单测。
+  路由文件从 118 行降到 55 行，handler 从 79 行降到 30 行。
+
+- **`validateScore` 拆成三段**（`normalizeScope` / `readScoreNumbers` / `assertSubmittable`），67 → 25 行。
+  **24 个既有单测全过**是这次重构等价性的凭据。`cullToViewport` 同理拆出 `cullFaces` / `cullLines`，64 → 22 行。
+
+### 为什么**没有**引入 Prettier（重要，别重复踩）
+
+试过，实测它会推翻本仓库两处**刻意且一致**的约定：
+
+| 约定 | 现状（约 20 个文件一致） | Prettier 会改成 |
+|---|---|---|
+| D1 链式调用 | `prepare(...)` ⏎ `.bind(...)` ⏎ `.run()` 三行 | 挤成一行，**且只在整条 ≤140 列时才挤** → 同仓库两种写法并存 |
+| 紧凑单行方法 | `enter() { void this.panel.show(); }`（appController 的 9 个 chrome 委托也是） | 一律展开成 4 行 |
+
+全仓 71 个文件需要重写，diff 会埋掉重构历史，收益不抵。ESLint 是**只报不改**的，适合做回归守卫。
+如果你确实想要 Prettier，那是一次独立的、需要先跟作者确认版式的改动。
+
+### 顺手修正的一处错误判断
+
+上一轮我在体检报告里写「`functions/api/auth/profile.ts` 的 `requireSession` 有 91 行，是端点间重复的
+鉴权样板」——**这是错的**。那个 `requireSession` 是 `_lib/guard.ts` 的导入封装，鉴权样板早就抽好了；
+91 行是我的「最长函数」探测器从 `requireSession(async (context) => {` 一直数到 `})`、把**整个 handler 体**
+算进它头上的结果。真正的缺陷是另外两件事：handler 确实有 79 行（已拆），以及该文件的**函数体缩进从 4 空格
+漂移到了 2 空格**（封装是后加的、函数体从未重新缩进 —— 已随重写修正）。
+
+**教训**：`最长函数` 这类度量对「包装器 + 内联箭头函数」的结构会误判，报之前要打开文件看一眼。
+
+
 ## 本轮（重构 P0）：验收探针隔离 —— 消除「改名后验收静默失效」
 
 **动机**：探针（`?probe=1`）必须读应用内部非公开状态。旧实现在 `src/probe.ts` 里就地写匿名类型再 `as unknown as` 强转，**40 处**、成员一律可选、调用一律 `?.()`。后果是生产侧改名时 `tsc` 与单测全绿，探针却在运行时静默少读一个字段 —— 你会以为验收过了。
