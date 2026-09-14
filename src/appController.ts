@@ -144,7 +144,8 @@ export class AppController {
       setHint,
       showTimer,
       showStopwatch,
-      showSummary: (html, onRestart, result) => showSummary(html, onRestart, result ? () => this.submitRoundResult(result) : undefined),
+      showSummary: (html, onRestart, result, restartLabel) =>
+        showSummary(html, onRestart, result ? () => this.submitRoundResult(result) : undefined, restartLabel),
       hideSummary,
       updateProgress: () => this.updateProgress(),
       syncChrome: () => this.syncModeChrome(),
@@ -470,7 +471,9 @@ export class AppController {
 
   /** 无法提交时的提示文案（按模式区分）。 */
   private rejectToast(result: RoundResult) {
-    return result.mode === 'endless' ? t('main.rejectEndless') : t('main.rejectNotAllCorrect');
+    if (result.mode === 'endless') return t('main.rejectEndless');
+    if (result.mode === 'puzzle') return t('main.rejectPuzzle');
+    return t('main.rejectNotAllCorrect');
   }
 
   /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
@@ -502,14 +505,20 @@ export class AppController {
   }
 
   private isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
-    return mode === 'self' || mode === 'click' || mode === 'endless';
+    return mode === 'self' || mode === 'click' || mode === 'endless' || mode === 'puzzle';
   }
 
   // ==================== 结算流程 ====================
 
+  /**
+   * 结算卡片（中途终止提交成绩）。
+   *
+   * 点击/输入模式：全国范围进行中按「重置」触发；
+   * 拼图模式：**只有可提交的两个范围**（世界全国 / 市级全国）才弹，其余范围直接重置（用户口径）。
+   */
   private showSettlementCard() {
     const mode = this.current?.id;
-    if (mode !== 'self' && mode !== 'click') return;
+    if (mode !== 'self' && mode !== 'click' && mode !== 'puzzle') return;
     const active = this.current as ModeController;
     active.pause();
     const result = active.collectResult() ?? null;
@@ -517,13 +526,20 @@ export class AppController {
       this.doReset();
       return;
     }
+    const isPuzzle = mode === 'puzzle';
     showSettlement(
-      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })}</div><div class="sum-stats">${
-        result.scopeProvince === PROVINCE_NATION_SCOPE
-          ? t('main.settlementNoteProvince')
-          : isWorldScope(result.scopeProvince)
-            ? t('main.settlementNoteWorld')
-            : t('main.settlementNote')
+      `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${
+        isPuzzle
+          ? t('main.settlementSummaryPuzzle', { placed: result.correct, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })
+          : t('main.settlementSummary', { correct: result.correct, wrong: result.wrong, done: result.correct + result.wrong, total: result.totalUnits, time: formatElapsedCentiseconds(result.elapsedMs) })
+      }</div><div class="sum-stats">${
+        isPuzzle
+          ? t('main.settlementNotePuzzle')
+          : result.scopeProvince === PROVINCE_NATION_SCOPE
+            ? t('main.settlementNoteProvince')
+            : isWorldScope(result.scopeProvince)
+              ? t('main.settlementNoteWorld')
+              : t('main.settlementNote')
       }</div></div>`,
       () => this.submitSettlement(result),
       () => this.closeSettlement(),
@@ -735,6 +751,12 @@ export class AppController {
         const scope = this.current?.getScopeProvince();
         const isNationScope = isNationLikeScope(scope); // 含 null（市级全国）、省级/世界全国与大洲范围
         if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
+          this.showSettlementCard();
+          return;
+        }
+        // 拼图模式：只有可提交的两个范围（世界全国 / 市级全国）进行中才弹结算卡片，
+        // 其余范围（省级全国、大洲、次区域、下钻某省）直接重置（用户口径）
+        if (mode === 'puzzle' && this.puzzleMode.isRankedScope() && this.current?.isStarted()) {
           this.showSettlementCard();
           return;
         }

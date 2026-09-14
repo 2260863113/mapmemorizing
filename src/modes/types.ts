@@ -20,7 +20,7 @@ export interface ModeCtx {
   setHint: (html: string) => void;
   showTimer: (remain: number | null, urgent?: boolean) => void;
   showStopwatch: (elapsedMs: number | null) => void;
-  showSummary: (html: string, onRestart: () => void, result?: RoundResult) => void;
+  showSummary: (html: string, onRestart: () => void, result?: RoundResult, restartLabel?: string) => void;
   hideSummary: () => void;
   updateProgress: () => void;
   /**
@@ -91,6 +91,10 @@ export interface ModeController {
    * 外壳据此决定「地图 / 拼图画布 / 粒度行 / 进度行」的显隐；非拼图模式返回 undefined。
    */
   puzzlePhase?(): 'scope' | 'board';
+  /**
+   * 自己维护缩放倍率的模式（拼图盘面）用它报给外壳；返回 null/undefined 表示走地图渲染器的倍率。
+   */
+  getZoomDisplay?(): number | null;
   /** 切换全国层的世界/省级/市级粒度（输入/点击/自由模式；熟练度分析用 setAnalysisGranularity）。 */
   setGranularity?(g: Granularity): void;
   /** 世界粒度下的当前大洲范围（null=全世界；非世界粒度返回 null）。 */

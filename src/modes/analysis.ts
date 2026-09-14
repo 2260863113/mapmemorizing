@@ -2,7 +2,7 @@ import type { Continent, Mode, SubregionId, UnitColor } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t, type MessagesKey } from '../i18n';
-import type { Granularity } from '../province';
+import { canDrillProvince, type Granularity } from '../province';
 import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
 import { CONTINENTS } from '../types';
 import { loadAnalysisHideLabels, saveAnalysisHideLabels, type ModeSettingsPanel } from '../modeSettings';
@@ -209,6 +209,11 @@ export class AnalysisMode extends BaseMode {
     }
     // 省级档双击省：显示该省地级熟练度（切到地级档并下钻）；返回全国后恢复省级档
     if (this.granularity === 'province') {
+      // 唯一层级的京津沪渝/港澳台没有下级单位，下钻只会得到"一个单位的省"（用户口径：一律不下钻）
+      if (!canDrillProvince(adcode)) {
+        this.ctx.toast(t('common.noDrillSingleUnit'));
+        return;
+      }
       this.granularity = 'city';
       this.persistGranularity();
       this.returnToProvince = true;

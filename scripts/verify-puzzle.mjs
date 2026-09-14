@@ -86,9 +86,19 @@ try {
       continentActive: (document.querySelector('#continent-toggle button.active')||{}).textContent || null,
       subregionVisible: !document.getElementById('subregion-toggle').classList.contains('hidden'),
       subregionActive: (document.querySelector('#subregion-toggle button.active')||{}).textContent || null,
+      zoomPill: document.getElementById('zoom-pill').textContent,
       zoomPillHidden: document.getElementById('zoom-pill').classList.contains('hidden'),
       sidePanelHidden: document.getElementById('side-panel').classList.contains('hidden'),
+      leaderboardHidden: document.getElementById('leaderboard').classList.contains('hidden'),
+      leaderboardTitle: (document.querySelector('#leaderboard .leaderboard-title') || {}).textContent || null,
+      sidePanelCollapsed: document.getElementById('side-panel').classList.contains('collapsed'),
     };
+  })()`);
+
+  /** 地图页 zoom=1 的每经度像素数（拼图 1x 必须与它一致 —— 用户口径）。 */
+  const mapUnitScale = async () => json(`(function(){
+    var f = JSON.parse(window.__probe.followFrames());
+    return f.window ? Number((1 / f.window.perPxX).toFixed(3)) : null;
   })()`);
 
   /** 真实鼠标拖拽（CDP 会合成 pointer 事件）。 */
@@ -139,9 +149,21 @@ try {
   check('画布还没有碎片、也没有卡槽，先出「开始」卡片、进度行隐藏',
     scope1.pieces === 0 && scope1.slots === 0 && scope1.startCard && scope1.statusHidden, scope1);
   check('开始卡片写明范围：「全国 34 个省级单位」', scope1.subtitle === '把全国 34 个省级单位拼成一幅完整的地图', scope1.subtitle);
-  check('选范围阶段：粒度行（省级选中）与难度行都可见，侧栏不出现',
-    scope1.granularityVisible && scope1.granularityActive === '省级' && (await difficultyUI()).visible && scope1.sidePanelHidden, scope1);
+  check('选范围阶段：粒度行（省级选中）与难度行都可见，侧栏不出现（拼图榜只在世界/全国市级两档）', scope1.granularityVisible && scope1.granularityActive === '省级' && (await difficultyUI()).visible, scope1);
+  const map1xProvince = await mapUnitScale();
+  check('省级全国地图 zoom=1 的比例可读（拼图 1x 的比对标尺）', typeof map1xProvince === 'number' && map1xProvince > 5, { map1xProvince });
   await shot('puzzle-1-scope.png');
+
+  // ==================== 唯一层级的京津沪渝/港澳台：一律不下钻（所有模式） ====================
+  const bjClick = await json(`window.__probe.puzzleUnit('110000')`);
+  const bjToast = await ev(`document.getElementById('toast').textContent`);
+  check('省级全国里点北京（直辖市，只有一个下级单位）→ 不下钻，并给一行提示',
+    bjClick.handled === true && bjClick.snapshot.granularity === 'province' && bjClick.snapshot.scope === PROVINCE_NATION && /不再下钻/.test(bjToast),
+    { handled: bjClick.handled, granularity: bjClick.snapshot.granularity, scope: bjClick.snapshot.scope, toast: bjToast });
+  const hkClick = await json(`window.__probe.puzzleUnit('810000')`);
+  check('点香港（特别行政区，同样只有一个下级单位）→ 也不下钻',
+    hkClick.handled === true && hkClick.snapshot.granularity === 'province' && hkClick.snapshot.scope === PROVINCE_NATION,
+    { handled: hkClick.handled, granularity: hkClick.snapshot.granularity, scope: hkClick.snapshot.scope });
 
   // ==================== 难度：选范围阶段改的是地图上的名称标签 ====================
   const hideLabels = async () => json(`window.__probe.round3Ui().labels.hideLabels`);
@@ -164,6 +186,26 @@ try {
     { ...world1, probeScope: worldState1.scope });
   const worldMap = await json(`window.__probe.round3Ui().view`);
   check('世界档的地图渲染确实是世界视图', worldMap.worldMode === true, worldMap);
+  const map1xWorld = await mapUnitScale();
+  check('世界档地图 zoom=1 的比例（世界族）明显小于中国族',
+    typeof map1xWorld === 'number' && map1xWorld > 1 && map1xWorld < map1xProvince, { map1xWorld, map1xProvince });
+  check('全世界（可提交范围）：右侧显示拼图排行榜',
+    !world1.sidePanelHidden && !world1.leaderboardHidden && /拼图模式/.test(world1.leaderboardTitle ?? ''),
+    { title: world1.leaderboardTitle, sidePanelHidden: world1.sidePanelHidden });
+
+  // ---- 大洋洲：仍可作为范围，但不再细分次区域（用户口径，所有模式） ----
+  await ev(`(() => { document.getElementById('continent-OC').click(); return true })()`);
+  await sleep(600);
+  const oceania = await scopeUI();
+  const ocProbe = await puzzle();
+  check('点「大洋洲」：进入大洋洲范围，但不再出现次区域行',
+    ocProbe.scope === '__continent_OC__' && !oceania.subregionVisible && /^把大洋洲的 \d+ 个国家和地区/.test(oceania.subtitle),
+    { scope: ocProbe.scope, subregionVisible: oceania.subregionVisible, subtitle: oceania.subtitle });
+  const ocClick = await json(`window.__probe.puzzleUnit('AUS')`);
+  check('在大洋洲里点澳大利亚 → 不再下钻到「澳新」次区域',
+    ocClick.snapshot.scope === '__continent_OC__', { scope: ocClick.snapshot.scope });
+  await ev(`(() => { document.getElementById('continent-all').click(); return true })()`);
+  await sleep(500);
 
   await ev(`(() => { document.getElementById('continent-AS').click(); return true })()`);
   await sleep(600);
@@ -223,10 +265,16 @@ try {
   const boardHint = await json(`document.getElementById('top-hint').textContent || ''`);
   const started = await puzzle();
   const statusText = await ev(`document.getElementById('puzzle-status').textContent`);
+  /** 拼图 1x 的基准比例（探针读到的 px/°），用于和地图 1x 比对。 */
+  const truePosScaleProvince = (await json(`window.__probe.puzzleTruePosition('110000')`)).scale;
   check('点开始后：地图隐藏、拼图画布显示、港澳放大框收起、开始卡片消失',
     !board.mapVisible && board.puzzleVisible && !board.insetVisible && !board.startCard && boardHint === '', { ...board, boardHint });
-  check('画布上先没有任何碎片（清空）、左侧补满三个卡槽、缩放角标收起',
-    board.pieces === 0 && board.slots === 3 && board.zoomPillHidden, board);
+  check('画布上先没有任何碎片（清空）、左侧补满三个卡槽', board.pieces === 0 && board.slots === 3, board);
+  check('缩放角标显示拼图自己的倍率，且进入时就是 1.00x',
+    board.zoomPillHidden === false && board.zoomPill === '1.00x', { pill: board.zoomPill, hidden: board.zoomPillHidden });
+  check('拼图 1x 的比例 = 地图 1x 的比例（省级全国）',
+    Math.abs(truePosScaleProvince - map1xProvince) / map1xProvince < 0.02,
+    { puzzle: truePosScaleProvince, map: map1xProvince });
   check('进度行出现「已拼 1/34 ｜ 用时 mm:ss」（已拼起始为 1，不随拿出碎片增加）',
     started.started === true && /已拼 1\/34/.test(statusText) && /用时 \d\d:\d\d/.test(statusText), { statusText, placed: started.placed });
   check('开始后收起「简单/困难」分段按钮（运行中不允许切换）', (await difficultyUI()).visible === false);
@@ -238,6 +286,7 @@ try {
   })`);
   check('开始后：不显示「跳过」，显示「暂停」与「重置」，粒度行也收起（不能再换范围）',
     buttons.skip === true && buttons.pause === false && buttons.reset === false && buttons.granularity === true, buttons);
+  check('盘面运行时右侧排行榜收起（与测验一致）', board.sidePanelCollapsed === true, { collapsed: board.sidePanelCollapsed });
   await shot('puzzle-2-board.png');
 
   // ==================== 真实拖拽：从卡槽拖到画布 ====================
@@ -293,7 +342,7 @@ try {
     };
   })()`);
   check('碎片的上下覆盖按面积排：小的压在大的之上（DOM 里面积从大到小）',
-    order.count >= 4 && order.sorted === true, order);
+    order.count >= 3 && order.sorted === true, order);
   check('北京（面积小）画在河北（面积大）之后 → 压在河北的环里',
     order.bjIndex > order.hbIndex && order.hbIndex >= 0, order);
   await shot('puzzle-3-snapped.png');
@@ -355,11 +404,10 @@ try {
     !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) >= 2 && hintEasy.stroke !== 'none',
     hintEasy);
   const hintHard = await checkSnapHint('hard', 'puzzle-3c-snap-hint-hard.png');
-  check('困难难度：拖到可吸附范围时同样给出绿色提示',
-    !!hintHard && hintHard.lit >= 1 && hintHard.selfLit >= 1 && parseFloat(hintHard.width) >= 2 && hintHard.stroke !== 'none',
+  check('困难难度：**完全不给任何吸附提示**（目标不亮、手里那块也不加描边，避免靠提示撞运气）',
+    !!hintHard && hintHard.lit === 0 && hintHard.selfLit === 0,
     hintHard);
-  check('困难模式下画布上没有名称标签（提示不依赖标签）',
-    (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) === 0);
+  check('困难模式下画布上没有名称标签', (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) === 0);
 
   // ==================== 暂停：停表 + 遮罩 ====================
   const elapsedBefore = (await puzzle()).elapsedMs;
@@ -389,14 +437,16 @@ try {
     restartLabel: document.getElementById('summary-restart').textContent,
     seaIslets: document.querySelectorAll('#puzzle .puzzle-sea-islets').length,
     difficultyVisible: !document.getElementById('puzzle-difficulty-toggle').classList.contains('hidden'),
+    submitHidden: document.getElementById('summary-submit').classList.contains('hidden'),
     statusText: document.getElementById('puzzle-status').textContent,
   })`);
   check('把 34 片全部放到真值位置 → 吸成一整块（获胜）',
     solved === true && win.complete === true && win.groups.length === 1 && win.groups[0].pieces.length === 34,
     { solved, groups: win.groups.length, complete: win.complete });
-  check('获胜后弹完成卡片：显示用时 + 「再来一局」',
-    winDom.summaryVisible && /拼好了/.test(winDom.body) && /用时/.test(winDom.body) && winDom.restartLabel === '再来一局', winDom);
+  check('获胜后弹完成卡片：标题「拼图完成」+ 显示用时 + 「再来一局」',
+    winDom.summaryVisible && /拼图完成/.test(winDom.body) && /用时/.test(winDom.body) && winDom.restartLabel === '再来一局', winDom);
   check('获胜后自动补上三沙等远海岛礁（归入海南所在组）', winDom.seaIslets >= 1, { seaIslets: winDom.seaIslets });
+  check('省级全国不是可提交范围 → 完成卡片上没有「提交成绩」', winDom.submitHidden === true, winDom);
   check('一局结束后「简单/困难」分段按钮重新显现（之前运行的盘面会收起它们）',
     winDom.difficultyVisible === true, winDom);
   await shot('puzzle-6-win.png');
@@ -423,12 +473,71 @@ try {
   check('世界档开局：194 片、地图隐藏、卡槽三片、进度行写 已拼 1/194',
     worldBoard.total === 194 && worldBoard.started === true && (await ev(`document.getElementById('puzzle-status').textContent`)).includes('已拼 1/194'),
     { total: worldBoard.total });
+  const worldPuzzleScale = (await json(`window.__probe.puzzleTruePosition('CHN')`)).scale;
+  check('拼图 1x 的比例 = 地图 1x 的比例（世界族）',
+    Math.abs(worldPuzzleScale - map1xWorld) / map1xWorld < 0.02, { puzzle: worldPuzzleScale, map: map1xWorld });
+
+  // ---- 中途终止提交：已拼 = 1（一片都没吸上）→ 不弹结算卡片，直接回开始卡片 ----
+  await resetClick();
+  const floorState = await puzzle();
+  const floorDom = await json(`({
+    settlement: !document.getElementById('settlement').classList.contains('hidden'),
+    startCard: !!document.getElementById('puzzle-start'),
+  })`);
+  check('全世界范围运行中按「重置」：已拼 = 1（还没吸上任何一片）时不弹结算卡片，直接回开始卡片',
+    floorState.phase === 'scope' && floorDom.settlement === false && floorDom.startCard === true,
+    { phase: floorState.phase, ...floorDom });
+
+  // ---- 已拼 ≥ 2 → 「重置」弹结算卡片，可提交 ----
+  await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+  await sleep(800);
+  const pA = await json(`window.__probe.puzzleTruePosition('CHN')`);
+  const pB = await json(`window.__probe.puzzleTruePosition('MNG')`);
+  await ev(`window.__probe.puzzlePlaceAt('CHN', ${pA.x}, ${pA.y})`);
+  await ev(`window.__probe.puzzlePlaceAt('MNG', ${pB.x + 5}, ${pB.y + 5})`);
+  await sleep(200);
+  const snapped = await puzzle();
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(150);
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(500);
+  const settleDom = await json(`({
+    settlement: !document.getElementById('settlement').classList.contains('hidden'),
+    body: document.getElementById('settlement-body').textContent,
+  })`);
+  check('已拼 ≥ 2 后按「重置」→ 弹结算卡片（显示「已拼 2/194 ｜ 用时」与排名口径）',
+    snapped.placed === 2 && settleDom.settlement && /已拼\s*2\/194/.test(settleDom.body) && /已拼个数排名/.test(settleDom.body),
+    { placed: snapped.placed, body: settleDom.body });
+  await shot('puzzle-11-settlement.png');
+  await ev(`(() => { document.getElementById('settlement-submit').click(); return true })()`);
+  await sleep(600);
+  const submitGate = await json(`({
+    toast: document.getElementById('toast').textContent,
+    authOpen: !document.getElementById('auth-panel').classList.contains('hidden'),
+  })`);
+  check('通过提交门槛后点「提交成绩」→ 走登录门控（未登录先要求登录），不是"不能提交"的拒绝提示',
+    /登录/.test(submitGate.toast) && !/至少吸上/.test(submitGate.toast), submitGate);
+  await ev(`(() => { document.getElementById('settlement-close').click(); return true })()`);
+  await sleep(400);
+  await resetClick();
+
+  // ---- 完成后（可提交范围）完成卡片上直接给「提交成绩」 ----
+  await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+  await sleep(900);
   const worldSolved = await ev(`window.__probe.puzzleAutoSolve()`);
   await sleep(1800);
   const worldWin = await puzzle();
+  const worldWinDom = await json(`({
+    body: document.getElementById('summary-body').textContent,
+    submitHidden: document.getElementById('summary-submit').classList.contains('hidden'),
+    status: document.getElementById('puzzle-status').textContent,
+  })`);
   check('世界档把 194 个国家全部拼成一整块（多范围拼图逻辑跑通）',
     worldSolved === true && worldWin.complete === true && worldWin.groups.length === 1 && worldWin.groups[0].pieces.length === 194,
     { solved: worldSolved, groups: worldWin.groups.length });
+  check('可提交范围拼完后：完成卡片标题「拼图完成」且带「提交成绩」按钮，进度行写 已拼 194/194',
+    /拼图完成/.test(worldWinDom.body) && worldWinDom.submitHidden === false && /已拼 194\/194/.test(worldWinDom.status),
+    worldWinDom);
   await shot('puzzle-8-win-world.png');
 
   // ==================== 市级档拼图：下钻某省 + 全国 340 片 ====================

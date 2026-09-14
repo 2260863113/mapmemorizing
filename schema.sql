@@ -32,11 +32,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 CREATE TABLE IF NOT EXISTS leaderboard (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id        INTEGER NOT NULL REFERENCES users(id),
-  mode           TEXT    NOT NULL,                  -- 'self' | 'click' | 'endless'
+  mode           TEXT    NOT NULL,                  -- 'self' | 'click' | 'endless' | 'puzzle'
   scope_province TEXT    NOT NULL DEFAULT '',
   scope_label    TEXT    NOT NULL,
-  total_units    INTEGER NOT NULL,
-  correct        INTEGER NOT NULL,
+  total_units    INTEGER NOT NULL,                  -- 拼图：本范围总片数
+  correct        INTEGER NOT NULL,                  -- 拼图：已拼个数（1 + 吸附次数）
   elapsed_ms     INTEGER NOT NULL,
   coins          INTEGER,                            -- endless 累计金币
   level          INTEGER,                            -- endless 到达关卡

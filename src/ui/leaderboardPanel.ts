@@ -68,10 +68,17 @@ export class LeaderboardPanel {
   }
 }
 
-/** 行尾信息：endless 显示金币+关卡；全国语义榜（市级全国 null / 世界全国哨兵）显示题数+时间，省级榜仅时间。 */
+/** 行尾信息：endless 显示金币+关卡；拼图显示「已拼 X/Y ｜ 用时」；全国语义榜显示题数+时间，省级榜仅时间。 */
 function metaText(entry: LeaderboardEntry, scopeProvince: string | null) {
   if (entry.mode === 'endless') {
     return t('leaderboard.endlessMeta', { coins: formatCoins(entry.coins ?? 0), level: entry.level ?? 1 });
+  }
+  if (entry.mode === 'puzzle') {
+    return t('leaderboard.puzzleMeta', {
+      placed: entry.correct,
+      total: entry.totalUnits,
+      time: formatElapsedCentiseconds(entry.elapsedMs),
+    });
   }
   // 全国语义榜（市级全国 null / 世界全国 / 大洲榜 / 次区域榜哨兵）显示题数+时间，省级榜仅时间。
   if (scopeProvince === null || isWorldScope(scopeProvince)) {
@@ -87,5 +94,6 @@ function formatCoins(n: number) {
 function modeLabel(mode: LeaderboardMode) {
   if (mode === 'self') return t('leaderboard.mode.self');
   if (mode === 'click') return t('leaderboard.mode.click');
+  if (mode === 'puzzle') return t('leaderboard.mode.puzzle');
   return t('leaderboard.mode.endless');
 }

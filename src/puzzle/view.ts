@@ -11,8 +11,28 @@
  * 指针事件统一挂在容器 `#puzzle` 上（槽与画布都是它的子节点）：槽上按下要捕获指针才能拿到
  * 后续 move/up，而捕获目标取同一个容器最省事。
  */
-import { pxBBoxOf, project, spanLng, svgPathOf, type PuzzleFamily } from './projection';
+import { PUZZLE_BBOX, projectBBox, pxBBoxOf, project, svgPathOf, type PuzzleFamily } from './projection';
 import { PuzzleState, type DropResult } from './state';
+
+/** 当前范围全部碎片的经纬度 bbox（开局取景用）。 */
+function scopeLngLatBBox(state: PuzzleState, family: PuzzleFamily): [number, number, number, number] {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  for (const adcode of state.adcodes()) {
+    const def = state.def(adcode);
+    if (!def) continue;
+    minLng = Math.min(minLng, def.bbox[0]);
+    minLat = Math.min(minLat, def.bbox[1]);
+    maxLng = Math.max(maxLng, def.bbox[2]);
+    maxLat = Math.max(maxLat, def.bbox[3]);
+  }
+  if (Number.isFinite(minLng)) return [minLng, minLat, maxLng, maxLat];
+  // 空范围兜底：退回该族整套投影范围
+  const b = PUZZLE_BBOX[family];
+  return [b.minLng, b.minLat, b.maxLng, b.maxLat];
+}
 
 export interface PuzzleThemeColors {
   fill: string;
@@ -30,14 +50,29 @@ export interface PuzzleViewOptions {
   family: () => PuzzleFamily;
   /** 是否显示省名（简单档）。 */
   labels: () => boolean;
+  /**
+   * 是否显示「可吸附」提示（**只有简单档给**）。
+   *
+   * 困难档刻意**完全不给任何预告**（用户口径：避免靠提示"撞运气"），拖动中不亮、点选幽灵预览也不亮；
+   * 吸附规则与容差两档完全相同，只是没有预告。
+   */
+  hints: () => boolean;
   theme: () => PuzzleThemeColors;
   /** 一次"放下"处理完（含吸附结果）后回调：刷新进度、判定获胜。 */
   onDrop?: (result: DropResult) => void;
+  /** 缩放变化（滚轮/复位/获胜取景）后回调：外壳据此刷新缩放角标。 */
+  onZoom?: (zoom: number) => void;
   toast: (msg: string) => void;
 }
 
-export const MIN_ZOOM = 0.6;
-export const MAX_ZOOM = 6;
+/**
+ * 缩放范围与**地图页完全一致**（`renderer.ts` 的 MIN_ZOOM/MAX_ZOOM）。
+ *
+ * 1x 的比例已经等于地图 1x（见 `unitScale`），上限若还停在 6x，下钻某省（地图自己用 24.8x）
+ * 时根本放不大；下限同理（0.8x 与地图一致，能一眼看全整幅）。
+ */
+export const MIN_ZOOM = 0.8;
+export const MAX_ZOOM = 28;
 
 interface SlotPointer {
   pointerId: number;
@@ -479,6 +514,7 @@ export class PuzzleView {
     this.panX = px - before[0] * this.zoom;
     this.panY = py - before[1] * this.zoom;
     this.applyTransform();
+    this.opts.onZoom?.(this.zoom);
   };
 
   private onDblClick = (e: MouseEvent) => {
@@ -488,16 +524,38 @@ export class PuzzleView {
     this.resetView();
   };
 
-  /** 回到默认视角：当前范围整幅约占视口宽 1.15 倍（略大于视口）。 */
+  /** 回到 1x 视角：**1x 就是地图页 zoom=1 的比例**，故只把当前范围居中，不改变倍率。 */
   resetView(): void {
     this.zoom = 1;
-    const width = spanLng(this.family) * this.baseScale;
+    const scale = this.baseScale;
+    const state = this.opts.state;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const group of state.groups) {
+      for (const adcode of group.pieces) {
+        const def = state.def(adcode);
+        if (!def) continue;
+        const box = pxBBoxOf(def.polygons, scale, this.family);
+        minX = Math.min(minX, box[0] + group.dx);
+        minY = Math.min(minY, box[1] + group.dy);
+        maxX = Math.max(maxX, box[2] + group.dx);
+        maxY = Math.max(maxY, box[3] + group.dy);
+      }
+    }
+    // 开局（碎片都还在卡槽里，画布上没有组）时按整个范围的经纬度 bbox 居中
+    if (!Number.isFinite(minX)) {
+      const box = projectBBox(scopeLngLatBBox(state, this.family), scale, this.family);
+      [minX, minY, maxX, maxY] = box;
+    }
     const rect = this.svg?.getBoundingClientRect();
     const viewW = rect?.width ?? 0;
     const viewH = rect?.height ?? 0;
-    this.panX = (viewW - width) / 2;
-    this.panY = viewH * 0.08;
+    this.panX = viewW / 2 - ((minX + maxX) / 2) * this.zoom;
+    this.panY = viewH / 2 - ((minY + maxY) / 2) * this.zoom;
     this.applyTransform();
+    this.opts.onZoom?.(this.zoom);
   }
 
   /** 缩放到"刚好装下整幅拼图"并居中（获胜时用）。 */
@@ -539,6 +597,7 @@ export class PuzzleView {
       this.panX = target.panX;
       this.panY = target.panY;
       this.applyTransform();
+      this.opts.onZoom?.(this.zoom);
       return;
     }
     this.animateTo(target, 420);
@@ -555,6 +614,7 @@ export class PuzzleView {
       this.panY = from.panY + (target.panY - from.panY) * k;
       this.applyTransform();
       if (t < 1) requestAnimationFrame(step);
+      else this.opts.onZoom?.(this.zoom);
     };
     requestAnimationFrame(step);
   }
@@ -603,6 +663,11 @@ export class PuzzleView {
   private applyHint(dx: number, dy: number, pieces: string[], selfGroupId: number | null): void {
     const world = this.world;
     if (!world) return;
+    // 困难档：完全不给任何吸附预告（用户口径：不允许靠提示"撞运气"）
+    if (!this.opts.hints()) {
+      this.clearHighlights();
+      return;
+    }
     const candidates = this.opts.state.candidatesFor(dx, dy, pieces);
     const signature = candidates.map((g) => g.id).sort((a, b) => a - b).join(',') + '|' + (candidates.length ? selfGroupId ?? '' : '');
     if (signature === this.hintSignature) return; // 避免每帧重排 class
@@ -671,6 +736,11 @@ export class PuzzleView {
     this.updateGhost(null, 0, 0);
     this.beginDragFromSlot(adcode, clientX, clientY);
     this.finishDrag();
+  }
+
+  /** 当前缩放倍率（外壳的缩放角标用）。 */
+  zoomLevel(): number {
+    return this.zoom;
   }
 
   /** 只读快照（探针用）。 */

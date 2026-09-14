@@ -73,6 +73,29 @@ export function unproject(x: number, y: number, scale: number, family: PuzzleFam
   return [b.minLng + x / scale, b.maxLat - y / (scale * PUZZLE_LAT_PER_LNG)];
 }
 
+/**
+ * 拼图 **1x** 的每经度像素数 —— 必须与地图页 zoom=1 的比例**完全一致**（用户口径）。
+ *
+ * 地图页的 zoom=1 不是"铺满画布"，而是 ECharts `geo` 的默认布局：把投影 bbox（`boundingCoords`）
+ * 装进容器的 **80% 区域**（左右上下各留 10%），并按 `aspect = (bboxW/bboxH)·aspectScale` 保持比例
+ * ——于是两个方向各算一个候选、取更紧的那个：
+ *
+ *   px/°lng = min( 0.8·W / spanLng,  0.8·H / (spanLat · 1/aspectScale) )
+ *
+ * 实测校验（1410×745 画布、中国族）：`min(0.8·1410/61.6=18.31, 0.8·745/(50.2·1.3333)=8.90) = 8.90`，
+ * 与地图页探针读到的 `1/perPxX = 8.904` 一致；世界族按同一公式为 2.58（验收脚本会实测比对）。
+ *
+ * 反过来：拼图只要用这个比例当 1x，碎片在 1x 下就和地图上同一单位**一样大**；
+ * 缩放上限也必须跟地图一致（0.8–28x），否则下钻某省（地图自己用 24.8x）时 6x 根本不够用。
+ */
+export const GEO_LAYOUT_RATIO = 0.8;
+
+export function unitScale(family: PuzzleFamily, width: number, height: number): number {
+  const byWidth = (GEO_LAYOUT_RATIO * width) / spanLng(family);
+  const byHeight = (GEO_LAYOUT_RATIO * height) / (spanLat(family) * PUZZLE_LAT_PER_LNG);
+  return Math.min(byWidth, byHeight);
+}
+
 /** 经纬度 bbox → 拼图 px 的 [minX, minY, maxX, maxY]。 */
 export function projectBBox(
   bbox: [number, number, number, number],

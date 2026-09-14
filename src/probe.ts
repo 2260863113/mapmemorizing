@@ -488,6 +488,13 @@ export function installProbe(app: AppController) {
       return true;
     },
 
+    /** 探针用：模拟「点地图上的某个单位」（renderer 只把 adcode 转给模式，这条就是那条路径）。 */
+    puzzleUnit(adcode: string) {
+      const app = anyApp as unknown as { puzzleMode?: { onUnitClick?: (a: string) => boolean } };
+      const handled = app.puzzleMode?.onUnitClick?.(adcode) ?? false;
+      return { handled, snapshot: app.puzzleMode && (app.puzzleMode as unknown as { snapshot?: () => unknown }).snapshot?.() };
+    },
+
     /** 探针用：把某片放到指定拼图 px 处（验证吸附判定，不经过指针）。 */
     puzzlePlaceAt(adcode: string, x: number, y: number) {
       const app = anyApp as unknown as {

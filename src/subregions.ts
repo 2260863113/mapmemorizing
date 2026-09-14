@@ -19,10 +19,23 @@ export function subregionsOf(data: AppData, continent: Continent | null): Subreg
 }
 
 /**
+ * **不再提供次区域下钻的大洲**（用户口径 2026-09）：大洋洲。
+ *
+ * 大洋洲仍是一个可选范围（「大洋洲」按钮与"点国家进入大洋洲"都保留），但它不再细分到
+ * 澳新/美拉尼西亚/密克罗尼西亚/波利尼西亚 —— 全是细碎岛国，进去之后既难点也没意义。
+ *
+ * ⚠ 次区域的**哨兵字符串与数据都不删**（`__subregion_ANZ__` 等已写进 D1 与本地进度，
+ * 按 ADR-0001 一旦上线不可改名），只是界面上不再可达。
+ */
+export const NO_SUBREGION_DRILL: readonly Continent[] = ['OC'];
+
+/**
  * 该大洲是否提供次区域下钻。
- * 分区数 ≤ 1 时不给次区域行（如南美只有一个「南美」分区，行内容退化为无意义）。
+ * 分区数 ≤ 1 时不给次区域行（如南美只有一个「南美」分区，行内容退化为无意义）；
+ * 大洋洲按用户口径显式关闭（见 `NO_SUBREGION_DRILL`）。
  */
 export function hasSubregions(data: AppData, continent: Continent | null): boolean {
+  if (!continent || NO_SUBREGION_DRILL.includes(continent)) return false;
   return subregionsOf(data, continent).length > 1;
 }
 

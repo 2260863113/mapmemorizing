@@ -14,8 +14,9 @@ export const onRequestGet = handle(async (context) => {
   let orderBy: string;
   if (modeParam === 'endless') {
     orderBy = 'l.coins DESC, l.level DESC, l.submitted_at ASC, u.username ASC';
-  } else if (scope === '' || scope === WORLD_NATION_SCOPE || isContinentScope(scope)) {
-    // 市级全国（''）、世界全国与大洲榜（哨兵）同语义：答对题数优先、同数比用时
+  } else if (modeParam === 'puzzle' || scope === '' || scope === WORLD_NATION_SCOPE || isContinentScope(scope)) {
+    // 市级全国（''）、世界全国与大洲榜（哨兵）同语义：答对题数优先、同数比用时；
+    // 拼图的 `correct` 列存的是「已拼」个数，排序规则同为「个数优先、同数比用时」（用户口径）。
     orderBy = 'l.correct DESC, l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   } else {
     orderBy = 'l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';

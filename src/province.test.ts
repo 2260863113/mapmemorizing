@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildProvinceAdjacency, continentFromScope, continentScope, isNationLikeScope, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, WORLD_NATION_SCOPE } from './province';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { buildProvinceAdjacency, canDrillProvince, continentFromScope, continentScope, drillTargetOfUnit, isNationLikeScope, provinceUnits, provinceShortName, PROVINCE_NATION_SCOPE, SINGLE_UNIT_PROVINCES, WORLD_NATION_SCOPE } from './province';
 import { CONTINENTS } from './types';
 import type { Unit, Province } from './types';
 import { makeAppData } from './testFixture';
@@ -108,5 +110,47 @@ describe('CONTINENTS 元数据', () => {
   it('has six continents excluding Antarctica, in stable UI order', () => {
     expect(CONTINENTS.map((c) => c.id)).toEqual(['AS', 'EU', 'AF', 'NA', 'SA', 'OC']);
     expect(CONTINENTS.map((c) => c.name)).toEqual(['亚洲', '欧洲', '非洲', '北美洲', '南美洲', '大洋洲']);
+  });
+});
+
+/**
+ * 「唯一层级省级单位不允许下钻」这条规则（用户口径 2026-09）。
+ *
+ * 规则写成显式清单是为了可读，但清单必须与真实数据一致：一旦某个直辖市的单位数变了
+ * （或新增了别的"只有自己一个下级单位"的省级单位），这里立刻报错。
+ */
+describe('canDrillProvince（唯一层级省级单位不下钻）', () => {
+  it('京津沪渝与港澳台不允许下钻，其余省可以', () => {
+    for (const adcode of ['110000', '120000', '310000', '500000', '810000', '820000', '710000']) {
+      expect(canDrillProvince(adcode), adcode).toBe(false);
+    }
+    for (const adcode of ['130000', '510000', '440000', '650000']) {
+      expect(canDrillProvince(adcode), adcode).toBe(true);
+    }
+    expect(canDrillProvince(null)).toBe(false);
+  });
+
+  it('清单与真实数据里「下级单位 ≤ 1」的省级单位完全一致', () => {
+    const meta = JSON.parse(readFileSync(path.join(process.cwd(), 'public', 'data', 'units.json'), 'utf8')) as {
+      units: (Unit & { decorative?: boolean })[];
+      provinces: Province[];
+    };
+    const units = meta.units.filter((x) => !x.adcode.startsWith('100000'));
+    const single = meta.provinces
+      .map((p) => p.adcode)
+      .filter((adcode) => units.filter((x) => x.provinceAdcode === adcode).length <= 1)
+      .sort();
+    expect(single).toEqual([...SINGLE_UNIT_PROVINCES].sort());
+  });
+
+  it('drillTargetOfUnit：点地级市会钻到它的省，点京津沪渝/港澳台的代表面则钻到它自己', () => {
+    const data = makeAppData({
+      units: [u('130100', '130000'), u('110000', '110000')],
+      provinces: [p('130000', '河北省'), p('110000', '北京市')],
+    });
+    expect(drillTargetOfUnit(data, '130100')).toBe('130000');
+    expect(canDrillProvince(drillTargetOfUnit(data, '130100'))).toBe(true);
+    expect(drillTargetOfUnit(data, '110000')).toBe('110000');
+    expect(canDrillProvince(drillTargetOfUnit(data, '110000'))).toBe(false);
   });
 });

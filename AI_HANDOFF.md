@@ -1,6 +1,41 @@
 # 给下一个 AI 的交接文档
 
-## 本轮（拼图模式补齐：两阶段 + 世界/省级/市级三档）
+## 本轮（拼图收口：1x 比例尺、困难档无提示、下钻边界、拼图排行榜）
+
+需求（用户一次给了 6 条）：
+
+1. **拼图 1x 的大小要和其他模式 1x 一致**。
+2. **困难档不给任何绿色（吸附）提示**，避免撞运气。
+3. **直辖市不允许下钻（所有模式都是如此）**。
+4. 拼好后显示「**拼图完成**」。
+5. **所有模式下取消世界中大洋洲的进一步下钻**。
+6. **拼图模式加排行榜**：世界 194 国与全国地级市级按**拼好的个数**排名、个数相同按时间；允许中途终止提交；其他层级中途退出不弹提交。
+
+### 两轮 grill 定稿的口径（本轮问题都在 `grill-rounds.log` 里）
+
+- **1x（Q1）**：严格一致 —— 拼图 1x = 地图 zoom=1 的比例，**与范围无关**；进入范围时默认视角就是 1x；缩放范围扩到与地图一致的 **0.8–28x**，缩放角标重新显示。实现见 `unitScale()`：`min(0.8W/spanLng, 0.8H/(spanLat·1.3333))`（0.8 = 地图 geo 的 10% 内缩）。实测：地图 8.904 px/°（中国族）/2.575（世界族），拼图同屏读到 9.024/2.609（差 1.3%，来自两块容器高度差 ~10px）。
+- **困难档（Q2）**：**完全没有任何吸附提示**（拖动中/点选幽灵预览/手里那块都不亮），规则与容差两档相同。
+- **「拼图完成」（Q3）**：只把**完成卡片标题**改成「拼图完成」（顶部状态行保持「已拼 n/n ｜ 用时」）。
+- **下钻范围（Q4）**：**京津沪渝 + 港澳台共 7 个唯一层级省级单位**都不下钻（不止 4 个直辖市），点击给一行提示；老存档停在这类范围时按全国处理。
+- **大洋洲（Q5）**：只取消**次区域层** —— 大洋洲仍可选、可点国家进入，但不再显示/进入澳新·美拉尼西亚·密克罗尼西亚·波利尼西亚；四个哨兵与数据保留（ADR-0001）。
+- **排行榜口径（Q6）**：「拼好的个数」= 顶部显示的**已拼**（1 + 吸附次数）；**已拼 ≥ 2** 才可提交；**复用「重置」→ 结算卡片**作为中途终止入口（拼完则在完成卡片上给「提交成绩」）；侧栏**所有范围都显示**，**运行中自动收起**。
+
+### 关键实现位置
+
+- `src/puzzle/projection.ts`：`unitScale(family, w, h)` + `GEO_LAYOUT_RATIO = 0.8`（1x 的唯一事实源，单测拿地图实测值 `0.11230425055928414 deg/px` 当闸门）。
+- `src/puzzle/view.ts`：`MIN_ZOOM/MAX_ZOOM = 0.8/28`、`hints()` 选项（困难档 `applyHint` 直接清空）、`resetView()` 改成"1x + 居中当前范围"、`onZoom` 回调、`zoomLevel()`、`data-area` 供验收断言面积层级。
+- `src/modes/puzzle.ts`：`getZoomDisplay()`（角标报自己的倍率）、`isPuzzleLeaderboardScope()`/`PUZZLE_MIN_SUBMIT`/`collectResult()`/`isRankedScope()`、`setTestRunning` 收起侧栏、`onUnitClick` 的两条下钻边界。
+- `src/province.ts`：`SINGLE_UNIT_PROVINCES` / `canDrillProvince` / `drillTargetOfUnit`；`src/modes/progress.ts` 的 `loadScopeProvince` 会拒掉这类范围。
+- `src/subregions.ts`：`NO_SUBREGION_DRILL = ['OC']`，`hasSubregions` 一处改动同时关掉界面的次区域行（chromeSync）、点击/输入与自由模式的下钻（mapQuizMode/analysis）、深链参数（applyScopeQuery）。
+- 排行榜：`functions/_lib/validate.ts`（`MODES` 加 `puzzle` + 拼图专用校验分支 + `PUZZLE_SCOPES` + `isBetter`）、`functions/api/leaderboard.ts` 与 `score.ts`（走"全国语义"排序与 upsert 分支）、`src/scoreRules.ts`、`src/types.ts` 的 `RoundResult.mode`、`leaderboardStore/leaderboardPanel`（`拼图模式` 标题与「已拼 X/Y ｜ 用时」行尾）、`appController`（`isLeaderboardMode`、`showSettlementCard` 支持拼图、重置分支）。
+
+### 验收
+
+`npx tsc --noEmit` 干净；`npx vitest run` **270/270**（新增：`unitScale` × 3、唯一层级省级单位 × 3、大洋洲 × 2、拼图提交资格 × 4、服务端拼图校验 × 2、`isBetter` 拼图 × 1）；`verify-puzzle.mjs` **65/65**（含 1x 与地图实测比对、困难档零提示、北京/香港不下钻、大洋洲无次区域行、结算门槛、提交门控、完成卡片按钮）；`verify-round2` 38/38、`verify-round3` 38/38。
+
+⚠ 需要**重新部署 Cloudflare Functions**，服务端白名单才会接受拼图成绩（`functions/_lib/validate.ts` 的 `MODES`）。`schema.sql` 无需迁移（`mode` 列没有 CHECK 约束），但注释已更新。
+
+## 上一轮（拼图补齐世界/省级/市级）
 
 需求（用户一次给了 7 条，前 6 条是上一轮的细节修正，第 7 条是本轮主体）：
 

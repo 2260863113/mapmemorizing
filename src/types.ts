@@ -136,11 +136,13 @@ export interface Settings {
 }
 
 export interface RoundResult {
-  mode: Extract<Mode, 'self' | 'click' | 'endless'>;
+  mode: Extract<Mode, 'self' | 'click' | 'endless' | 'puzzle'>;
   scopeProvince: string | null;
   scopeLabel: string;
   totalUnits: number;
+  /** 答对题数；**拼图模式**下是「已拼」个数（1 + 吸附次数）。 */
   correct: number;
+  /** 答错题数；拼图模式下恒为 0（拼图没有"答错"）。 */
   wrong: number;
   elapsedMs: number;
   finishedAt: number;

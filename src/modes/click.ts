@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { formatElapsedSeconds } from '../ui/format';
 import { pickWrongNext } from './wrongOrder';
 import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
-import { provinceShortName } from '../province';
+import { canDrillProvince, drillTargetOfUnit, provinceShortName } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 
 /**
@@ -81,7 +81,15 @@ export class ClickMode extends MapQuizMode {
       this.drillFromProvinceNation(adcode);
       return true;
     }
-    if (!this.started || !this.question) return false;
+    if (!this.started || !this.question) {
+      // 市级全国未开始时点地级市：renderer 会自动下钻到它的省 —— 但唯一层级的
+      // 京津沪渝/港澳台没有下级单位，必须拦在这里（用户口径：一律不下钻）
+      if (!canDrillProvince(drillTargetOfUnit(this.ctx.data, adcode))) {
+        this.ctx.toast(t('common.noDrillSingleUnit'));
+        return true;
+      }
+      return false;
+    }
     // 省级单省视图点击（scope 省，地级单位）与市级全国：按地图单位命中判断
     const clicked = this.ctx.byAdcode.get(adcode);
     if (clicked && this.scopeProvince !== null && clicked.provinceAdcode !== this.scopeProvince) return true;

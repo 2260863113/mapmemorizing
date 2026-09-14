@@ -1,5 +1,6 @@
 import type { AppData, Unit } from '../types';
 import type { ModeProgress, ProgressSegment } from './types';
+import { canDrillProvince } from '../province';
 
 export interface SavedProgressState {
   green: Set<string>;
@@ -21,7 +22,13 @@ export function loadScopeProvince(data: AppData, storageKey: string): string | n
     if (!raw) return undefined;
     const saved = JSON.parse(raw) as { scopeProvince?: unknown };
     if (saved.scopeProvince === null) return null;
-    if (typeof saved.scopeProvince === 'string' && data.provinces.some((province) => province.adcode === saved.scopeProvince)) {
+    if (
+      typeof saved.scopeProvince === 'string' &&
+      data.provinces.some((province) => province.adcode === saved.scopeProvince) &&
+      // 老存档可能停在京津沪渝/港澳台（唯一层级省级单位，现已不允许下钻）：视作全国，避免"范围说北京、
+      // 地图停在全国"的割裂状态
+      canDrillProvince(saved.scopeProvince)
+    ) {
       return saved.scopeProvince;
     }
   } catch {

@@ -47,7 +47,7 @@ export class ChromeSync {
     const puzzleBoard = isPuzzle && current?.puzzlePhase?.() === 'board';
     const isAnalysis = mode === 'free';
     const isTest = mode === 'self' || mode === 'endless' || mode === 'click';
-    const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless';
+    const showLeaderboard = mode === 'self' || mode === 'click' || mode === 'endless' || isPuzzle;
     if (!isTest) {
       showTimer(null);
       showStopwatch(null);
@@ -99,12 +99,11 @@ export class ChromeSync {
   }
 
   syncViewChrome() {
-    // 拼图盘面自成一幅可缩放画布（滚轮缩放由 PuzzleView 自己处理），
-    // 此时角标显示的是地图渲染器的缩放倍率，会误导，故盘面阶段收起。
+    // 拼图盘面自成一幅可缩放画布：它的 1x 与地图 1x 比例一致（见 projection.unitScale），
+    // 缩放范围也一致（0.8–28x），所以角标照常显示 —— 模式自己报倍率，其余模式走地图渲染器。
     const current = this.s.current();
-    const hideZoom = current?.id === 'puzzle' && current.puzzlePhase?.() === 'board';
-    $('zoom-pill').classList.toggle('hidden', hideZoom);
-    $('zoom-pill').textContent = this.s.zoom().toFixed(2) + 'x';
+    const zoom = current?.getZoomDisplay?.() ?? this.s.zoom();
+    $('zoom-pill').textContent = zoom.toFixed(2) + 'x';
   }
 
   syncSegmentedToggle(containerId: string, current: string) {

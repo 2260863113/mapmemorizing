@@ -1,5 +1,6 @@
 import type { RoundResult } from './types';
 import { CONTINENT_SCOPE_PREFIX, SUBREGION_SCOPE_PREFIX, WORLD_NATION_SCOPE } from './province';
+import { isPuzzleLeaderboardScope, PUZZLE_MIN_SUBMIT } from './modes/puzzle';
 
 /**
  * 成绩提交资格规则（单一事实源，前端结算/提交用）。
@@ -8,10 +9,21 @@ import { CONTINENT_SCOPE_PREFIX, SUBREGION_SCOPE_PREFIX, WORLD_NATION_SCOPE } fr
  * - 全国 self/click（scopeProvince=null）、「世界全国」（哨兵 `__world_nation__`）、
  *   各大洲榜（哨兵 `__continent_XX__`）与各次区域榜（哨兵 `__subregion_XXX__`）
  *   允许未答完（已答全对即可，wrong 必须为 0）；
- * - 省级（含省级全国哨兵 `__province_nation__`）必须全部答对。
+ * - 省级（含省级全国哨兵 `__province_nation__`）必须全部答对；
+ * - 拼图（puzzle）只有**世界全国与市级全国**两个范围可提交，且「已拼」至少要 ≥ 2
+ *   （口径：已拼 = 1 + 吸附次数，所以 ≥ 2 表示至少吸上过一片）。其余范围不提交。
  */
 export function canSubmitScore(result: RoundResult): boolean {
   if (result.mode === 'endless') return typeof result.coins === 'number' && result.coins > 0;
+  if (result.mode === 'puzzle') {
+    return (
+      isPuzzleLeaderboardScope(result.scopeProvince) &&
+      result.wrong === 0 &&
+      result.totalUnits >= PUZZLE_MIN_SUBMIT &&
+      result.correct >= PUZZLE_MIN_SUBMIT &&
+      result.correct <= result.totalUnits
+    );
+  }
   const scope = result.scopeProvince;
   if (
     scope === null ||

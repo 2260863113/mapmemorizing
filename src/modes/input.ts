@@ -14,6 +14,7 @@ import {
   saveSelfRequireEnter,
   type ModeSettingsPanel,
 } from '../modeSettings';
+import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 import { bfsStep } from './bfsOrder';
 import { WorldMatcher } from '../worldNames';
@@ -136,7 +137,12 @@ export class InputMode extends MapQuizMode {
       this.drillFromProvinceNation(adcode);
       return true;
     }
-    /* 市级模式未开始时单击地级市：由 renderer 自动下钻（返回非 true 即可） */
+    /* 市级模式未开始时单击地级市：由 renderer 自动下钻（返回非 true 即可）。
+       唯一层级的京津沪渝/港澳台没有下级单位，必须拦在这里，否则 renderer 会钻成"1 个单位的省"。 */
+    if (!canDrillProvince(drillTargetOfUnit(this.ctx.data, adcode))) {
+      this.ctx.toast(t('common.noDrillSingleUnit'));
+      return true;
+    }
   }
 
   // ==================== 出题：BFS 扩张 ====================

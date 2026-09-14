@@ -102,6 +102,42 @@ export function buildProvinceAdjacency(data: AppData): Map<string, string[]> {
 }
 
 /**
+ * **唯一层级省级单位**：京津沪渝（直辖市）与港澳台（特别行政区/地区）。
+ *
+ * 它们在 `units.json` 里各自只有 1 个下级单位 —— 就是它自己，所以任何模式"下钻"进去都只会得到
+ * 一个退化的"1 个单位的练习 / 1 片拼图"。用户口径（2026-09）：**这类单位一律不允许下钻**。
+ *
+ * 这里写成显式清单（而不是"数一数下级单位"）是为了让规则可读、可核对；
+ * `province.test.ts` 另有一条断言：清单与真实数据里"下级单位 ≤ 1 的省级单位"完全一致，
+ * 数据变了会立刻报错。
+ */
+export const SINGLE_UNIT_PROVINCES: readonly string[] = [
+  '110000', // 北京
+  '120000', // 天津
+  '310000', // 上海
+  '500000', // 重庆
+  '810000', // 香港
+  '820000', // 澳门
+  '710000', // 台湾
+];
+
+/** 该省级单位是否允许下钻（唯一层级的京津沪渝/港澳台不允许）。 */
+export function canDrillProvince(adcode: string | null | undefined): boolean {
+  return !!adcode && !SINGLE_UNIT_PROVINCES.includes(adcode);
+}
+
+/**
+ * 点某个地图单位时**会下钻到的省级目标**：地级单位 → 它所属的省 adcode；省级单位 → 它自己。
+ *
+ * 市级视图里点一下地级市，renderer 会自动钻到它的省；点京津沪渝/港澳台这类单位的代表面时，
+ * 钻的目标就是它自己 —— 这正是要被 `canDrillProvince` 拦下的情形。
+ */
+export function drillTargetOfUnit(data: AppData, adcode: string): string {
+  const unit = data.units.find((u) => u.adcode === adcode);
+  return unit ? unit.provinceAdcode : adcode;
+}
+
+/**
  * 省级“虚拟地级单位”：把 34 个省级单元建模成 Unit，让 click/self 的出题循环、
  * 顺序/BFS、错题、进度存取完全复用现有的 Unit 逻辑。
  * adcode=省 adcode；neighbors=省-省邻接（BFS 扩张用）。

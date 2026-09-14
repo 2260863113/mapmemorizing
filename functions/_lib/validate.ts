@@ -9,7 +9,7 @@ export interface PasswordHashPayload {
   iterations: number;
 }
 
-export type ScoreMode = 'self' | 'click' | 'endless';
+export type ScoreMode = 'self' | 'click' | 'endless' | 'puzzle';
 
 /** 省级全国哨兵：区别于市级全国（null/''）与某省地级榜（6 位 adcode）。与前端 province.ts 保持一致。 */
 export const PROVINCE_NATION_SCOPE = '__province_nation__';
@@ -80,7 +80,17 @@ export function normalizePasswordHash(value: unknown): PasswordHashPayload {
   return { algorithm: row.algorithm, salt: row.salt, hash: row.hash, iterations };
 }
 
-const MODES = new Set(['self', 'click', 'endless']);
+const MODES = new Set(['self', 'click', 'endless', 'puzzle']);
+
+/**
+ * 拼图榜只接受这两个范围（与前端 `isPuzzleLeaderboardScope` 一致）：
+ * 市级全国（''）与 世界全国（`__world_nation__`）。
+ * 省级全国 / 大洲 / 次区域 / 单省（6 位 adcode）的拼图成绩一律拒绝 —— 那些范围界面不提供提交。
+ */
+const PUZZLE_SCOPES = new Set(['', WORLD_NATION_SCOPE]);
+
+/** 拼图成绩的下限：至少吸上过一片（前端「已拼」口径 = 1 + 吸附次数，故 ≥ 2）。 */
+export const PUZZLE_MIN_SUBMIT = 2;
 
 export function validMode(mode: unknown): mode is ScoreMode {
   return typeof mode === 'string' && MODES.has(mode);
@@ -156,6 +166,16 @@ export function validateScore(body: unknown): ScorePayload {
     payload.level = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
     return payload;
   }
+  // 拼图：只有市级全国与世界全国两个范围，且「已拼」(correct) ≥ 2、不得超过总片数；没有答错。
+  if (payload.mode === 'puzzle') {
+    if (!PUZZLE_SCOPES.has(payload.scopeProvince ?? '')) throw new ApiError(400, 'invalid_scope', '该范围不支持拼图成绩');
+    if (payload.totalUnits < PUZZLE_MIN_SUBMIT) throw new ApiError(400, 'invalid_score', '无效的总片数');
+    if (payload.wrong !== 0) throw new ApiError(400, 'invalid_score', '拼图成绩不含答错数');
+    if (payload.correct < PUZZLE_MIN_SUBMIT || payload.correct > payload.totalUnits) {
+      throw new ApiError(400, 'invalid_score', '至少吸上拼成一片才能提交成绩');
+    }
+    return payload;
+  }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');
   if (payload.correct > payload.totalUnits) throw new ApiError(400, 'invalid_score', '无效的答对数');
   if (payload.scopeProvince === null || isWorldScope(payload.scopeProvince)) {
@@ -181,7 +201,8 @@ export function isBetter(next: ScorePayload, existing: { coins: number | null; l
     const existingCoins = existing.coins ?? 0;
     return nextCoins > existingCoins || (nextCoins === existingCoins && (next.level ?? 1) > (existing.level ?? 1));
   }
-  if (isNationScope(next.scopeProvince)) {
+  // 拼图：已拼个数优先、同数比用时（correct 列存已拼个数）
+  if (next.mode === 'puzzle' || isNationScope(next.scopeProvince)) {
     return next.correct > existing.correct || (next.correct === existing.correct && next.elapsedMs < existing.elapsed_ms);
   }
   return next.elapsedMs < existing.elapsed_ms;

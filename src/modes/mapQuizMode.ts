@@ -9,6 +9,7 @@ import { t } from '../i18n';
 import type { ModeSettingsPanel } from '../modeSettings';
 import {
   buildProvinceAdjacency,
+  canDrillProvince,
   continentScope,
   provinceByAdcode,
   provinceShortName,
@@ -184,11 +185,12 @@ export abstract class MapQuizMode extends BaseMode {
 
   /**
    * 切换世界粒度下的次区域范围（null = 全洲）。
-   * 仅当该大洲确实提供次区域（分区数 > 1）时生效；跨洲或未选洲时忽略。
+   * 仅当该大洲确实提供次区域（`hasSubregions`：分区数 > 1 且不在 `NO_SUBREGION_DRILL` 里）时生效；
+   * 跨洲、未选洲或大洋洲这类不再细分的大洲一律忽略。
    */
   setWorldSubregion(s: SubregionId | null) {
     if (this.granularity !== 'world' || this.started) return;
-    if (!this.worldContinent) return;
+    if (!this.worldContinent || !hasSubregions(this.ctx.data, this.worldContinent)) return;
     const target = s && subregionOfContinent(this.ctx.data, s) === this.worldContinent ? s : null;
     if (this.worldSubregion === target) return;
     this.worldSubregion = target;
@@ -220,7 +222,8 @@ export abstract class MapQuizMode extends BaseMode {
     }
     if (this.granularity === 'world' && q.continent) {
       this.worldContinent = q.continent;
-      this.worldSubregion = q.subregion;
+      // 深链可能带来已关闭的次区域（如大洋洲）：这类大洲不再细分，忽略参数避免"有次区域视图却没有次区域行"
+      this.worldSubregion = hasSubregions(this.ctx.data, q.continent) ? q.subregion : null;
     }
   }
 
@@ -528,8 +531,17 @@ export abstract class MapQuizMode extends BaseMode {
     this.enter();
   }
 
-  /** 省级全国未开始点省：下钻该省并进入其地级练习（粒度保持省级，返回全国后恢复省级全国）。 */
+  /**
+   * 省级全国未开始点省：下钻该省并进入其地级练习（粒度保持省级，返回全国后恢复省级全国）。
+   *
+   * **唯一层级的省级单位（京津沪渝/港澳台）不下钻**：它们各自只有一个下级单位（就是它自己），
+   * 钻进去只是"1 个单位的练习"（用户口径 2026-09 + `canDrillProvince`）。
+   */
   protected drillFromProvinceNation(provinceAdcode: string) {
+    if (!canDrillProvince(provinceAdcode)) {
+      this.ctx.toast(t('common.noDrillSingleUnit'));
+      return;
+    }
     const p = provinceByAdcode(this.ctx.data, provinceAdcode);
     if (!p) return;
     this.scopeProvince = provinceAdcode;

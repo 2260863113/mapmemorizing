@@ -13,6 +13,7 @@ import {
   spanLat,
   spanLng,
   svgPathOf,
+  unitScale,
   unproject,
 } from './projection';
 
@@ -84,5 +85,36 @@ describe('拼图投影', () => {
 
     expect(svgPathOf([], SCALE)).toBe('');
     expect(svgPathOf([[[[100, 20], [110, 20]]]], SCALE)).toBe(''); // 少于三个点不成面
+  });
+});
+
+/**
+ * 「拼图 1x = 地图 1x」的硬闸门（用户口径 2026-09）。
+ *
+ * 期望值不是推导出来的常数，而是**地图页实测**的每像素度数：1440×900 窗口下点击模式全国视图
+ * 的 `viewportWindow().perPxX = 0.11230425055928414`（度/像素）⇒ 8.904 px/°。公式一旦漂移，
+ * 拼图 1x 就会和地图 1x 不一样大，这里立刻失败。
+ */
+describe('unitScale（拼图 1x = 地图 1x）', () => {
+  const MAP_CANVAS = { width: 1410, height: 745 };
+  const MEASURED_DEG_PER_PX = 0.11230425055928414;
+
+  it('中国族在 1410×745 画布上与地图实测一致（8.904 px/°）', () => {
+    const scale = unitScale('china', MAP_CANVAS.width, MAP_CANVAS.height);
+    expect(scale).toBeCloseTo(1 / MEASURED_DEG_PER_PX, 2);
+    // 也等于「把 bbox 装进容器 80% 高度」的解析解
+    expect(scale).toBeCloseTo((0.8 * MAP_CANVAS.height) / (spanLat('china') * PUZZLE_LAT_PER_LNG), 6);
+  });
+
+  it('世界族按同一规则（高度受限时 = 0.8H /（纬度跨度 × 1/0.75））', () => {
+    const scale = unitScale('world', MAP_CANVAS.width, MAP_CANVAS.height);
+    expect(scale).toBeCloseTo((0.8 * MAP_CANVAS.height) / (spanLat('world') * PUZZLE_LAT_PER_LNG), 6);
+    expect(scale).toBeLessThan(unitScale('china', MAP_CANVAS.width, MAP_CANVAS.height));
+  });
+
+  it('又高又窄的容器改成宽度受限（两个方向取更紧的）', () => {
+    const narrow = unitScale('china', 400, 2000);
+    expect(narrow).toBeCloseTo((0.8 * 400) / spanLng('china'), 6);
+    expect(narrow).toBeLessThan(unitScale('china', 1410, 2000));
   });
 });

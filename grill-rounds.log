@@ -679,3 +679,13 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 顺带修掉四个真 bug：① **次区域哨兵不含大洲** → 选东亚后洲行掉高亮、`setWorldMode(true,null,'EAS')` 被当成"没有大洲"而忽略次区域（地图退回全世界、点空白也返回不了），改为用 `subregions` 元数据反查大洲；② **邻接图不连通** → 兜底只给孤立片一条边，世界档实测分成 6 块（澳洲—巴新、新西兰、马达加斯加…）**永远拼不完**，`buildPuzzleAdjacency` 加连通性修补（跨块最小间距逐次搭桥），单测对 9 个范围断言连通；③ **装饰面把答题池洗成 372** → `data.ts` 的 `isPureDecoration()` 只认南海诸岛，把数据管线标的 32 个县级/兵团装饰面洗成可答题单位（会出"仙桃市"、进度 372 格），改为数据标注优先 + 新增 `src/data.test.ts` 守 33 装饰/340 答题（**这一条同时影响点击/输入/无尽模式的出题池**，是修正到文档口径）；④ **量尺寸必须在显示之后** → `#puzzle` 在选范围阶段 `display:none`，宽度 0 时算出的比例与居中会把碎片摆到视口外，`showBoard()` 固定"先切类名 → 再量尺寸/定视角"。
 - 验收：tsc 0；vitest 255/255（拼图 32 例）；verify-puzzle 47/47（真实鼠标拖拽 + 真实点击下钻/空白返回，三个范围各自自动解获胜）；verify-round2 38/38；verify-round3 38/38。
 - 文档：DESIGN §17 重写（新增 17.1 两阶段与范围口径、17.4 装饰面修正）、CONTEXT（拼图模式/拼图范围/拼图邻接三层/拼图难度，加 FAQ 与 flagged ambiguity）、README（模式表 + 操作口径 + 装饰面口径 + 验收项数）、AI_HANDOFF。
+
+================================================================
+2026-09-14 01:00  拼图收口（1x 比例尺 / 困难档无提示 / 下钻边界 / 拼图排行榜）
+- 需求 6 条：拼图 1x 与其它模式 1x 一致；困难档不给任何绿色吸附提示；直辖市不允许下钻（所有模式）；拼好后显示「拼图完成」；所有模式取消大洋洲的进一步下钻；拼图加排行榜（世界 194 国与全国地级市级按"拼好的个数"排名、同数比用时，允许中途终止提交，其他层级不弹提交）。
+- 两轮 grill 定稿：① 1x **严格**等于地图 zoom=1（中国族 8.904 px/°、世界族 2.575），进入范围即 1x，缩放范围扩到与地图一致的 0.8–28x 并恢复缩放角标；② 困难档**完全无提示**；③「拼图完成」只改完成卡片标题；④ 不下钻的是**京津沪渝 + 港澳台共 7 个**唯一层级省级单位（点击给提示，老存档按全国）；⑤ 大洋洲只取消**次区域层**（仍可选、可点国家进入）；⑥ 已拼口径 = 顶部显示值，**已拼 ≥ 2** 才可提交，中途终止复用「重置」→ 结算卡片，完成后在完成卡片上给提交，侧栏全范围显示但运行中收起。
+- 主要改动：`src/puzzle/projection.ts` 新增 `unitScale()`（1x 唯一事实源）；`view.ts` 缩放范围 0.8–28x、`hints()` 开关、`resetView` 改 1x 居中、`onZoom`/`zoomLevel`、碎片包装写 `data-area`；`src/modes/puzzle.ts` 的 `getZoomDisplay`/`isPuzzleLeaderboardScope`/`PUZZLE_MIN_SUBMIT`/`collectResult`/`isRankedScope` + 两条下钻边界；`src/province.ts` 新增 `SINGLE_UNIT_PROVINCES`/`canDrillProvince`/`drillTargetOfUnit`（点击/输入/自由/拼图四处 + 渲染器兜底下钻 + 旧存档迁移）；`src/subregions.ts` 新增 `NO_SUBREGION_DRILL = ['OC']`（一处改动同时关掉次区域行、三种模式的下钻与深链参数）；排行榜落地到 `functions/_lib/validate.ts`（MODES + 拼图校验 + isBetter）、`functions/api/{leaderboard,score}.ts`、`src/scoreRules.ts`、`leaderboard{Store,Panel}`、`appController`、`messages.json`、`schema.sql` 注释。
+- 验收：tsc 0；vitest **270/270**；verify-puzzle **65/65**（新增 1x 与地图实测比对、困难档零提示、北京/香港不下钻、大洋洲无次区域行、结算门槛与提交门控、完成卡片带提交按钮）；verify-round2 38/38；verify-round3 38/38；截图 `docs/shots/puzzle-*`（新增 puzzle-11-settlement）。
+- ⚠ 拼图 1x 与地图 1x 实测差 1.3%（9.024 vs 8.904）：两块容器高度差约 10px —— 选范围阶段顶部还挂着开始卡片，进入盘面后 `#top-hint` 收起、画布变高。口径上按"同一窗口下同一单位一样大"验收（<2%）。
+- ⚠ 需**重新部署 Cloudflare Functions**，服务端白名单（`MODES` 加 `puzzle`）才会接受拼图成绩；`schema.sql` 无需迁移。
+- ⚠ 大洋洲四个次区域榜（ANZ/MEL/MIC/POL）的既有成绩仍在 D1 里，但界面不再可达（哨兵不可改名，见 ADR-0001）。

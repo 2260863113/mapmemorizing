@@ -137,6 +137,27 @@ describe('validateScore', () => {
     expect(() => validateScore({ ...base, mode: 'endless', totalUnits: 0, correct: 0, coins: 0 })).toThrow(ApiError);
     expect(validateScore({ ...base, mode: 'endless', totalUnits: 0, correct: 0, coins: 5, level: 3 })).toMatchObject({ coins: 5, level: 3 });
   });
+
+  /**
+   * 拼图榜（2026-09）：只有市级全国（''）与世界全国（哨兵）两个范围，
+   * `correct` 存的是「已拼」个数（1 + 吸附次数），故至少 2；不含答错数。
+   */
+  it('puzzle: 只接受市级全国与世界全国两个范围', () => {
+    expect(validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 340, correct: 2 })).toMatchObject({ scopeProvince: null, correct: 2 });
+    expect(
+      validateScore({ ...base, mode: 'puzzle', scopeProvince: '__world_nation__', totalUnits: 194, correct: 194 }),
+    ).toMatchObject({ scopeProvince: '__world_nation__', correct: 194 });
+    for (const scope of ['__province_nation__', '__continent_AS__', '__subregion_EAS__', '130000']) {
+      expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: scope, totalUnits: 340, correct: 9 }), scope).toThrow(ApiError);
+    }
+  });
+
+  it('puzzle: 已拼至少 2 且不超过总片数，wrong 必须为 0', () => {
+    expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 340, correct: 1 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 34, correct: 35 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 340, correct: 5, wrong: 1 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 1, correct: 1 })).toThrow(ApiError);
+  });
 });
 
 describe('isBetter', () => {
@@ -163,5 +184,12 @@ describe('isBetter', () => {
   it('province: faster wins', () => {
     expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 5, elapsedMs: 999 } as never, existing)).toBe(true);
     expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
+  });
+
+  it('puzzle: 已拼个数优先，同数比用时', () => {
+    expect(isBetter({ mode: 'puzzle', scopeProvince: '', correct: 6, elapsedMs: 99999 } as never, existing)).toBe(true);
+    expect(isBetter({ mode: 'puzzle', scopeProvince: '', correct: 5, elapsedMs: 999 } as never, existing)).toBe(true);
+    expect(isBetter({ mode: 'puzzle', scopeProvince: '', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
+    expect(isBetter({ mode: 'puzzle', scopeProvince: '__world_nation__', correct: 4, elapsedMs: 1 } as never, existing)).toBe(false);
   });
 });

@@ -42,6 +42,33 @@ describe('subregions helpers', () => {
     expect(hasSubregions(DATA, null)).toBe(false);
   });
 
+  it('大洋洲一律不给次区域下钻（用户口径），即使它有 4 个分区', () => {
+    const ocData = makeAppData({
+      subregions: [
+        { id: 'ANZ', name: '澳新', continent: 'OC', count: 2 },
+        { id: 'MEL', name: '美拉尼西亚', continent: 'OC', count: 4 },
+        { id: 'MIC', name: '密克罗尼西亚', continent: 'OC', count: 5 },
+        { id: 'POL', name: '波利尼西亚', continent: 'OC', count: 3 },
+      ],
+      countries: [country('AUS', 'OC'), country('NZL', 'OC'), country('FJI', 'OC')],
+      isoSubregion: { AUS: 'ANZ', NZL: 'ANZ', FJI: 'MEL' },
+    });
+    expect(subregionsOf(ocData, 'OC')).toHaveLength(4); // 数据与哨兵都保留（ADR-0001）
+    expect(hasSubregions(ocData, 'OC')).toBe(false); // 但界面上不再细分
+  });
+
+  it('真实数据：大洋洲有 4 个分区但不再提供下钻，其他大洲不受影响', () => {
+    const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public', 'data', 'subregions.json'), 'utf8')) as {
+      subregions: SubregionMeta[];
+      byIso: AppData['isoSubregion'];
+    };
+    const real = makeAppData({ subregions: raw.subregions, isoSubregion: raw.byIso });
+    expect(subregionsOf(real, 'OC').map((s) => s.id)).toEqual(['ANZ', 'MEL', 'MIC', 'POL']);
+    expect(hasSubregions(real, 'OC')).toBe(false);
+    for (const c of ['AS', 'EU', 'AF', 'NA'] as const) expect(hasSubregions(real, c), c).toBe(true);
+    expect(hasSubregions(real, 'SA')).toBe(false); // 南美只有 1 个分区
+  });
+
   it('maps iso → subregion and subregion → continent', () => {
     expect(subregionOfIso(DATA, 'CHN')).toBe('EAS');
     expect(subregionOfIso(DATA, 'BRA')).toBe('SAM');

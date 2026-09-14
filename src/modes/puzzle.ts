@@ -17,13 +17,14 @@
  * 不提交排行榜（服务端白名单仍是 self/click/endless）；难度（简单/困难）只影响是否显示名称，
  * 运行中收起且不允许切换。
  */
-import type { AppData, Continent, Mode, SubregionId } from '../types';
+import type { AppData, Continent, Mode, RoundResult, SubregionId } from '../types';
 import { CONTINENTS } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t } from '../i18n';
 import {
   buildProvinceAdjacency,
+  canDrillProvince,
   continentFromScope,
   continentScope,
   provinceShortName,
@@ -33,12 +34,13 @@ import {
   WORLD_NATION_SCOPE,
   type Granularity,
 } from '../province';
+import { hasSubregions } from '../subregions';
 import { MAP_THEMES } from '../map/theme';
 import { buildPieces, countScopePieces, familyOf, type PuzzlePieceDef, type PuzzleScope } from '../puzzle/pieces';
 import { buildPuzzleAdjacency } from '../puzzle/adjacency';
 import { PuzzleState, SNAP_TOLERANCE_PX, type DropResult } from '../puzzle/state';
 import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
-import { project, spanLng, type PuzzleFamily } from '../puzzle/projection';
+import { project, unitScale, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
 import { puzzleStatus, setHint, showSummary, toast } from '../ui/dom';
 
@@ -48,11 +50,25 @@ export type PuzzleDifficulty = 'easy' | 'hard';
 /** 拼图阶段：scope = 选范围（显示地图）；board = 拼图盘面（隐藏地图）。 */
 export type PuzzlePhase = 'scope' | 'board';
 
-/** 默认视角：范围 bbox 宽 ≈ 视口宽 × 1.15（略大于视口，便于把碎片推到四周）。 */
-const DEFAULT_WIDTH_RATIO = 1.15;
-
 /** 计时刷新间隔（毫秒）。 */
 const TICK_MS = 200;
+
+/**
+ * 拼图排行榜：**只有这两个范围可提交**（用户口径）——
+ * 世界全国（194 国）与市级全国（340 个地级单位）。其余范围（省级全国、大洲、次区域、下钻某省）
+ * 中途退出不弹结算、也不进榜。
+ */
+export function isPuzzleLeaderboardScope(scope: string | null): boolean {
+  return scope === null || scope === WORLD_NATION_SCOPE;
+}
+
+/**
+ * 提交门槛：**至少吸附过一片**才算成绩（用户口径）。
+ *
+ * 「已拼」起始就是 1（口径：1 + 吸附次数），所以「已拼 ≥ 2」= 至少发生过一次吸附；
+ * 否则开局立刻退出也能提交一条「已拼 1/340」的垃圾成绩。
+ */
+export const PUZZLE_MIN_SUBMIT = 2;
 
 /** 毫秒 → mm:ss。 */
 export function formatClock(ms: number): string {
@@ -80,8 +96,6 @@ export class PuzzleMode extends BaseMode {
    * 市级档 = null（全国）或省 adcode（下钻该省的地级市）。
    */
   private scope: string | null = PROVINCE_NATION_SCOPE;
-  /** 当前范围碎片集合的经度跨度（度）：默认比例按它算，让每个范围都铺满视口。 */
-  private scopeSpanLng = 0;
 
   /** 一局进行中（开始 → 获胜/重置）。 */
   private started = false;
@@ -224,7 +238,12 @@ export class PuzzleMode extends BaseMode {
 
   // ==================== 地图下钻（选范围阶段） ====================
 
-  /** 点地图上的单位 = 下钻（世界：国家→大洲→次区域；省级/市级：省→该省地级市）。 */
+  /**
+   * 点地图上的单位 = 下钻（世界：国家→大洲→次区域；省级/市级：省→该省地级市）。
+   *
+   * 两条边界（用户口径）：① 唯一层级的京津沪渝/港澳台不下钻（只有 1 片，没有意义）；
+   * ② 大洋洲不再细分次区域（`hasSubregions` 已按 `NO_SUBREGION_DRILL` 关闭）。
+   */
   onUnitClick(adcode: string): boolean {
     if (this.boardPhase()) return false;
     if (this.granularity === 'world') {
@@ -235,6 +254,7 @@ export class PuzzleMode extends BaseMode {
         this.enter();
         return true;
       }
+      if (!hasSubregions(this.ctx.data, country.continent)) return true; // 该洲不细分，点击不再下钻
       const sr = this.ctx.data.isoSubregion[adcode];
       if (sr && this.getWorldSubregion() !== sr) {
         this.scope = subregionScope(sr);
@@ -245,6 +265,10 @@ export class PuzzleMode extends BaseMode {
     }
     const province = this.ctx.data.provinces.find((p) => p.adcode === adcode);
     if (!province) return false;
+    if (!canDrillProvince(adcode)) {
+      this.ctx.toast(t('common.noDrillSingleUnit'));
+      return true;
+    }
     this.granularity = 'city';
     this.persistGranularity();
     this.scope = adcode;
@@ -297,7 +321,6 @@ export class PuzzleMode extends BaseMode {
       this.teardownView();
       this.state = null;
       this.pieces = [];
-      this.scopeSpanLng = 0;
       this.renderScopeMap();
       this.showStartCard();
       puzzleStatus('');
@@ -388,7 +411,6 @@ export class PuzzleMode extends BaseMode {
     this.elapsedMs = 0;
     this.pieces = [];
     this.state = null;
-    this.scopeSpanLng = 0;
     this.ensureState();
     if (!this.state) {
       // 该范围没有可拼碎片（理论上不会发生）：退回选范围，别留在空白盘面上
@@ -400,6 +422,7 @@ export class PuzzleMode extends BaseMode {
     setHint('');
     this.startTimer();
     this.renderStatus();
+    this.ctx.setTestRunning?.(true); // 盘面运行时收起排行榜侧栏（与测验一致）
     this.ctx.syncChrome?.();
   }
 
@@ -413,6 +436,7 @@ export class PuzzleMode extends BaseMode {
     this.showBoard(true);
     this.startTimer();
     this.renderStatus();
+    this.ctx.setTestRunning?.(true);
     this.ctx.syncChrome?.();
   }
 
@@ -423,6 +447,7 @@ export class PuzzleMode extends BaseMode {
     this.paused = false;
     this.elapsedMs = 0;
     this.clearTick();
+    this.ctx.setTestRunning?.(false); // 回到开始卡片：展开排行榜侧栏
     this.enter(); // 选范围分支会拆掉画布、丢弃 state、渲染地图并出开始卡片
   }
 
@@ -432,26 +457,56 @@ export class PuzzleMode extends BaseMode {
     this.finish();
   }
 
-  /** 获胜：补三沙（仅省级档有）→ 缩到整图 → 弹完成卡片。 */
+  /** 获胜：补三沙（仅省级档有）→ 缩到整图 → 弹完成卡片（可提交的范围带「提交成绩」）。 */
   private finish() {
     this.finished = true;
     this.started = false;
     this.commitElapsed();
     this.clearTick();
+    this.ctx.setTestRunning?.(false); // 结束后展开排行榜侧栏
     this.view?.revealSeaIslets();
     // 补完三沙后取景要连带它们一起装进来（否则「自动补上」看不见），故允许比用户可操作的最小倍率更小
     window.setTimeout(() => this.view?.fitAll(56, true, { includeSeaIslets: true, minZoom: 0.3 }), 260);
     window.setTimeout(() => {
-      showSummary(
+      this.ctx.showSummary(
         `<div class="puzzle-done-title">${t('puzzle.doneTitle')}</div>` +
           `<div class="sum-stats">${t('puzzle.doneTime', { time: formatClock(this.elapsedMs) })}</div>`,
         () => this.restartRun(),
-        undefined,
+        this.collectResult() ?? undefined, // 可提交范围：完成卡片上直接给「提交成绩」
         t('puzzle.again'),
       );
     }, 900);
     this.renderStatus();
     this.ctx.syncChrome?.(); // 结束后难度按钮重新出现（运行中收起）
+  }
+
+  /**
+   * 本局成绩（结算/提交用）。
+   *
+   * 口径：`correct` = 顶部显示的**已拼**个数（1 + 吸附次数），`totalUnits` = 范围总片数，
+   * `wrong` 恒为 0（拼图没有"答错"）。**只有可提交范围、且已拼 ≥ 2 时**才返回成绩。
+   */
+  collectResult(): RoundResult | null {
+    const state = this.state;
+    if (!state || !this.boardPhase()) return null;
+    if (!isPuzzleLeaderboardScope(this.scope)) return null;
+    const placed = state.assembledCount();
+    if (placed < PUZZLE_MIN_SUBMIT) return null;
+    return {
+      mode: 'puzzle',
+      scopeProvince: this.scope,
+      scopeLabel: this.scopeLabel(),
+      totalUnits: state.totalCount(),
+      correct: placed,
+      wrong: 0,
+      elapsedMs: Math.round(this.elapsedMs),
+      finishedAt: Date.now(),
+    };
+  }
+
+  /** 当前是否处于「可提交排行榜」的范围（外壳据此决定「重置」要不要弹结算卡片）。 */
+  isRankedScope(): boolean {
+    return isPuzzleLeaderboardScope(this.scope);
   }
 
   pause() {
@@ -517,11 +572,23 @@ export class PuzzleMode extends BaseMode {
     return document.getElementById('puzzle');
   }
 
+  /**
+   * 拼图的 **1x 基准比例**：与地图页 zoom=1 **完全一致**（用户口径）。
+   *
+   * 地图 zoom=1 是把固定投影 bbox 装进容器的 80% 区域（见 `unitScale`），所以这里只依赖
+   * **投影族 + 画布尺寸**，与当前范围大小无关 —— 于是拼图 1x 下的一片的像素尺寸，
+   * 与地图 1x 下同一单位的尺寸相同；下钻小范围时 1x 会很小，靠滚轮放大（上限与地图一致的 28x）。
+   */
   private baseScale(): number {
     const rect = this.puzzleEl()?.getBoundingClientRect();
     const width = rect && rect.width > 0 ? rect.width : 1280;
-    const span = this.scopeSpanLng > 0 ? this.scopeSpanLng : spanLng(this.family());
-    return (width * DEFAULT_WIDTH_RATIO) / span;
+    const height = rect && rect.height > 0 ? rect.height : 720;
+    return unitScale(this.family(), width, height);
+  }
+
+  /** 缩放角标（外壳用）：拼图阶段返回拼图自身倍率，其余时刻返回 null 走地图渲染器的值。 */
+  getZoomDisplay(): number | null {
+    return this.boardPhase() ? this.view?.zoomLevel() ?? 1 : null;
   }
 
   private themeColors(): PuzzleThemeColors {
@@ -548,9 +615,6 @@ export class PuzzleMode extends BaseMode {
     const adjacency = buildPuzzleAdjacency(pieces, (adcode) => this.neighboursOf(adcode, scope));
     this.state = new PuzzleState(pieces, adjacency, SNAP_TOLERANCE_PX);
     this.state.start();
-    const minLng = Math.min(...pieces.map((p) => p.bbox[0]));
-    const maxLng = Math.max(...pieces.map((p) => p.bbox[2]));
-    this.scopeSpanLng = Math.max(maxLng - minLng, 1e-6);
   }
 
   /** 某片的陆地邻居（按范围取不同来源：国家 / 省聚合 / 地级单位）。 */
@@ -597,8 +661,10 @@ export class PuzzleMode extends BaseMode {
         baseScale: () => this.baseScale(),
         family: () => this.family(),
         labels: () => this.difficulty === 'easy',
+        hints: () => this.difficulty === 'easy',
         theme: () => this.themeColors(),
         onDrop: (result) => this.onDrop(result),
+        onZoom: () => this.ctx.syncChrome?.(), // 缩放角标跟着刷新
         toast,
       });
       this.view.mount();
