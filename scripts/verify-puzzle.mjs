@@ -345,14 +345,17 @@ try {
   check('北京与河北的真值位置都在拼图坐标系内（探针可用）', !!truePosA && !!truePosB && truePosA.scale > 5, { a: truePosA, b: truePosB });
 
   await ev(`window.__probe.puzzlePlaceAt('110000', ${truePosA.x}, ${truePosA.y})`);
-  const nearDrop = await json(`window.__probe.puzzlePlaceAt('130000', ${truePosB.x + 9}, ${truePosB.y + 8})`);
+  // 偏移差 (5,4) → 6.4px：在**简单档 10px** 容差内（困难档 5px 时另有专门断言，见下面容差小节）
+  const nearDrop = await json(`window.__probe.puzzlePlaceAt('130000', ${truePosB.x + 5}, ${truePosB.y + 4})`);
   const afterSnap = await puzzle();
   const bjGroup = afterSnap.groups.find((g) => g.pieces.includes('110000'));
   check('相邻两片偏移差在容差内 → 精确对齐合成一组',
     nearDrop.mergedGroups === 1 && afterSnap.groups.some((g) => g.pieces.length === 2 && g.pieces.includes('110000') && g.pieces.includes('130000')),
     { nearDrop, groups: afterSnap.groups.map((g) => g.pieces.length) });
-  check('成组后两片共享同一偏移（零缝隙对齐到被拖动的一方）',
-    !!bjGroup && Math.abs(bjGroup.dx - 9) <= 2 && Math.abs(bjGroup.dy - 8) <= 2 && bjGroup.pieces.length === 2, { group: bjGroup });
+  // 用户口径（2026-09-14）：**被拖拽的那片主动吸附过去**，目标组原地不动。
+  // 这里先摆好北京（真值，偏移 0），再把河北放在真值 +9,+8 → 松手后河北跳到北京的偏差上 ⇒ 组偏移 = 0。
+  check('松手后是**拖拽方**吸附过去（河北跳到北京的偏移 0，而不是把北京拽到 +9,+8）',
+    !!bjGroup && Math.abs(bjGroup.dx) <= 2 && Math.abs(bjGroup.dy) <= 2 && bjGroup.pieces.length === 2, { group: bjGroup });
   const statusAfterSnap = await ev(`document.getElementById('puzzle-status').textContent`);
   check('发生一次吸附后「已拼」从 1 变成 2（用户口径：只看吸附次数）', /已拼 2\/34/.test(statusAfterSnap), statusAfterSnap);
 
@@ -363,27 +366,35 @@ try {
   check('台湾与北京不相邻 → 即使放在一起也不吸合（仍是独立单片组）',
     !!twGroup && twGroup.pieces.length === 1 && !twGroup.pieces.includes('110000'), afterFar.groups.map((g) => g.pieces));
 
-  // ==================== 面积层级：小的压在大的之上 ====================
-  /** 画布上的 DOM 顺序 = 绘制顺序（后面的在上面），断言面积从大到小。 */
+  // ==================== 面积层级：**先按组总面积**、组内再按各片面积（小的压在大的之上） ====================
+  /** 画布上的 DOM 顺序 = 绘制顺序（后面的在上面）。两级排序：组总面积降序 → 片自身面积降序。 */
   const order = await json(`(function(){
     var wraps = document.querySelectorAll('#puzzle g.puzzle-piece-wrap');
-    var areas = Array.prototype.map.call(wraps, function(w){ return Number(w.dataset.area); });
-    var sorted = true;
-    for (var i = 1; i < areas.length; i++) if (areas[i] > areas[i - 1] + 1e-9) sorted = false;
-    var idx = function(a){ return Array.prototype.findIndex.call(wraps, function(w){ return w.dataset.adcode === a; }); };
+    var rows = Array.prototype.map.call(wraps, function(w){
+      return { area: Number(w.dataset.area), groupArea: Number(w.dataset.groupArea), group: w.dataset.group, adcode: w.dataset.adcode };
+    });
+    var byGroup = true, byPiece = true;
+    for (var i = 1; i < rows.length; i++) {
+      var prev = rows[i - 1], cur = rows[i];
+      if (cur.groupArea > prev.groupArea + 1e-9) byGroup = false;
+      else if (Math.abs(cur.groupArea - prev.groupArea) <= 1e-9 && cur.group === prev.group && cur.area > prev.area + 1e-9) byPiece = false;
+    }
+    var idx = function(a){ return rows.findIndex(function(r){ return r.adcode === a; }); };
     return {
-      count: areas.length,
-      areas: areas.slice(0, 6),
-      sorted: sorted,
+      count: rows.length,
+      rows: rows.slice(0, 8),
+      byGroup: byGroup,
+      byPieceWithinGroup: byPiece,
       // 北京（面积小）必须排在河北（面积大）之后 —— 后画 = 压在河北的环里
       bjIndex: idx('110000'),
       hbIndex: idx('130000'),
     };
   })()`);
-  check('碎片的上下覆盖按面积排：小的压在大的之上（DOM 里面积从大到小）',
-    order.count >= 3 && order.sorted === true, order);
+  check('上下覆盖按**组总面积**从大到小排（很多小片拼成的大块要沉到中块之下）',
+    order.count >= 3 && order.byGroup === true, order);
+  check('同一组内仍按各片自身面积从大到小排', order.byPieceWithinGroup === true, order.rows);
   check('北京（面积小）画在河北（面积大）之后 → 压在河北的环里',
-    order.bjIndex > order.hbIndex && order.hbIndex >= 0, order);
+    order.bjIndex > order.hbIndex && order.hbIndex >= 0, { bjIndex: order.bjIndex, hbIndex: order.hbIndex });
   await shot('puzzle-3-snapped.png');
 
   // ==================== 拖动中「可吸附」绿色提示（两种难度都要有） ====================
@@ -404,11 +415,18 @@ try {
     var lit = document.querySelectorAll('#puzzle g.puzzle-piece-wrap.can-snap');
     var self = document.querySelectorAll('#puzzle g.puzzle-piece-wrap.can-snap-self');
     var target = lit.length ? lit[0].querySelector('path') : null;
+    // 参照"普通灰面"用被拖拽的那片（它只会加绿边、不加填充），此时台湾还在卡槽里、DOM 里没有它
+    var idle = document.querySelector('#puzzle path[data-adcode="130000"]');
     return {
       lit: lit.length,
       selfLit: self.length,
       stroke: target ? getComputedStyle(target).stroke : null,
       width: target ? getComputedStyle(target).strokeWidth : null,
+      // 边界荧光：目标片的 filter 里有 drop-shadow；且**不能有整片面积的填充**（fill 保持普通灰面）
+      glow: target ? getComputedStyle(target.parentNode).filter : null,
+      fill: target ? getComputedStyle(target).fill : null,
+      fillOpacity: target ? getComputedStyle(target).fillOpacity : null,
+      idleFill: idle ? getComputedStyle(idle).fill : null,
     };
   })()`);
 
@@ -427,26 +445,53 @@ try {
     const from = await pointOnPiece('130000');
     if (!from) return null;
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
+    // 往北京方向拖 55px：偏移差从 (60,60) 收到 (5,5) = 7.1px → 落在**简单档 10px** 容差内（困难档另有断言）
     for (let i = 1; i <= 6; i++) {
-      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x - (50 * i) / 6, y: from.y - (50 * i) / 6, button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x - (55 * i) / 6, y: from.y - (55 * i) / 6, button: 'left', buttons: 1 });
       await sleep(20);
     }
     const hint = await snapHintState();
     if (shotDuringDrag) await shot(shotDuringDrag); // 趁还在拖、提示亮着的时候截图
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: from.x - 50, y: from.y - 50, button: 'left', buttons: 0, clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: from.x - 55, y: from.y - 55, button: 'left', buttons: 0, clickCount: 1 });
     await sleep(150);
     return hint;
   };
 
   const hintEasy = await checkSnapHint('easy', 'puzzle-3b-snap-hint.png');
-  check('简单难度：拖到可吸附范围时给出绿色提示（目标组绿边 + 绿辉光、手里那块也加绿边）',
-    !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) >= 2 && hintEasy.stroke !== 'none',
+  check('简单难度：拖到可吸附范围时给出绿色**边界**提示（目标组绿边 + 绿辉光、手里那块也加绿边）',
+    !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) >= 2 &&
+      hintEasy.stroke !== 'none' && /drop-shadow/.test(hintEasy.glow ?? ''),
     hintEasy);
+  check('简单难度的提示**只有边界荧光**：目标片没有整片面积的绿色填充',
+    !!hintEasy && hintEasy.lit >= 1 && hintEasy.fill === hintEasy.idleFill, hintEasy);
   const hintHard = await checkSnapHint('hard', 'puzzle-3c-snap-hint-hard.png');
   check('困难难度：**完全不给任何吸附提示**（目标不亮、手里那块也不加描边，避免靠提示撞运气）',
     !!hintHard && hintHard.lit === 0 && hintHard.selfLit === 0,
     hintHard);
   check('困难模式下画布上没有名称标签', (await ev(`document.querySelectorAll('#puzzle .puzzle-label').length`)) === 0);
+
+  // ==================== 磁吸容差按难度分档：简单 10px / 困难 5px ====================
+  /** 在当前难度下，把两片相邻碎片按给定偏移差摆放，看是否吸上。 */
+  const toleranceProbe = async (difficulty, gap) => {
+    await resetClick();
+    await ev(`(() => { document.getElementById('puzzle-${difficulty}').click(); return true })()`);
+    await sleep(200);
+    await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+    await sleep(500);
+    const p1 = await json(`window.__probe.puzzleTruePosition('110000')`);
+    const p2 = await json(`window.__probe.puzzleTruePosition('130000')`);
+    await ev(`window.__probe.puzzlePlaceAt('110000', ${p1.x}, ${p1.y})`);
+    const res = await json(`window.__probe.puzzlePlaceAt('130000', ${p2.x + gap}, ${p2.y})`);
+    const after = await puzzle();
+    return { merged: res.mergedGroups, groups: after.groups.length, placed: after.placed };
+  };
+  const easy8 = await toleranceProbe('easy', 8);
+  check('简单档容差 10px：偏移差 8px → 吸上并成组', easy8.merged === 1 && easy8.groups === 1, easy8);
+  const hard8 = await toleranceProbe('hard', 8);
+  check('困难档容差 5px：同样的 8px 偏移差 → **不吸**（比简单档更严）',
+    hard8.merged === 0 && hard8.groups === 2, hard8);
+  const hard4 = await toleranceProbe('hard', 4);
+  check('困难档容差 5px：偏移差 4px → 吸上', hard4.merged === 1 && hard4.groups === 1, hard4);
 
   // ==================== 暂停：停表 + 遮罩 ====================
   const elapsedBefore = (await puzzle()).elapsedMs;
@@ -533,7 +578,7 @@ try {
   const pA = await json(`window.__probe.puzzleTruePosition('CHN')`);
   const pB = await json(`window.__probe.puzzleTruePosition('MNG')`);
   await ev(`window.__probe.puzzlePlaceAt('CHN', ${pA.x}, ${pA.y})`);
-  await ev(`window.__probe.puzzlePlaceAt('MNG', ${pB.x + 5}, ${pB.y + 5})`);
+  await ev(`window.__probe.puzzlePlaceAt('MNG', ${pB.x + 3}, ${pB.y + 3})`); // 4.2px：两档容差（10/5）内都吸得上
   await sleep(200);
   const snapped = await puzzle();
   await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);

@@ -14,8 +14,16 @@ import { pairKey } from './adjacency';
 /** 左侧卡槽数量（用户口径：三个）。 */
 export const SLOT_COUNT = 3;
 
-/** 磁吸容差（拼图 px，真实比例；不随视口缩放变化）。 */
-export const SNAP_TOLERANCE_PX = 15;
+/**
+ * 磁吸容差（拼图 px，真值比例；不随视口缩放变化）——**按难度分档**（用户口径 2026-09-14）：
+ * 简单 10px、困难 5px。两档都比最初的统一 15px 更严，困难档最严（5px 只有指甲盖大小）。
+ *
+ * 提示与容差是两件事：简单档有可吸附预告但要求更准，困难档没有预告、容差更小。
+ */
+export const SNAP_TOLERANCE_PX: Record<'easy' | 'hard', number> = { easy: 10, hard: 5 };
+
+/** 之前的统一容差（仅作历史记录/文档引用，代码里不再使用）。 */
+export const LEGACY_SNAP_TOLERANCE_PX = 15;
 
 export interface PuzzleGroup {
   id: number;
@@ -46,7 +54,7 @@ export class PuzzleState {
   constructor(
     pieces: PuzzlePieceDef[],
     private readonly adjacency: Set<string>,
-    private readonly tolerance = SNAP_TOLERANCE_PX,
+    private readonly tolerance = SNAP_TOLERANCE_PX.easy,
     private readonly rng: () => number = Math.random,
   ) {
     for (const p of pieces) this.byAdcode.set(p.adcode, p);
@@ -130,6 +138,18 @@ export class PuzzleState {
     group.dy = dy;
   }
 
+  /** 某组的**总面积**（所含各片面积之和）：画布的上下覆盖按它排（见 view.renderStructure）。 */
+  groupArea(group: PuzzleGroup): number {
+    let sum = 0;
+    for (const adcode of group.pieces) sum += this.byAdcode.get(adcode)?.area ?? 0;
+    return sum;
+  }
+
+  /** 本组当前可吸上的容差（供探针/验收读，避免测试重复写死数字）。 */
+  tolerancePx(): number {
+    return this.tolerance;
+  }
+
   /** 若此刻松手，哪些组会与本组吸上（拖动中高亮提示用，只读）。 */
   snapCandidates(groupId: number): PuzzleGroup[] {
     const group = this.groups.find((g) => g.id === groupId);
@@ -151,9 +171,11 @@ export class PuzzleState {
   }
 
   /**
-   * 松手：以本组为基准做磁吸 —— 容差内的组**对齐到本组偏移**后并入本组，可连锁（合并后再检查）。
+   * 松手：**手里这块主动吸附过去** —— 容差内的目标组不动，本组对齐到**目标的偏移**后并入，可连锁。
    *
-   * 为什么是"对齐到被拖动的一方"：用户手里拿着的那块不该在松手瞬间跳走。
+   * 用户口径（2026-09-14）改过一次方向：最初是"别人移动到手里这块的位置"（不想让手里的块在松手瞬间
+   * 跳走），现在反过来 —— 松手后是**被拖拽的碎片去吸附别人**，视觉上像把它"按"进已经拼好的那一块。
+   * 连锁时每一步都对齐到当前那个目标的偏移，最终停在最后吸上的那一组的位置上。
    */
   drop(groupId: number): DropResult {
     const root = this.groups.find((g) => g.id === groupId);
@@ -162,8 +184,9 @@ export class PuzzleState {
     for (;;) {
       const target = this.groups.find((g) => g.id !== root.id && this.pairWithinTolerance(root, g));
       if (!target) break;
-      target.dx = root.dx;
-      target.dy = root.dy;
+      // 拖拽方挪过去（目标组原地不动）
+      root.dx = target.dx;
+      root.dy = target.dy;
       root.pieces = [...root.pieces, ...target.pieces].sort();
       this.groups = this.groups.filter((g) => g.id !== target.id);
       merged += 1;

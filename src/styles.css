@@ -861,8 +861,9 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 #puzzle .puzzle-piece-wrap {
   filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22));
 }
-/* 可吸附提示：目标片加粗绿边 + 绿色辉光 + 半透明绿填充（困难模式下所有碎片都是同一种灰面
-   又没有省名，提示必须足够显眼），手里那块同时加绿边表示"现在松手就会拼上"。 */
+/* 可吸附提示（**只有简单档**）：目标片加粗绿边 + 绿色边界辉光；手里那块同时加绿边表示
+   "现在松手就会吸上去"。用户口径 2026-09-14：**不要整片面积的幽灵荧光，只要边界荧光** ——
+   曾经给目标片铺过 0.35 不透明度的绿色填充，那会让整块碎片发绿、盖住底下的边界。 */
 #puzzle .puzzle-piece-wrap.can-snap {
   filter: drop-shadow(0 0 5px rgba(16, 185, 129, 0.85));
 }
@@ -870,10 +871,6 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
 #puzzle .puzzle-piece-wrap.can-snap-self .puzzle-piece {
   stroke: var(--accent);
   stroke-width: 2.5;
-}
-#puzzle .puzzle-piece-wrap.can-snap .puzzle-piece {
-  fill: var(--accent);
-  fill-opacity: 0.35;
 }
 #puzzle .puzzle-label {
   font-size: calc(14px / var(--pz, 1)); /* 屏幕字号恒定（不随缩放变粗），与地图页省名同档 */

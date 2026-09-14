@@ -638,7 +638,8 @@ export class PuzzleMode extends BaseMode {
     }
     this.pieces = pieces;
     const adjacency = buildPuzzleAdjacency(pieces, (adcode) => this.neighboursOf(adcode, scope));
-    this.state = new PuzzleState(pieces, adjacency, SNAP_TOLERANCE_PX);
+    // 磁吸容差按难度取（简单 10px / 困难 5px）：难度在运行中锁定，故开局建一次就够
+    this.state = new PuzzleState(pieces, adjacency, SNAP_TOLERANCE_PX[this.difficulty]);
     this.state.start();
   }
 

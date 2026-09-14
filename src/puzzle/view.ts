@@ -229,12 +229,16 @@ export class PuzzleView {
   }
 
   /**
-   * 按 state 重建画布结构：**每片一个 `<g>` 包装**，包装按面积从大到小排列。
+   * 按 state 重建画布结构：**每片一个 `<g>` 包装**，全局按**组的上下层**排列。
    *
-   * 为什么不做"一组一个 `<g>`"：SVG 的上下覆盖关系就是 DOM 顺序，而用户要求
-   * **面积小的碎片压在面积大的之上**（北京/天津压在河北的环里、港澳压在广东之上、
-   * 世界档的莱索托压在南部非洲诸国之上）。只有把每片做成同级节点才能全局按面积排序；
-   * 组的位置则由每片包装上的同一个 `translate(dx,dy)` 承担（拖动时批量更新）。
+   * 上下覆盖规则（用户口径 2026-09-14 的第二版）：
+   *   1. **先按「组的总面积」从大到小排**（面积 = 组内各片面积之和）——于是"许多小碎片拼成的大块"
+   *      会沉到**中层碎片之下**，而不是因为自己是小片就浮在上面；
+   *   2. 组内再按**各片自身面积**从大到小排 —— 保证北京/天津仍压在河北的环里、港澳压在广东之上。
+   *
+   * 没拼的单片自成一组，组总面积就是它自己的面积，与旧行为一致。
+   * 为什么不做"一组一个 `<g>`"：SVG 的上下覆盖就是 DOM 顺序，而组是从小片不断长大的，
+   * 只有把每片做成同级节点才能同时满足上面两条排序（组的位置由每片包装上的 `translate` 承担）。
    */
   renderStructure(): void {
     const world = this.world;
@@ -243,21 +247,36 @@ export class PuzzleView {
     this.ghost = null;
     const colors = this.opts.theme();
     const showLabels = this.opts.labels();
-    const rows: { adcode: string; groupId: number; dx: number; dy: number; area: number }[] = [];
+    const rows: { adcode: string; groupId: number; dx: number; dy: number; area: number; groupArea: number }[] = [];
     for (const group of this.opts.state.groups) {
+      const groupArea = this.opts.state.groupArea(group);
       for (const adcode of group.pieces) {
-        rows.push({ adcode, groupId: group.id, dx: group.dx, dy: group.dy, area: this.opts.state.def(adcode)?.area ?? 0 });
+        rows.push({
+          adcode,
+          groupId: group.id,
+          dx: group.dx,
+          dy: group.dy,
+          area: this.opts.state.def(adcode)?.area ?? 0,
+          groupArea,
+        });
       }
     }
-    // 面积大的先画（在下），面积小的后画（在上）
-    rows.sort((a, b) => b.area - a.area);
+    // 大组先画（在下、更靠底层）；同组内大片先画、小片后画（在上）。末位用 id/adcode 兜底保证顺序稳定。
+    rows.sort(
+      (a, b) =>
+        b.groupArea - a.groupArea ||
+        b.area - a.area ||
+        a.groupId - b.groupId ||
+        a.adcode.localeCompare(b.adcode),
+    );
     for (const row of rows) {
       const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       wrap.setAttribute('class', 'puzzle-piece-wrap');
       wrap.setAttribute('data-adcode', row.adcode);
       wrap.setAttribute('data-group', String(row.groupId));
-      // 面积写进 DOM：上下覆盖关系是用户可见的规则，验收脚本据此断言全局排序
+      // 面积写进 DOM：上下覆盖关系是用户可见的规则，验收脚本据此断言两级排序
       wrap.setAttribute('data-area', row.area.toFixed(6));
+      wrap.setAttribute('data-group-area', row.groupArea.toFixed(6));
       wrap.setAttribute('transform', `translate(${row.dx.toFixed(2)} ${row.dy.toFixed(2)})`);
       const path = this.paths.get(row.adcode);
       if (path) {

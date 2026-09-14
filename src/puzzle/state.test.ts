@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PuzzleState, SLOT_COUNT, shuffle } from './state';
+import { PuzzleState, SLOT_COUNT, SNAP_TOLERANCE_PX, shuffle } from './state';
 import { pairKey } from './adjacency';
 import type { PuzzlePieceDef } from './pieces';
 
@@ -51,7 +51,7 @@ describe('PuzzleState', () => {
     expect(state.take('A')).toBeNull();
   });
 
-  it('磁吸：相邻两片偏移差在容差内 → 合并成一组并精确对齐', () => {
+  it('磁吸：相邻两片偏移差在容差内 → 合并成一组，且**被拖拽的那片主动吸附过去**', () => {
     const state = makeState();
     state.start();
     const a = state.take('A')!;
@@ -59,15 +59,55 @@ describe('PuzzleState', () => {
     expect(state.drop(a.id).mergedGroups).toBe(0); // 场上只有 A
 
     const b = state.take('B')!;
-    state.moveGroup(b.id, 100 + 10, 50 - 8); // 差 (10,-8)，模长 12.8 ≤ 15
+    state.moveGroup(b.id, 100 + 10, 50 - 8); // 差 (10,-8)，模长 12.8 ≤ 15（测试用容差）
     const result = state.drop(b.id);
     expect(result.mergedGroups).toBe(1);
     expect(state.groups).toHaveLength(1);
     expect(state.groups[0].pieces).toEqual(['A', 'B']);
-    // 对齐到**被拖动的一方**（这里是 B）：手里拿着的那块不该在松手瞬间跳走
-    expect(state.groups[0].dx).toBeCloseTo(110, 9);
-    expect(state.groups[0].dy).toBeCloseTo(42, 9);
+    // 用户口径（2026-09-14）：**拖拽方挪到目标组的位置**，目标组原地不动。
+    // 于是 B 松手后跳到 A 的 (100,50)，而不是把 A 拽到 B 的 (110,42)。
+    expect(state.groups[0].dx).toBeCloseTo(100, 9);
+    expect(state.groups[0].dy).toBeCloseTo(50, 9);
     expect(result.complete).toBe(false);
+  });
+
+  it('容差按难度分档：简单 10px / 困难 5px（同一对偏移差在困难档吸不上）', () => {
+    expect(SNAP_TOLERANCE_PX.easy).toBe(10);
+    expect(SNAP_TOLERANCE_PX.hard).toBe(5);
+    const setup = (tolerance: number) => {
+      const state = makeState(tolerance);
+      state.start();
+      const a = state.take('A')!;
+      state.moveGroup(a.id, 0, 0);
+      state.drop(a.id);
+      const b = state.take('B')!;
+      state.moveGroup(b.id, 8, 0); // 差 8px：简单档（10）吸得上，困难档（5）吸不上
+      return { state, b };
+    };
+    expect(setup(SNAP_TOLERANCE_PX.easy).state.drop(setup(SNAP_TOLERANCE_PX.easy).b.id).mergedGroups).toBe(1);
+    const hard = setup(SNAP_TOLERANCE_PX.hard);
+    expect(hard.state.drop(hard.b.id).mergedGroups).toBe(0);
+    expect(hard.state.groups).toHaveLength(2);
+    // 困难档 5px 内仍然吸得上
+    const hard2 = setup(SNAP_TOLERANCE_PX.hard);
+    hard2.state.moveGroup(hard2.b.id, 4, 0);
+    expect(hard2.state.drop(hard2.b.id).mergedGroups).toBe(1);
+  });
+
+  it('groupArea：组的总面积 = 组内各片面积之和（画布上下层按它排）', () => {
+    const state = makeState();
+    state.start();
+    const a = state.take('A')!;
+    const b = state.take('B')!;
+    state.moveGroup(a.id, 0, 0);
+    state.moveGroup(b.id, 5, 0);
+    state.drop(a.id);
+    state.drop(b.id);
+    const group = state.groups[0];
+    expect(group.pieces).toEqual(['A', 'B']);
+    const sum = group.pieces.reduce((acc, adcode) => acc + (state.def(adcode)?.area ?? 0), 0);
+    expect(state.groupArea(group)).toBeCloseTo(sum, 9);
+    expect(state.groupArea(group)).toBeGreaterThan(state.def('A')!.area);
   });
 
   it('不相邻的两片即使重叠也不吸（D 与谁都不相邻）', () => {
@@ -164,23 +204,30 @@ describe('PuzzleState', () => {
     expect(state.isComplete()).toBe(false); // D 还没放
   });
 
-  it('一次放下连锁吸收两个组时，计数按吸收的组数累加', () => {
-    const state = makeState();
+  it('一次放下可能连锁吸收两个组（彼此不相邻、但都与手里这片相邻）', () => {
+    // 京津冀模型：北京(A) 与 天津(B) 彼此不相邻，但都与 河北(C) 相邻 ——
+    // 于是它们各自独立成组，直到 C 落进容差里把两块都吸过来。
+    const pieces = ['A', 'B', 'C', 'D'].map(piece);
+    const adjacency = new Set([pairKey('A', 'C'), pairKey('B', 'C')]);
+    const state = new PuzzleState(pieces, adjacency, 15, () => 0.999);
     state.start();
     const a = state.take('A')!;
     state.moveGroup(a.id, 0, 0);
     state.drop(a.id);
     const b = state.take('B')!;
-    state.moveGroup(b.id, 20, 0);
-    state.drop(b.id); // 20 > 15 → 不相邻（B 与 A 相邻但不进容差）
+    state.moveGroup(b.id, 5, 0);
+    expect(state.drop(b.id).mergedGroups).toBe(0); // A–B 不相邻 → 两块独立
+    expect(state.groups).toHaveLength(2);
     expect(state.assembledCount()).toBe(1);
-    // C 落在 A、B 之间：先吸 B，再因 B 已并入而连锁吸 A（一次 drop 吸收两个组 → +2）
+
     const c = state.take('C')!;
-    state.moveGroup(c.id, 10, 0);
+    state.moveGroup(c.id, 2, 0); // 与 A、B 都在容差内
     const result = state.drop(c.id);
     expect(result.mergedGroups).toBe(2);
     expect(state.assembledCount()).toBe(3);
     expect(state.groups).toHaveLength(1);
+    // 连锁时每吸一组就挪到那一组的位置：先吸 A(0)，再连锁吸 B(5) → 最终停在 B
+    expect(state.groups[0].dx).toBeCloseTo(5, 9);
   });
 
   it('四片全部吸成一组才算完成', () => {
