@@ -67,7 +67,16 @@
 
 1. 诊断视图返回的是活值 getter。**不要** `{...view}` 展开 —— 那会把 getter 求值成静态快照。
 2. 做「改名实验」验证编译器是否抓得住时，**不要用 `git checkout -- <file>` 还原**：那个文件里同时装着你刚写的新代码，会把改动一起抹掉。改用显式备份副本。
-3. `npm run build` **不会清空 `dist/`**（实测：往 `dist/` 放哑文件后重建，哑文件仍在；历史上 `dist/assets` 累积过 104 个旧 chunk）。验收脚本服务的正是 `dist/`，所以改完渲染/探针代码后如果怀疑"跑的还是旧代码"，先手动 `rm -rf dist` 再构建。
+3. **`dist/` 的清理问题：更正结论 —— 这是本机环境的产物，不是项目缺陷。**
+   我先前写成「`npm run build` 不会清空 `dist/`」，据此加过一个 `npm run clean`（node `rmSync`）——**已回退**，理由见下。
+   实测证据（同一台机器、同一个文件）：
+   - `node -e "fs.rmSync('dist/xxx',{force:true})"` → **不报错但文件仍在**（node 的删除被静默拦截）；
+   - PowerShell `Remove-Item dist/xxx -Force` → **删掉了**；
+   - node 在 `%TEMP%` 下 `rmSync` → **正常删除**。
+   即：**工作区内的删除对 Node 进程被拦，对 PowerShell 放行**。Vite 的 `emptyOutDir` 走的是 Node 的 `fs.rm`，
+   所以在本机表现为「dist 永不被清空」，`dist/assets` 才会累积到 104 个旧 chunk。
+   在 CI（Linux）与正常开发机上，Vite 的 `emptyOutDir` 是生效的 —— **不要**为它加 workaround。
+   本机上的实用做法：怀疑验收跑的是旧产物时，用 PowerShell 清：`Remove-Item -Recurse -Force dist`。
 
 **另**：探针的动态 chunk 名字由**入口文件 basename**决定，所以入口保留了顶层 `src/probe.ts` 作为 shim（`export { installProbe } from './probe/index'`），使 chunk 仍叫自描述的 `probe-*.js` 而不是与主包同名的 `index-*.js`。**不要**改用 `build.rollupOptions.output.manualChunks` 命名：实测它会把 echarts 等共享依赖拖进该 chunk，并把 `probe-*.js` 变成 index.html 的**静态**引用（每个用户下载 1.1 MB）。
 
