@@ -17,6 +17,18 @@ export function uiProbe(a: AppDiagnostics) {
       const state = d.lastState;
       const countOf = (fn: ((s: RenderState) => unknown[]) | null) =>
         state && fn ? fn(state).length : null;
+      /**
+       * 各标签系列实际画出的**文本**：标签数据每行是 `{ name, value: [lng, lat, text, color, …] }`，
+       * 取 `value[2]` 即最终画在画布上的字。验收脚本靠它断言「标签显示的是首都名 / 单字简称」——
+       * 只看数量或 state 上的布尔位都不足以证明这件事。
+       */
+      const textsOf = (fn: ((s: RenderState) => unknown[]) | null) => {
+        if (!state || !fn) return null;
+        return fn(state).map((row) => {
+          const value = (row as { value?: unknown[] }).value;
+          return Array.isArray(value) ? String(value[2] ?? '') : '';
+        });
+      };
 
       return {
         mode: a.current?.id ?? null,
@@ -42,6 +54,12 @@ export function uiProbe(a: AppDiagnostics) {
           city: countOf(d.buildLabelData),
           province: countOf(d.buildProvinceLabelData),
           world: countOf(d.buildWorldLabelData),
+        },
+        /** 各标签系列实际会画出的文本（顺序与数据一致）。 */
+        labelTexts: {
+          city: textsOf(d.buildLabelData),
+          province: textsOf(d.buildProvinceLabelData),
+          world: textsOf(d.buildWorldLabelData),
         },
         labels: state
           ? {

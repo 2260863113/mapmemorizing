@@ -12,7 +12,7 @@ interface ProvincePractice {
   score: number;
 }
 
-/** 自由模式记忆进度（localStorage 持久化 + pub/sub） */
+/** 练习熟练度记录（localStorage 持久化 + pub/sub） */
 export class MemoryStore {
   private data: Record<string, MemoryRecord> = {};
   private provData: Record<string, ProvincePractice> = {};
@@ -258,7 +258,25 @@ export const DEFAULT_SETTINGS: Settings = {
   worldBoundaryTone: 'mid',
   darkMode: false,
   ignoreTinyCountries: false,
+  showBrowseLabels: true, // 默认显示（与自由模式的默认观感一致）
 };
+
+/**
+ * 已下线的「自由模式」隐藏标签旧键（2026-09 自由模式并入前四个模式）。
+ * 只用于把老用户的偏好迁移到新的全局开关 `showBrowseLabels`，不再有新代码写它。
+ */
+const LEGACY_MEMORY_HIDE_LABELS_KEY = 'china-admin-memory-hide-labels-v1';
+
+/** 旧键迁移：老键存的是「隐藏」（语义与 showBrowseLabels 相反）；键不存在时默认显示。 */
+function legacyShowBrowseLabels(): boolean {
+  try {
+    const raw = localStorage.getItem(LEGACY_MEMORY_HIDE_LABELS_KEY);
+    return raw === null ? true : raw !== '1';
+  } catch {
+    return true;
+  }
+}
+
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SET_KEY);
@@ -273,12 +291,16 @@ export function loadSettings(): Settings {
         worldBoundaryTone: boundaryToneOf(parsed.worldBoundaryTone, DEFAULT_SETTINGS.worldBoundaryTone),
         // 旧档没有该字段：显式归一为布尔，避免 undefined 透传到开关与判定
         ignoreTinyCountries: parsed.ignoreTinyCountries === true,
+        // 旧档没有该字段：从自由模式的旧键迁移（老用户关过标签就保持关闭）
+        showBrowseLabels:
+          typeof parsed.showBrowseLabels === 'boolean' ? parsed.showBrowseLabels : legacyShowBrowseLabels(),
       };
     }
   } catch {
     /* 忽略 */
   }
-  return { ...DEFAULT_SETTINGS };
+  // 首次访问（无设置档）：同样尊重自由模式旧键的偏好
+  return { ...DEFAULT_SETTINGS, showBrowseLabels: legacyShowBrowseLabels() };
 }
 
 function boundaryToneOf(value: unknown, fallback: BoundaryTone): BoundaryTone {

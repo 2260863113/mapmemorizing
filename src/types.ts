@@ -1,4 +1,4 @@
-export type Mode = 'free' | 'self' | 'endless' | 'click' | 'memory' | 'board' | 'admin' | 'puzzle';
+export type Mode = 'free' | 'self' | 'endless' | 'click' | 'board' | 'admin' | 'puzzle';
 export type UnitColor =
   | 'green'
   | 'blue'
@@ -77,6 +77,19 @@ export interface CountryMeta {
   continent: Continent; // 所属大洲（世界粒度下钻范围）
 }
 
+/**
+ * 国家的英文名与首都名（public/data/world_names.json 生成，来源 Natural Earth v5.1.2，公有领域）。
+ *
+ * 为什么与 countries.json 分开成一张表：countries.json 由世界几何管线产出，那条管线的输出契约
+ * 被 lib 与探针逐字依赖（见 scripts/fetch-world-data-v2.mjs 顶部「一行不改」的口径）；
+ * 语言/首都属于**另一类事实**（与几何无关、可单独重建），故单独一张表，key 同为 iso_a3。
+ */
+export interface CountryNames {
+  en: string; // 英文常用名（题面与标签的英文口径，如 Japan）
+  capital: string; // 首都中文名（如 东京）
+  capitalEn: string; // 首都英文名（如 Tokyo）
+}
+
 export type BoundaryTone = 'light' | 'mid' | 'dark';
 
 export interface AppData {
@@ -97,6 +110,8 @@ export interface AppData {
   provincesRawGeoJson: unknown; // 省界图层（无损档 100%，zoom ≥ 14）
   hkmacGeoJson: unknown; // 港澳放大框无压缩面（广东+香港+澳门，始终最精细不简化）
   countries: CountryMeta[]; // 世界答题国（194 国，见 docs/adr/0005）
+  /** iso_a3 → 英文名 / 首都名（world_names.json；「国名 / 首都」与「中文 / 英文」分段按钮用）。 */
+  countryNames: Record<string, CountryNames>;
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
   subregions: SubregionMeta[]; // 世界 23 个次区域（方位式粗分，见 docs/adr/0004）
   isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（194 条全覆盖）
@@ -133,6 +148,14 @@ export interface Settings {
   darkMode: boolean;
   /** 忽略面积极小的国家：不出题、不参与排行榜、地图上灰显且完全无交互。 */
   ignoreTinyCountries: boolean;
+  /**
+   * 未开始时显示地图标签（浏览态，2026-09）。
+   *
+   * 由已下线的「自由模式」并入：点击/输入/无尽闯关在**未开始**时显示全量地名（世界=国名、省级=省名、
+   * 地级=地级市名），开始答题后隐藏、结束（结算/答完/重置）后恢复。开始/进行中的**已作答**绿红标签、
+   * 熟练度分析的着色标签、拼图模式的难度口径都**不受**这个开关影响。
+   */
+  showBrowseLabels: boolean;
 }
 
 export interface RoundResult {
@@ -213,6 +236,6 @@ export interface RenderState {
   showAllProvinceLabels?: boolean; // 省级地图常显全部省名标签（熟练度分析省级档）
   worldLabel?: (iso: string) => ProvinceLabel | null; // 世界练习：已作答国家的国名标签（null = 不显示）
   worldShowAllLabels?: boolean; // 世界地图放大后常显全部国名标签（熟练度分析世界档）
-  /** 世界国名标签的显示倍率阈值；省略时用渲染器默认（2.2）。自由模式/熟练度分析传 0 = 任何倍率都显示。 */
+  /** 世界国名标签的显示倍率阈值；省略时用渲染器默认（2.2）。未开始的浏览标签与熟练度分析传 0 = 任何倍率都显示。 */
   worldLabelZoomThreshold?: number;
 }

@@ -2,12 +2,13 @@ import type { Mode, RoundResult, Unit } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { Countdown } from '../ui/countdown';
-import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop } from '../ui/dom';
+import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPenalty, hideLevelEnd, hideShop, showLevelEnd, showShop, showStartCard } from '../ui/dom';
 import { formatElapsedSeconds } from '../ui/format';
 import { clamp } from '../math';
 import { t } from '../i18n';
-import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, saveEndlessAutoFollow, type ModeSettingsPanel } from '../modeSettings';
+import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, loadEndlessHidePriceBg, loadEndlessHidePrices, saveEndlessAutoFollow, saveEndlessHidePriceBg, saveEndlessHidePrices, type ModeSettingsPanel } from '../modeSettings';
 import { fbm, makePermutation } from './endlessNoise';
+import { browseLabelState } from './browseLabels';
 import { FOODS, ITEM_DEFS, ITEM_KEYS, pickInitialFoods, pickTokenChar, type FoodEntry, type ItemKey, type OwnedItem } from './endlessData';
 import {
   COIN_LABEL_ZOOM,
@@ -56,8 +57,8 @@ export class EndlessMode extends BaseMode {
   private countdown = new Countdown();
   private perm: Uint8Array = makePermutation(randomSeed());
   private syncingView = false;
-  private hidePrices = loadHidePrices(); // 隐藏价格标签
-  private hidePriceBg = loadHidePriceBg(); // 隐藏价格标签衬底
+  private hidePrices = loadEndlessHidePrices(); // 隐藏价格标签
+  private hidePriceBg = loadEndlessHidePriceBg(); // 隐藏价格标签衬底
   // 道具
   private owned: OwnedItem[] = []; // 当前生效的道具（药水跨关携带，其余仅限下一关）
   private itemPrices = new Map<ItemKey, number>(); // 各道具当前价格
@@ -162,6 +163,15 @@ export class EndlessMode extends BaseMode {
   }
 
   refresh() {
+    // 未开始（浏览态）：显示全量地级市名（自由模式并入后的口径）；开始后回到金币价格 / 已收集显示
+    // —— 无尽的金币数字是玩法核心，故浏览标签只在开始卡片阶段占用地图。
+    if (!this.started) {
+      this.ctx.renderer.render({
+        colorOf: () => 'gray',
+        ...browseLabelState('city', this.ctx.settings.showBrowseLabels),
+      });
+      return;
+    }
     this.ctx.renderer.render({
       colorOf: () => 'gray',
       labelZoomThreshold: COIN_LABEL_ZOOM,
@@ -191,7 +201,7 @@ export class EndlessMode extends BaseMode {
   /** 隐藏价格标签开关（无尽设置卡片）。 */
   setHidePrices(hidden: boolean) {
     this.hidePrices = hidden;
-    saveHidePrices(hidden);
+    saveEndlessHidePrices(hidden);
     if (this.started) this.refresh();
   }
 
@@ -202,7 +212,7 @@ export class EndlessMode extends BaseMode {
   /** 隐藏价格标签衬底开关：价格变为白色填充 + 黑色描边、无衬底。 */
   setHidePriceBg(hidden: boolean) {
     this.hidePriceBg = hidden;
-    saveHidePriceBg(hidden);
+    saveEndlessHidePriceBg(hidden);
     if (this.started) this.refresh();
   }
 
@@ -313,12 +323,12 @@ export class EndlessMode extends BaseMode {
   }
 
   private showStartHint() {
-    const actions = `<button id="endless-start" class="start-action">${t('common.start')}</button>`;
-    this.ctx.setHint(`<div class="start-panel"><div class="start-title">${t('endless.startTitle')}</div><div class="start-subtitle">${t('endless.startScope')}</div>${actions}</div>`);
-    window.setTimeout(() => {
-      const start = document.getElementById('endless-start') as HTMLButtonElement | null;
-      if (start) start.onclick = () => this.start();
-    }, 0);
+    showStartCard({
+      id: 'endless-start',
+      title: t('endless.startTitle'),
+      subtitle: t('endless.startScope'),
+      onStart: () => this.start(),
+    });
   }
 
   private start() {
@@ -710,10 +720,6 @@ export class EndlessMode extends BaseMode {
   }
 }
 
-// ---------- 本地持久化键 ----------
-const HIDE_PRICE_KEY = 'china-admin-endless-hide-price-v1';
-const HIDE_PRICE_BG_KEY = 'china-admin-endless-hide-price-bg-v1';
-
 // ---------- 工具 ----------
 const rand = Math.random; // 随机源（经济纯函数默认注入 Math.random，测试走 endlessEconomy）
 
@@ -728,36 +734,4 @@ function randInt(min: number, max: number) {
 
 function randomSeed() {
   return (Date.now() ^ Math.floor(rand() * 0xffffffff)) >>> 0;
-}
-
-function loadHidePrices(): boolean {
-  try {
-    return localStorage.getItem(HIDE_PRICE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function saveHidePrices(hidden: boolean) {
-  try {
-    localStorage.setItem(HIDE_PRICE_KEY, hidden ? '1' : '0');
-  } catch {
-    /* 忽略存储失败 */
-  }
-}
-
-function loadHidePriceBg(): boolean {
-  try {
-    return localStorage.getItem(HIDE_PRICE_BG_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function saveHidePriceBg(hidden: boolean) {
-  try {
-    localStorage.setItem(HIDE_PRICE_BG_KEY, hidden ? '1' : '0');
-  } catch {
-    /* 忽略存储失败 */
-  }
 }

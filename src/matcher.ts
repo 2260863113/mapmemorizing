@@ -56,7 +56,7 @@ export class Matcher {
     this.rows = data.units.map((unit) => ({ unit, ns: unit.shortName, nf: normalize(unit.name) }));
   }
 
-  /** 最佳单位候选（测试模式判题、自由模式标记用）：仅接受规范化后的精确匹配，避免模糊匹配让错误答案通过 */
+  /** 最佳单位候选（测试模式判题用）：仅接受规范化后的精确匹配，避免模糊匹配让错误答案通过 */
   bestUnit(input: string): Unit | null {
     const ni = normalize(input);
     if (!ni) return null;

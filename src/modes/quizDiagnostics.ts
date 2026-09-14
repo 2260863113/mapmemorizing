@@ -14,7 +14,7 @@
  * get + set 成对出现。
  */
 import type { Continent, SubregionId, Unit } from '../types';
-import type { OrderMode, ProgressSegment } from './types';
+import type { OrderMode, ProgressSegment, QuestionNaming } from './types';
 
 export interface QuizSessionDiagnostics {
   // ==================== 进度与会话状态（可写：探针构造场景后必须还原） ====================
@@ -31,6 +31,8 @@ export interface QuizSessionDiagnostics {
   worldContinent: Continent | null;
   worldSubregion: SubregionId | null;
   orderMode: OrderMode;
+  /** 题面/标签取名口径（国名/首都、中文/英文、省名/简称）。 */
+  naming: QuestionNaming;
 
   // ==================== 错误回滚 ====================
   errorRollback: boolean;

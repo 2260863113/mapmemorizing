@@ -73,7 +73,6 @@
         <button data-mode="self">输入模式</button>
         <button data-mode="puzzle">拼图模式</button>
         <button data-mode="endless">无尽闯关</button>
-        <button data-mode="memory">自由模式</button>
       </nav>
       <div class="top-actions">
         <button id="btn-free" class="ghost">熟练度分析</button>
@@ -106,6 +105,21 @@
         <div id="click-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="点击模式出题顺序">
           <button id="click-order-random" type="button" class="active" data-order="random" role="radio" aria-checked="true">随机</button>
           <button id="click-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
+        </div>
+        <!-- 世界档取名口径：国名（默认）/ 首都。仅世界粒度、全国范围、未开始测试时显示。 -->
+        <div id="world-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界档题面：按国名或首都">
+          <button id="world-name-country" type="button" class="active" data-world-name="country" role="radio" aria-checked="true">国名</button>
+          <button id="world-name-capital" type="button" data-world-name="capital" role="radio" aria-checked="false">首都</button>
+        </div>
+        <!-- 世界档内容语言：只换题面与地图标签的文字，UI 交互文案始终中文 -->
+        <div id="world-lang-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界档题面与标签语言：中文或英文">
+          <button id="world-lang-zh" type="button" class="active" data-world-lang="zh" role="radio" aria-checked="true">中文</button>
+          <button id="world-lang-en" type="button" data-world-lang="en" role="radio" aria-checked="false">英文</button>
+        </div>
+        <!-- 省级全国取名口径：省名（默认，题面=省全名、标签=去后缀省名）/ 简称（沪）。省级档无中英文切换。 -->
+        <div id="province-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="省级全国题面：按省名或简称">
+          <button id="province-name-full" type="button" class="active" data-province-name="full" role="radio" aria-checked="true">省名</button>
+          <button id="province-name-abbr" type="button" data-province-name="abbr" role="radio" aria-checked="false">简称</button>
         </div>
         <div id="analysis-granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="熟练度分析粒度">
           <button id="analysis-granularity-world" type="button" data-analysis-granularity="world" role="radio" aria-checked="false">世界</button>
@@ -254,6 +268,8 @@
       </label>
       <div class="settings-section-title">答题范围</div>
       <label class="row setting-row"><span class="row-label">忽略面积极小的国家<span class="row-hint" id="set-ignore-tiny-hint"></span></span><input type="checkbox" id="set-ignore-tiny" /></label>
+      <div class="settings-section-title">地图标签</div>
+      <label class="row setting-row"><span class="row-label">未开始时显示地图标签<span class="row-hint">点击 / 输入 / 无尽闯关在「未开始」的浏览阶段显示全部地名，开始答题后自动隐藏，结束后恢复</span></span><input type="checkbox" id="set-show-browse-labels" /></label>
       <div class="card-actions">
         <button id="set-save" class="primary">保存</button>
         <button id="set-cancel" class="ghost">取消</button>

@@ -1,8 +1,10 @@
 import type { Continent, Mode, RenderState, RoundResult, SubregionId, Unit } from '../types';
 import { CONTINENTS } from '../types';
-import type { ModeCtx, OrderMode, ProgressSegment } from './types';
+import type { ModeCtx, OrderMode, ProgressSegment, QuestionNaming } from './types';
 import type { QuizSessionDiagnostics } from './quizDiagnostics';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
+import { loadStoredNaming, saveStoredNaming } from './namingStore';
+import { browseLabelState, type BrowseLabelScope } from './browseLabels';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView } from './progress';
@@ -13,6 +15,7 @@ import {
   buildProvinceAdjacency,
   canDrillProvince,
   continentScope,
+  provinceAbbr,
   provinceByAdcode,
   provinceShortName,
   provinceUnits,
@@ -64,11 +67,18 @@ export abstract class MapQuizMode extends BaseMode {
   protected scopeLoaded = false;
   protected syncingScope = false;
   protected orderMode: OrderMode = this.loadOrderMode();
+  /** 题面/标签取名口径（世界档「国名/首都」+「中文/英文」，省级档「省名/简称」）。 */
+  protected naming: QuestionNaming = loadStoredNaming(this.storagePrefix());
   protected wrongOrder: WrongOrderState = initWrongOrderState([], () => 0);
   protected errorRollback = false;
   protected rollbackCounted = new Set<string>(); // 错误回滚中已计入第一次答错的单位
   protected rollbacking = false; // 错误回滚展示中，暂不接受作答
   protected rollbackTimer: number | null = null; // 回滚延时定时器
+  /**
+   * 已弹出结算卡片（中途终止提交成绩）：此时算「已结束」，浏览标签据此复现。
+   * 与 `started` 分开是因为结算流程是「先 pause（仍在进行中）→ 弹卡片」，pause 本身不算结束。
+   */
+  protected settled = false;
   protected provinceAdjacency = new Map<string, string[]>();
   protected provincePool: Unit[] = [];
   protected worldPool: Unit[] = [];
@@ -282,9 +292,66 @@ export abstract class MapQuizMode extends BaseMode {
     }
   }
 
+  // ==================== 题面口径（国名/首都、中文/英文、省名/简称） ====================
+
+  getQuestionNaming(): QuestionNaming {
+    return { ...this.naming };
+  }
+
+  /**
+   * 切换题面/取名口径。只改传入的字段（UI 上三组分段按钮各自切换）。
+   *
+   * 守卫与「粒度」一致：**答题进行中不允许切换** —— 题面已经发出去了，换口径会让同一题
+   * 的题目与答案对不上（UI 侧这些分段按钮在开始后也整组收起，这里把守卫下沉到代码里，
+   * 免得将来某条路径绕过 UI 直接调用）。
+   */
+  setQuestionNaming(patch: Partial<QuestionNaming>) {
+    if (this.started) return;
+    const next: QuestionNaming = { ...this.naming, ...patch };
+    if (next.world === this.naming.world && next.lang === this.naming.lang && next.province === this.naming.province) return;
+    this.naming = next;
+    saveStoredNaming(this.storagePrefix(), next);
+    this.onNamingChanged();
+    this.refresh();
+  }
+
+  /** 口径变化后的子类收尾（点击模式要按新口径重写题卡；输入模式无需）。 */
+  protected onNamingChanged(): void {}
+
+  // ==================== 浏览标签（未开始时的全量地名） ====================
+
+  /** 当前视图该显示哪一层的浏览标签（世界=国名 / 省级全国=省名 / 其余=地级市名）。 */
+  protected browseLabelScope(): BrowseLabelScope {
+    if (this.isWorldNation()) return 'world';
+    if (this.isProvinceNation()) return 'provinceNation';
+    return 'city'; // 市级全国 / 单省 / 省级全国下钻某省：显示该范围内的地级市名
+  }
+
+  /**
+   * 浏览标签片段（喂给 `refresh()` 的渲染状态）。
+   *
+   * 只在**未开始**或**已结算**时给全量地名；答题进行中返回空 —— 此时地图上只保留已作答的绿/红标签，
+   * 未作答的没有文字（用户口径：开始后标签清空，但答题反馈不退化）。
+   */
+  protected browseLabelState(): Partial<RenderState> {
+    if (this.started && !this.settled) return {};
+    return browseLabelState(this.browseLabelScope(), this.ctx.settings.showBrowseLabels);
+  }
+
+  /**
+   * 结算卡片已弹出（外壳调用）：把这次会话记为「已结束」，让浏览标签复现。
+   * 暂停（`onEnd`）不走这里 —— 暂停仍是进行中，回来继续答题。
+   */
+  onSettlementShown() {
+    if (this.settled) return;
+    this.settled = true;
+    this.refresh();
+  }
+
   // ==================== 生命周期 ====================
 
   enter() {
+    this.settled = false; // 回到开始状态：浏览标签复现
     if (this.paused) {
       this.syncScopeView();
       this.configureSearch(true);
@@ -312,6 +379,7 @@ export abstract class MapQuizMode extends BaseMode {
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
+    this.settled = false;
     this.rollbacking = false;
     if (this.rollbackTimer !== null) {
       window.clearTimeout(this.rollbackTimer);
@@ -364,6 +432,7 @@ export abstract class MapQuizMode extends BaseMode {
     this.onResetHook();
     this.started = false;
     this.paused = false;
+    this.settled = false;
     this.rollbacking = false;
     this.ctx.setTestRunning?.(false); // 重置也是「结束」：展开排行榜侧栏
     if (this.rollbackTimer !== null) {
@@ -622,6 +691,7 @@ export abstract class MapQuizMode extends BaseMode {
     }
     this.started = true;
     this.paused = false;
+    this.settled = false; // 开始答题：浏览标签收起
     this.ctx.setTestRunning?.(true); // 开始测验：收起排行榜侧栏
     this.onStarted(first);
     this.stopwatch.start((elapsedMs) => this.ctx.showStopwatch(elapsedMs));
@@ -643,7 +713,9 @@ export abstract class MapQuizMode extends BaseMode {
     this.onAnswerStart();
     const q = this.question;
     if (!q) return;
-    const name = this.currentUnitOf(q)?.name ?? q;
+    // 答错提示里的「正确答案」也走当前口径：题卡写首都/简称时，答案提示不能还写国名/省全名
+    const unit = this.currentUnitOf(q);
+    const name = unit ? this.displayNameOf(unit) : q;
 
     // 错误回滚：答错即计入 fail/熟练度/进度红格（仅第一次计入），随后短暂显示红色并撤回，
     // 重答同一题直到答对。**每次答错都标红**（不只是第一次），红显时长 ROLLBACK_RED_MS。
@@ -814,6 +886,43 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   /**
+   * 某个单位在当前口径下的**显示名**：题卡（点击模式）、地图标签、答错提示共用这一处。
+   *
+   * 为什么不各自拼一份：这三处都要跟着「国名/首都」「中文/英文」「省名/简称」变，任何一处漏改
+   * 就会出现「题卡写首都、标签写国名」这类自相矛盾的界面。数据缺失时逐级回落（首都 → 国名，
+   * 英文 → 中文），保证永远有可显示文本。
+   */
+  protected displayNameOf(unit: Unit): string {
+    if (this.isWorldNation()) return this.worldDisplayName(unit.adcode);
+    // 省级全国：「省名」档沿用历史题面（省全名，如 广东省），「简称」档才是单字（沪）
+    if (this.isProvinceNation()) return this.naming.province === 'abbr' ? provinceAbbr(this.ctx.data, unit.adcode) : unit.name;
+    return unit.name; // 地级（市级全国 / 单省）不受取名口径影响
+  }
+
+  /** 世界档显示名：国名 或 首都名，再按语言取中/英文。 */
+  protected worldDisplayName(iso: string): string {
+    const names = this.ctx.data.countryNames[iso];
+    if (this.naming.world === 'capital') {
+      const capital = this.naming.lang === 'en' ? names?.capitalEn : names?.capital;
+      return capital || this.countryName(iso);
+    }
+    if (this.naming.lang === 'en') return names?.en || this.countryName(iso);
+    return this.countryName(iso);
+  }
+
+  /**
+   * 省级全国**地图标签**的文本。
+   *
+   * 与题面口径分开是因为两者历史上就不同：标签一直是去后缀省名（广东省 → 广东），
+   * 而题面是省全名（广东省）。「简称」档两者统一成单字（沪）—— 这正是用户要的「标签也显示简称」。
+   */
+  protected provinceLabelTextOf(adcode: string): string {
+    return this.naming.province === 'abbr'
+      ? provinceAbbr(this.ctx.data, adcode)
+      : provinceShortName(this.ctx.data, adcode);
+  }
+
+  /**
    * 省级全国的省名标签：已作答省显示绿/红简称，未作答返回 `null`。
    *
    * 非省级全国返回 `undefined`，即渲染状态里不使用这个系列。
@@ -824,21 +933,21 @@ export abstract class MapQuizMode extends BaseMode {
     if (!this.isProvinceNation()) return undefined;
     return (provinceAdcode) => {
       if (this.green.has(provinceAdcode)) {
-        return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'green' as const };
+        return { text: this.provinceLabelTextOf(provinceAdcode), color: 'green' as const };
       }
       if (this.red.has(provinceAdcode)) {
-        return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'red' as const };
+        return { text: this.provinceLabelTextOf(provinceAdcode), color: 'red' as const };
       }
       return null;
     };
   }
 
-  /** 世界全国的国名标签：已作答国显示绿/红国名，未作答返回 `null`。非世界全国返回 `undefined`。 */
+  /** 世界全国的国名标签：已作答国显示绿/红**当前口径的名字**（国名/首都、中/英文）。非世界全国返回 `undefined`。 */
   protected worldLabelOf(): RenderState['worldLabel'] {
     if (!this.isWorldNation()) return undefined;
     return (iso) => {
-      if (this.green.has(iso)) return { text: this.countryName(iso), color: 'green' as const };
-      if (this.red.has(iso)) return { text: this.countryName(iso), color: 'red' as const };
+      if (this.green.has(iso)) return { text: this.worldDisplayName(iso), color: 'green' as const };
+      if (this.red.has(iso)) return { text: this.worldDisplayName(iso), color: 'red' as const };
       return null;
     };
   }
@@ -866,14 +975,18 @@ export abstract class MapQuizMode extends BaseMode {
       get fail() { return self.fail; },
       set fail(v: number) { self.fail = v; },
       get started() { return self.started; },
+      set started(v: boolean) { self.started = v; },
       get order() { return self.order; },
       get scopeProvince() { return self.scopeProvince; },
+      set scopeProvince(v: string | null) { self.scopeProvince = v; },
       get worldContinent() { return self.worldContinent; },
       set worldContinent(v: Continent | null) { self.worldContinent = v; },
       get worldSubregion() { return self.worldSubregion; },
       set worldSubregion(v: SubregionId | null) { self.worldSubregion = v; },
       get orderMode() { return self.orderMode; },
       set orderMode(v: OrderMode) { self.orderMode = v; },
+      get naming() { return self.naming; },
+      set naming(v: QuestionNaming) { self.naming = v; },
       get errorRollback() { return self.errorRollback; },
       set errorRollback(v: boolean) { self.errorRollback = v; },
       get rollbackCounted() { return self.rollbackCounted; },

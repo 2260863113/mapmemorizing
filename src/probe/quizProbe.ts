@@ -10,6 +10,7 @@
  */
 import { ROLLBACK_RED_MS } from '../modes/mapQuizMode';
 import type { AppDiagnostics } from '../appDiagnostics';
+import type { RenderState } from '../types';
 
 export function quizProbe(a: AppDiagnostics) {
   const { renderer, data, clickMode, selfMode, sidePanel } = a;
@@ -213,6 +214,52 @@ export function quizProbe(a: AppDiagnostics) {
         worldSubregion: d?.worldSubregion ?? null,
         viewProvince: renderer.currentProvince(),
       };
+    },
+
+    /**
+     * 9. 题面 / 标签的**取名口径**（2026-09：「国名 / 首都」+「中文 / 英文」+「省名 / 简称」）。
+     *
+     * 返回三处**实际文本**：顶栏题面的 DOM 文本、以及两条标签系列真正会画出的文字
+     * （走 `buildWorldLabelData` / `buildProvinceLabelData`，即 ECharts 拿到的同一份数据）。
+     * 探针不复制业务规则：真值由验收脚本从数据文件（world_names.json / province-abbr.json）取，
+     * 这里只负责"如实报告现在要显示什么"，任何一处漏改口径都会与真值对不上。
+     */
+    namingTexts() {
+      const mode = a.current;
+      const session = mode?.id === 'self' ? sm : mode?.id === 'click' ? cm : null;
+      const ui = renderer.diagnostics();
+      const state = ui.lastState;
+      const textsOf = (fn: ((s: RenderState) => unknown[]) | null) =>
+        state && fn ? fn(state).map((row) => String((row as { value?: unknown[] }).value?.[2] ?? '')) : null;
+      const togglesVisible = (id: string) => {
+        const el = document.getElementById(id);
+        return !!el && !el.classList.contains('hidden') && el.getBoundingClientRect().width > 0;
+      };
+      return {
+        mode: mode?.id ?? null,
+        granularity: mode?.getGranularity?.() ?? null,
+        scopeProvince: mode?.getScopeProvince?.() ?? null,
+        naming: session?.naming ?? null,
+        started: session?.started ?? false,
+        question: session?.question ?? null,
+        /** 顶栏题面（点击模式的题卡 / 开始卡片）的可见文本。 */
+        hint: document.getElementById('top-hint')?.textContent?.trim() ?? '',
+        worldLabels: textsOf(ui.buildWorldLabelData),
+        provinceLabels: textsOf(ui.buildProvinceLabelData),
+        /** 三组分段按钮是否可见（显隐由 chromeSync 按模式 + 粒度算）。 */
+        toggles: {
+          worldName: togglesVisible('world-name-toggle'),
+          worldLang: togglesVisible('world-lang-toggle'),
+          provinceName: togglesVisible('province-name-toggle'),
+        },
+      };
+    },
+
+    /** 答对当前题（让「已作答」标签出现），走与真实作答同一条 `answer()` 路径。 */
+    answerCurrent() {
+      const session = a.current?.id === 'self' ? sm : cm;
+      session.answer(true, true);
+      return session.green.size;
     },
   };
 }

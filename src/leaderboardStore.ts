@@ -1,7 +1,10 @@
-import type { Mode, RoundResult } from './types';
+import type { RoundResult } from './types';
 import { api } from './api';
+import type { LeaderboardMode } from './modes/capabilities';
 
-export type LeaderboardMode = Extract<Mode, 'self' | 'click' | 'endless' | 'puzzle'>;
+// 排行榜模式集的定义在 modes/capabilities.ts（与「哪些模式有排行榜」的判定同一处），
+// 这里只是转出，供排行榜相关模块沿用既有导入路径。
+export type { LeaderboardMode };
 
 export interface LeaderboardEntry {
   id: string;

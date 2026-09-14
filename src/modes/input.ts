@@ -14,11 +14,12 @@ import {
   saveSelfRequireEnter,
   type ModeSettingsPanel,
 } from '../modeSettings';
-import { canDrillProvince, drillTargetOfUnit } from '../province';
+import { canDrillProvince, drillTargetOfUnit, isProvinceAbbrInput } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
 import { WorldMatcher } from '../worldNames';
+import { showStartCard } from '../ui/dom';
 
 /**
  * 输入模式（BFS 扩张）：
@@ -42,7 +43,7 @@ export class InputMode extends MapQuizMode {
 
   constructor(ctx: ModeCtx) {
     super(ctx);
-    this.worldMatcher = new WorldMatcher(ctx.data.countries);
+    this.worldMatcher = new WorldMatcher(ctx.data.countries, ctx.data.countryNames);
   }
 
   // ==================== 差异点实现 ====================
@@ -107,9 +108,17 @@ export class InputMode extends MapQuizMode {
     if (best === this.question) this.answer(true, true);
   }
 
-  /** 输入匹配：省级全国 → 精确省名匹配；世界全国 → 国家名匹配；市级 → 地级单位匹配。 */
+  /**
+   * 输入匹配：省级全国 → 精确省名匹配（简称档只认简称）；世界全国 → 国家名匹配（国名档走 `bestMatch`，
+   * 首都档走「是不是这一题的首都名」，见 `WorldMatcher.acceptsCapital` 的同形异国说明）；
+   * 市级 → 地级单位匹配。
+   */
   private matchInput(v: string): string | null {
     if (this.isProvinceNation()) {
+      // 简称档：只认单字简称（含 蜀/黔/滇/秦/陇 等别名），不认省名 —— 见 province.isProvinceAbbrInput
+      if (this.naming.province === 'abbr') {
+        return this.provincePool.find((p) => isProvinceAbbrInput(this.ctx.data, p.adcode, v))?.adcode ?? null;
+      }
       const ni = normalizeProvince(v);
       if (!ni) return null;
       for (const p of this.provincePool) {
@@ -117,7 +126,10 @@ export class InputMode extends MapQuizMode {
       }
       return null;
     }
-    if (this.isWorldNation()) return this.worldMatcher.bestMatch(v);
+    if (this.isWorldNation()) {
+      if (this.naming.world === 'capital') return this.worldMatcher.acceptsCapital(this.question ?? '', v) ? this.question : null;
+      return this.worldMatcher.bestMatch(v);
+    }
     return this.ctx.matcher.bestUnit(v)?.adcode ?? null;
   }
 
@@ -170,13 +182,12 @@ export class InputMode extends MapQuizMode {
   }
 
   showStartHint() {
-    const scope = this.scopeLabel();
-    const actions = '<button id="self-start" class="start-action">' + t('common.start') + '</button>';
-    this.ctx.setHint('<div class="start-panel"><div class="start-title">' + t('self.startTitle') + '</div><div class="start-subtitle">' + t('common.scopePrefix', { scope }) + '</div>' + actions + '</div>');
-    window.setTimeout(() => {
-      const start = document.getElementById('self-start') as HTMLButtonElement | null;
-      if (start) start.onclick = () => this.start(false);
-    }, 0);
+    showStartCard({
+      id: 'self-start',
+      title: t('self.startTitle'),
+      subtitle: t('common.scopePrefix', { scope: this.scopeLabel() }),
+      onStart: () => this.start(false),
+    });
   }
 
   refresh() {
@@ -187,6 +198,8 @@ export class InputMode extends MapQuizMode {
         if (this.red.has(adcode)) return 'red';
         return 'gray';
       },
+      // 未开始（浏览态）：显示全量地名；开始后清空，只留已作答的绿/红（见 browseLabels.ts）
+      ...this.browseLabelState(),
       // 省名标签 / 国名标签：与点击模式共用基类实现（原先两个子类各抄了一份）
       provinceLabel: this.provinceLabelOf(),
       worldLabel: this.worldLabelOf(),
@@ -196,13 +209,34 @@ export class InputMode extends MapQuizMode {
   // ==================== 输入特有：钩子覆写 ====================
 
   protected configureSearch(paused: boolean) {
-    let placeholder: string;
-    if (this.isProvinceNation()) placeholder = t('self.provincePlaceholder');
-    else if (this.isWorldNation()) placeholder = t('self.worldPlaceholder');
-    else placeholder = paused ? t('self.placeholderFull') : t('self.placeholder');
-    if (paused) this.ctx.search.setPlaceholder(this.isProvinceNation() || this.isWorldNation() ? placeholder : t('self.placeholderFull'));
-    else this.ctx.search.setPlaceholder(placeholder);
+    // 省级/世界档的提示与粒度、口径有关（暂停中也保留，便于看清在练什么）；
+    // 地级档暂停时统一显示「输入地名」（与切模式时一致，历史行为）
+    const scoped = this.isProvinceNation() || this.isWorldNation();
+    const placeholder = paused && !scoped ? t('self.placeholderFull') : this.placeholderForNaming();
+    this.ctx.search.setPlaceholder(placeholder);
     this.ctx.search.setRequireEnter(this.requireEnter);
+  }
+
+  /**
+   * 按当前粒度与取名口径给出占位提示（口径变了提示要跟着变，否则用户不知道该输入什么）。
+   * 世界档四种组合、省级档两种；地级沿用历史提示。
+   */
+  private placeholderForNaming(): string {
+    if (this.isProvinceNation()) {
+      return this.naming.province === 'abbr' ? t('self.abbrPlaceholder') : t('self.provincePlaceholder');
+    }
+    if (this.isWorldNation()) {
+      const capital = this.naming.world === 'capital';
+      const en = this.naming.lang === 'en';
+      if (capital) return en ? t('self.capitalEnPlaceholder') : t('self.capitalPlaceholder');
+      return en ? t('self.worldEnPlaceholder') : t('self.worldPlaceholder');
+    }
+    return t('self.placeholder');
+  }
+
+  /** 口径切换后占位提示要立刻反映新口径（暂停中保持「输入地名」，与切模式一致）。 */
+  protected onNamingChanged() {
+    if (!this.paused) this.ctx.search.setPlaceholder(this.placeholderForNaming());
   }
 
   protected resetSessionSpecific() {

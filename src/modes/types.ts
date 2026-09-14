@@ -38,6 +38,23 @@ export interface ModeCtx {
 
 export type ProgressSegment = 'pending' | 'green' | 'red';
 
+/**
+ * 题面 / 地图标签的**取名口径**（2026-09 新增：世界档「国名 / 首都」+「中文 / 英文」，省级全国「省名 / 简称」）。
+ *
+ * - `world`：`country` 按国名出题（默认）/ `capital` 按首都名出题；
+ * - `lang`：`zh` 中文（默认）/ `en` 英文 —— 只换**内容语言**（题面与地图标签），
+ *   UI 交互文案（按钮、提示、说明）始终中文，故它不是应用级 i18n 开关；
+ * - `province`：`full` 按省名（默认）/ `abbr` 按单字简称（沪）。
+ *
+ * 三档互相独立，且只影响**世界全国**与**省级全国**两档范围：地级（市级全国/单省）与无尽闯关
+ * 沿用单位名，不受影响（用户口径：只有这两档需要）。
+ */
+export interface QuestionNaming {
+  world: 'country' | 'capital';
+  lang: 'zh' | 'en';
+  province: 'full' | 'abbr';
+}
+
 /** 测试模式出题顺序：输入模式支持 顺序/随机/错题。 */
 export type OrderMode = 'sequential' | 'random' | 'wrong';
 /** 点击模式出题顺序：仅 随机/错题（无顺序）。 */
@@ -74,6 +91,11 @@ export interface ModeController {
   getScopeProvince(): string | null;
   /** 快照当前会话结果（结算卡片用），未开始返回 null */
   collectResult(): RoundResult | null;
+  /**
+   * 结算卡片已弹出（外壳在弹卡片后调用）：把它记为「已结束」，让未开始的浏览标签复现。
+   * 与「暂停」区分：暂停仍是进行中，不走这里。未实现的模式（拼图/无尽/留言板）无需实现。
+   */
+  onSettlementShown?(): void;
   /** 是否已有会话进度（切换模式前的确认提示用） */
   hasProgress(): boolean;
   /** 模式会话是否已经开始（地图空白返回确认用） */
@@ -95,7 +117,7 @@ export interface ModeController {
    * 自己维护缩放倍率的模式（拼图盘面）用它报给外壳；返回 null/undefined 表示走地图渲染器的倍率。
    */
   getZoomDisplay?(): number | null;
-  /** 切换全国层的世界/省级/市级粒度（输入/点击/自由模式；熟练度分析用 setAnalysisGranularity）。 */
+  /** 切换全国层的世界/省级/市级粒度（输入/点击模式；熟练度分析用 setAnalysisGranularity）。 */
   setGranularity?(g: Granularity): void;
   /** 世界粒度下的当前大洲范围（null=全世界；非世界粒度返回 null）。 */
   getWorldContinent?(): Continent | null;
@@ -107,4 +129,8 @@ export interface ModeController {
   setWorldSubregion?(s: SubregionId | null): void;
   /** 当前出题顺序（输入/点击用；其它模式返回 null）。 */
   getOrderMode?(): OrderMode | ClickOrderMode | null;
+  /** 当前题面/标签的取名口径（输入/点击用；其它模式返回 null）。 */
+  getQuestionNaming?(): QuestionNaming | null;
+  /** 切换取名口径（只传要改的字段；与 setGranularity 一样：仅未开始时生效）。 */
+  setQuestionNaming?(patch: Partial<QuestionNaming>): void;
 }

@@ -79,14 +79,25 @@ export function saveEndlessAutoFollow(v: boolean) {
   saveBool(ENDLESS_AUTO_FOLLOW_KEY, v);
 }
 
-// ---------- 自由模式（memory，自由浏览） ----------
-const MEMORY_HIDE_LABELS_KEY = 'china-admin-memory-hide-labels-v1';
+// 无尽闯关的两个价格显示开关原先手写在 modes/endless.ts 尾部（自带一份 localStorage try/catch），
+// 与这里其余各模式的开关是同一件事，故一并收进来。
+const ENDLESS_HIDE_PRICES_KEY = 'china-admin-endless-hide-price-v1';
+const ENDLESS_HIDE_PRICE_BG_KEY = 'china-admin-endless-hide-price-bg-v1';
 
-export function loadMemoryHideLabels(): boolean {
-  return loadBool(MEMORY_HIDE_LABELS_KEY, false);
+/** 无尽闯关：隐藏价格标签（只显示本关已收集城市的地名）。 */
+export function loadEndlessHidePrices(): boolean {
+  return loadBool(ENDLESS_HIDE_PRICES_KEY, false);
 }
-export function saveMemoryHideLabels(v: boolean) {
-  saveBool(MEMORY_HIDE_LABELS_KEY, v);
+export function saveEndlessHidePrices(v: boolean) {
+  saveBool(ENDLESS_HIDE_PRICES_KEY, v);
+}
+
+/** 无尽闯关：隐藏价格标签衬底（价格改白字黑描边）。 */
+export function loadEndlessHidePriceBg(): boolean {
+  return loadBool(ENDLESS_HIDE_PRICE_BG_KEY, false);
+}
+export function saveEndlessHidePriceBg(v: boolean) {
+  saveBool(ENDLESS_HIDE_PRICE_BG_KEY, v);
 }
 
 // ---------- 熟练度分析（free） ----------

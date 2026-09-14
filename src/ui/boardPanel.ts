@@ -5,6 +5,7 @@ import { avatarHtml } from './avatar';
 import { escapeHtml } from './html';
 import { formatRelative } from './dateFormat';
 import { toast } from './dom';
+import { clearDraft, loadDraft, saveDraft } from './boardDraft';
 import type { BoardPost, BoardReply } from '../api';
 import { t } from '../i18n';
 
@@ -51,6 +52,7 @@ export class BoardPanel {
   private render() {
     const user = this.auth.currentUser();
     const posts = this.store.getPosts();
+    const draft = loadDraft(); // 草稿回填：登录跳转/切模式/刷新后内容仍在（见 boardDraft.ts）
     const listHtml = posts.length
       ? `<div class="board-list">${posts.map((p) => this.renderPost(p)).join('')}</div>
          <button id="board-load-more" class="board-load-more" type="button">${t('board.loadMore')}</button>`
@@ -60,9 +62,9 @@ export class BoardPanel {
       <div class="board-container">
         <h2 class="board-heading">${t('board.title')}</h2>
         <div class="board-composer">
-          <textarea id="board-new-content" maxlength="${MAX_POST}" rows="2" placeholder="${t('board.postPlaceholder')}"></textarea>
+          <textarea id="board-new-content" maxlength="${MAX_POST}" rows="2" placeholder="${t('board.postPlaceholder')}">${escapeHtml(draft)}</textarea>
           <div class="board-composer-actions">
-            <span id="board-new-count" class="board-count">0/${MAX_POST}</span>
+            <span id="board-new-count" class="board-count">${Array.from(draft).length}/${MAX_POST}</span>
             <button id="board-new-submit" class="primary" type="button">${t('board.post')}</button>
           </div>
         </div>
@@ -74,6 +76,7 @@ export class BoardPanel {
     const textarea = document.getElementById('board-new-content') as HTMLTextAreaElement | null;
     if (textarea) {
       textarea.addEventListener('input', () => {
+        saveDraft(textarea.value); // 随打随存：登录跳转/误刷新都不会丢
         const count = document.getElementById('board-new-count');
         if (count) count.textContent = `${Array.from(textarea.value).length}/${MAX_POST}`;
       });
@@ -197,46 +200,96 @@ export class BoardPanel {
     this.render();
   }
 
+  /**
+   * 发布留言。
+   *
+   * 未登录时**先把内容取出来**再走登录门控，并让登录/注册成功后的回调直接用它发布
+   * （用户口径 2026-09：登录或注册之后直接发布，不再让用户重写）。内容同时随打随存在
+   * localStorage，故中途放弃登录、切模式、刷新都不会丢（见 boardDraft.ts）。
+   */
   private submitPost() {
-    if (!this.requireLogin()) return;
-    const textarea = this.el.querySelector<HTMLTextAreaElement>('#board-new-content');
-    if (!textarea) return;
-    const content = textarea.value.trim();
+    const content = this.composerValue();
     if (!content) return;
+    if (!this.auth.currentUser()) {
+      this.authPanel.requestLogin(() => this.publishPost(content));
+      return;
+    }
+    this.publishPost(content);
+  }
+
+  /** 输入框内容（输入框不在场时回落到草稿 —— 例如登录回调在重绘之后才跑起来）。 */
+  private composerValue(): string {
+    const textarea = this.el.querySelector<HTMLTextAreaElement>('#board-new-content');
+    return (textarea ? textarea.value : loadDraft()).trim();
+  }
+
+  /** 真正发布（登录后自动续发也走这里）：**成功才清草稿**；失败则把内容放回输入框并提示。 */
+  private publishPost(content: string) {
     const token = this.auth.sessionToken();
     if (!token) return;
     void (async () => {
+      // try 只包住网络调用：发布成功之后的重绘 / 提示若出错，不该被当成「发布失败」而把草稿又存回去
+      // （否则用户会以为没发出去，再点一次就重复发帖）。
       try {
         await this.store.createPost(token, content);
-        this.render();
       } catch {
+        saveDraft(content);
+        this.render(); // render 会把草稿回填进输入框，用户的内容还在
         this.toastError();
+        return;
       }
+      clearDraft();
+      this.render();
+      toast(t('board.posted'));
     })();
   }
 
   private submitReply(postId: number) {
-    if (!this.requireLogin()) return;
-    const textarea = this.el.querySelector<HTMLTextAreaElement>(`[data-action="submit-reply"][data-post="${postId}"]`)
-      ?.parentElement?.querySelector<HTMLTextAreaElement>('[data-role="reply-content"]');
-    if (!textarea) return;
-    const content = textarea.value.trim();
+    const content = this.replyValue(postId);
     if (!content) return;
+    if (!this.auth.currentUser()) {
+      this.authPanel.requestLogin(() => this.publishReply(postId, content));
+      return;
+    }
+    this.publishReply(postId, content);
+  }
+
+  private replyValue(postId: number): string {
+    const textarea = this.replyBoxOf(postId);
+    return textarea ? textarea.value.trim() : '';
+  }
+
+  private replyBoxOf(postId: number): HTMLTextAreaElement | null {
+    return (
+      this.el
+        .querySelector<HTMLButtonElement>(`[data-action="submit-reply"][data-post="${postId}"]`)
+        ?.parentElement?.querySelector<HTMLTextAreaElement>('[data-role="reply-content"]') ?? null
+    );
+  }
+
+  /** 真正发布回复（登录后自动续发也走这里）：成功后收起回复框；失败保留回复框与内容。 */
+  private publishReply(postId: number, content: string) {
     const token = this.auth.sessionToken();
     if (!token) return;
     void (async () => {
       try {
         await this.store.createReply(token, postId, content);
-        this.expandedReplyInput = null;
-        this.render();
       } catch {
+        this.expandedReplyInput = postId; // 保持回复框展开
+        this.render();
+        const textarea = this.replyBoxOf(postId);
+        if (textarea) textarea.value = content;
         this.toastError();
+        return;
       }
+      this.expandedReplyInput = null;
+      this.render();
+      toast(t('board.replied'));
     })();
   }
 
   private async deletePost(postId: number) {
-    if (!this.requireLogin()) return;
+    if (!this.requireLogin(() => this.render())) return;
     const token = this.auth.sessionToken();
     if (!token) return;
     if (!window.confirm(t('board.confirmDeletePost'))) return;
@@ -249,7 +302,7 @@ export class BoardPanel {
   }
 
   private async deleteReply(postId: number, replyId: number) {
-    if (!this.requireLogin()) return;
+    if (!this.requireLogin(() => this.render())) return;
     const token = this.auth.sessionToken();
     if (!token) return;
     if (!window.confirm(t('board.confirmDeleteReply'))) return;
@@ -261,10 +314,15 @@ export class BoardPanel {
     }
   }
 
-  /** 未登录时跳到登录界面（登录成功后刷新面板，回到已登录态）。 */
-  private requireLogin(): boolean {
+  /**
+   * 未登录时跳到登录界面，登录/注册成功后执行 `then`。
+   *
+   * 发布/回复传「继续发布」的回调（用户口径：登录或注册之后直接发布）；删除这类**破坏性**操作
+   * 只传 `() => this.render()` —— 登录后自动删帖风险太大，让用户再点一次。
+   */
+  private requireLogin(then: () => void): boolean {
     if (this.auth.currentUser()) return true;
-    this.authPanel.requestLogin(() => this.render());
+    this.authPanel.requestLogin(then);
     return false;
   }
 

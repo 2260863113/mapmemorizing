@@ -1,10 +1,19 @@
 import { AuthStore, type ProfileUpdate } from '../authStore';
-import { normalize, normalizeProvince } from '../matcher';
-import type { AppData, AuthUser, UserAvatar, UserHometown } from '../types';
+import type { AppData, AuthUser, UserAvatar } from '../types';
 import { t } from '../i18n';
 import { $, toast } from './dom';
 import { avatarColor, initialOf } from './avatar';
 import { escapeAttr } from './html';
+import { compressAvatar } from './avatarImage';
+import {
+  cityByAdcode,
+  matchCity,
+  matchProvince,
+  provinceByAdcode,
+  rankCities,
+  rankProvinces,
+  resolveHometown,
+} from './hometown';
 
 type AuthView = 'login' | 'register' | 'profile' | 'password';
 
@@ -12,8 +21,6 @@ interface LocationState {
   provinceAdcode: string;
   cityAdcode: string;
 }
-
-const MAX_AVATAR_SIZE = 20 * 1024;
 
 export class AuthPanel {
   private menu: HTMLElement;
@@ -43,6 +50,14 @@ export class AuthPanel {
   private bindShell() {
     $('user-center').addEventListener('click', (event) => {
       event.stopPropagation();
+      // 游客：直接进登录卡片（按钮文案本来就是「点击登录」）。
+      // 以前这里一律展开菜单，而菜单项在未登录时全是 disabled —— 结果是游客点右上角
+      // 什么也进不去（用户报的缺陷）。菜单只对已登录用户展开。
+      if (!this.store.currentUser()) {
+        this.closeMenu();
+        this.openLogin();
+        return;
+      }
       this.toggleMenu();
     });
     document.addEventListener('click', () => {
@@ -206,8 +221,8 @@ export class AuthPanel {
       this.openLogin();
       return;
     }
-    const province = this.provinceByAdcode(this.location.provinceAdcode);
-    const city = this.cityByAdcode(this.location.cityAdcode);
+    const province = provinceByAdcode(this.data, this.location.provinceAdcode);
+    const city = cityByAdcode(this.data, this.location.cityAdcode);
     this.card.innerHTML = `
       <h3>${t('auth.profile.title')}</h3>
       <div class="profile-avatar-row">
@@ -246,7 +261,7 @@ export class AuthPanel {
       this.renderProvinceOptions(provinceInput.value);
     });
     provinceInput.addEventListener('input', () => {
-      const province = this.matchProvince(provinceInput.value);
+      const province = matchProvince(this.data, provinceInput.value);
       if (province?.adcode !== this.location.provinceAdcode) {
         this.location.provinceAdcode = province?.adcode ?? '';
         this.location.cityAdcode = '';
@@ -272,7 +287,7 @@ export class AuthPanel {
         this.renderEmptyCityOptions();
         return;
       }
-      const city = this.matchCity(cityInput.value);
+      const city = matchCity(this.data, this.location.provinceAdcode, cityInput.value);
       this.location.cityAdcode = city?.adcode ?? '';
       this.openDropdown('auth-city-options');
       this.renderCityOptions(cityInput.value);
@@ -301,7 +316,7 @@ export class AuthPanel {
   private renderProvinceOptions(input: string) {
     const host = $('auth-province-options');
     host.innerHTML = '';
-    const rows = this.rankProvinces(input).slice(0, 8);
+    const rows = rankProvinces(this.data, input).slice(0, 8);
     for (const province of rows) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -324,7 +339,7 @@ export class AuthPanel {
       this.renderEmptyCityOptions();
       return;
     }
-    const rows = this.rankCities(input).slice(0, 10);
+    const rows = rankCities(this.data, this.location.provinceAdcode, input).slice(0, 10);
     for (const city of rows) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -377,16 +392,19 @@ export class AuthPanel {
     const username = ($('auth-profile-name') as HTMLInputElement).value;
     const provinceText = ($('auth-profile-province') as HTMLInputElement).value.trim();
     const cityText = ($('auth-profile-city') as HTMLInputElement).value.trim();
-    const hometown = this.resolveHometown(provinceText, cityText);
-    if (hometown instanceof Error) {
-      this.showMessage(hometown.message);
+    const resolved = resolveHometown(this.data, provinceText, cityText);
+    if (resolved.status === 'invalidProvince') {
+      this.showMessage(t('auth.error.invalidProvince'));
       return;
     }
-    const update: ProfileUpdate = {
-      username,
-      hometown,
-      avatar: this.avatar,
-    };
+    if (resolved.status === 'invalidCity') {
+      this.showMessage(t('auth.error.invalidCity'));
+      return;
+    }
+    // 两项都留空 = 不填家乡（本地草稿保持原样），否则把解析出的 adcode 对落回草稿并提交
+    const hometown = resolved.status === 'ok' ? resolved.hometown : null;
+    if (resolved.status === 'ok') this.location = { ...resolved.hometown };
+    const update: ProfileUpdate = { username, hometown, avatar: this.avatar };
     try {
       await this.store.updateProfile(update);
       this.closeOverlay();
@@ -457,7 +475,7 @@ export class AuthPanel {
     }
     let compressed: { dataUrl: string; size: number; type: string };
     try {
-      compressed = await compressImage(file, MAX_AVATAR_SIZE);
+      compressed = await compressAvatar(file);
     } catch (error) {
       input.value = '';
       this.showMessage(errorMessage(error));
@@ -467,63 +485,6 @@ export class AuthPanel {
     const preview = document.querySelector<HTMLElement>('.profile-avatar');
     if (preview) this.paintAvatar(preview, { username: this.store.currentUser()?.username ?? '', avatar: this.avatar });
     this.showMessage(t('auth.toast.avatarSelected'));
-  }
-
-  private resolveHometown(provinceText: string, cityText: string): UserHometown | null | Error {
-    if (!provinceText && !cityText) return null;
-    const province = this.matchProvince(provinceText);
-    if (!province) return new Error(t('auth.error.invalidProvince'));
-    this.location.provinceAdcode = province.adcode;
-    const city = this.matchCity(cityText);
-    if (!city || city.provinceAdcode !== province.adcode) return new Error(t('auth.error.invalidCity'));
-    this.location.cityAdcode = city.adcode;
-    return { provinceAdcode: province.adcode, cityAdcode: city.adcode };
-  }
-
-  private rankProvinces(input: string) {
-    const ni = normalizeProvince(input);
-    const rows = [...this.data.provinces];
-    if (!ni) return rows;
-    return rows
-      .map((province) => ({ province, score: scoreText(ni, normalizeProvince(province.name)) }))
-      .filter((row) => row.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((row) => row.province);
-  }
-
-  private rankCities(input: string) {
-    const rows = this.cityRows();
-    const ni = normalize(input);
-    if (!ni) return rows;
-    return rows
-      .map((city) => ({ city, score: Math.max(scoreText(ni, normalize(city.name)), scoreText(ni, city.shortName)) }))
-      .filter((row) => row.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((row) => row.city);
-  }
-
-  private matchProvince(input: string) {
-    const ni = normalizeProvince(input);
-    if (!ni) return null;
-    return this.data.provinces.find((province) => normalizeProvince(province.name) === ni) ?? null;
-  }
-
-  private matchCity(input: string) {
-    const ni = normalize(input);
-    if (!ni) return null;
-    return this.cityRows().find((city) => normalize(city.name) === ni || city.shortName === ni) ?? null;
-  }
-
-  private cityRows() {
-    return this.data.allUnits.filter((unit) => unit.provinceAdcode === this.location.provinceAdcode && unit.adcode !== '100000_JD');
-  }
-
-  private provinceByAdcode(adcode: string) {
-    return this.data.provinces.find((province) => province.adcode === adcode) ?? null;
-  }
-
-  private cityByAdcode(adcode: string) {
-    return this.data.allUnits.find((unit) => unit.adcode === adcode && unit.adcode !== '100000_JD') ?? null;
   }
 
   private avatarEl(user: Pick<AuthUser, 'username' | 'avatar'> | null, className: string) {
@@ -563,57 +524,6 @@ export class AuthPanel {
   }
 }
 
-function scoreText(input: string, value: string) {
-  if (input === value) return 100;
-  if (value.startsWith(input)) return 80;
-  if (input.length >= 2 && value.includes(input)) return 60;
-  return 0;
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** 头像压缩：canvas 缩放（最长边 128px）→ 透明补白 → JPEG 质量逐档降到 ≤maxBytes。压到底仍超则抛错。 */
-async function compressImage(
-  file: File,
-  maxBytes: number,
-): Promise<{ dataUrl: string; size: number; type: string }> {
-  const img = await loadImage(file);
-  const maxEdge = 128;
-  const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.max(1, Math.round(img.naturalWidth * scale));
-  const h = Math.max(1, Math.round(img.naturalHeight * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error(t('auth.error.avatarCompressFail'));
-  // 透明背景补白（PNG/GIF 转 JPEG 时避免黑底）
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(img, 0, 0, w, h);
-
-  for (const quality of [0.85, 0.72, 0.6, 0.5, 0.4, 0.3, 0.22, 0.15, 0.1, 0.08]) {
-    const dataUrl = canvas.toDataURL('image/jpeg', quality);
-    const size = Math.round(((dataUrl.length - 'data:image/jpeg;base64,'.length) * 3) / 4);
-    if (size <= maxBytes) return { dataUrl, size, type: 'image/jpeg' };
-  }
-  throw new Error(t('auth.toast.avatarTooLarge'));
-}
-
-function loadImage(file: File): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(img);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error(t('auth.error.avatarReadFail')));
-    };
-    img.src = url;
-  });
 }

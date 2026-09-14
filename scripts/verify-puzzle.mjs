@@ -137,8 +137,8 @@ try {
 
   // ==================== 页签位置 ====================
   const tabs = await json(`Array.prototype.map.call(document.querySelectorAll('#mode-tabs button'), function(b){ return b.textContent; })`);
-  check('页签顺序：输入模式右边、无尽闯关左边是「拼图模式」',
-    tabs.join('/') === '点击模式/输入模式/拼图模式/无尽闯关/自由模式', tabs);
+  check('页签顺序：输入模式右边、无尽闯关左边是「拼图模式」（自由模式已于 2026-09 下线）',
+    tabs.join('/') === '点击模式/输入模式/拼图模式/无尽闯关', tabs);
 
   // ==================== 进入拼图 = 选范围阶段（仍然看得见完整地图） ====================
   await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="puzzle"]').click(); return true })()`);

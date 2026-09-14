@@ -916,7 +916,7 @@ export class MapRenderer {
   private desiredLabelMode(state: RenderState | null = this.lastState): 'none' | 'city' {
     // 世界模式：地级市标签系列不参与；国名标签由 world-labels 系列渲染。
     // 世界分析/浏览档国名是否常显由 worldShowAllLabels + worldLabelZoomThreshold 决定
-    //（自由模式与熟练度分析传 0 = 任何倍率都显示），把该开关复用到 'city' 档位以驱动缩放后刷新。
+    //（未开始的浏览标签与熟练度分析传 0 = 任何倍率都显示），把该开关复用到 'city' 档位以驱动缩放后刷新。
     if (this.worldMode) {
       if (!state?.hideLabels && state?.worldShowAllLabels && this.zoom > (state?.worldLabelZoomThreshold ?? WORLD_LABEL_ZOOM)) {
         return 'city';

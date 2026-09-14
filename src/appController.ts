@@ -2,7 +2,8 @@ import { buildIndex } from './data';
 import { Matcher } from './matcher';
 import { MapRenderer } from './map/renderer';
 import { AuthStore } from './authStore';
-import { LeaderboardStore, type LeaderboardMode } from './leaderboardStore';
+import { LeaderboardStore } from './leaderboardStore';
+import { isLeaderboardMode } from './modes/capabilities';
 import { MemoryStore, loadSettings, saveSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { AuthPanel } from './ui/authPanel';
@@ -18,7 +19,6 @@ import { t } from './i18n';
 import { AnalysisMode, provinceLevelOf, PROVINCE_LEVEL_WORD_KEY } from './modes/analysis';
 import { InputMode } from './modes/input';
 import { EndlessMode } from './modes/endless';
-import { FreeBrowseMode } from './modes/freeBrowse';
 import { PuzzleMode, type PuzzleDifficulty } from './modes/puzzle';
 import { ClickMode } from './modes/click';
 import { continentFromScope, isNationLikeScope, isWorldScope, PROVINCE_NATION_SCOPE, subregionFromScope, WORLD_NATION_SCOPE, type Granularity } from './province';
@@ -37,7 +37,7 @@ import { canSubmitScore } from './scoreRules';
 import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
 import { applyIgnoreTiny, ensureTinyCountries, ignoredIsos, loadTinyCountries } from './tinyCountries';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
-import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
+import type { ModeCtx, ModeController, ClickOrderMode, OrderMode, QuestionNaming } from './modes/types';
 import type { AppDiagnostics } from './appDiagnostics';
 
 function applyTheme(darkMode: boolean) {
@@ -209,7 +209,6 @@ export class AppController {
       self: selfMode,
       endless: new EndlessMode(ctx),
       click: clickMode,
-      memory: new FreeBrowseMode(ctx),
       puzzle: puzzleMode,
       board: new BoardMode(this.boardPanel),
       admin: this.adminMode,
@@ -420,7 +419,7 @@ export class AppController {
     hideSummary();
     this.hidePauseOverlay();
     if (this.current?.onBackToNation) {
-      // 点击/输入模式的省级全国钻省返回省级全国、自由模式省级档钻省返回省级档
+      // 点击/输入模式的省级全国钻省返回省级全国（下钻后的地级练习返回其所属省，其余走通用返回）
       this.current.onBackToNation();
       this.updateProgress();
       this.syncPauseOverlay();
@@ -441,6 +440,7 @@ export class AppController {
 
   private showHelp() {
     const help = this.currentModeHelp();
+    if (!help) return; // 非地图模式（留言板/管理端）没有说明：按钮已由 chromeSync 隐藏
     ($('help-title') as HTMLElement).textContent = help.title;
     ($('help-body') as HTMLElement).innerHTML = `<div class="help-text">${help.body}</div>`;
     $('help-panel').classList.remove('hidden');
@@ -450,50 +450,17 @@ export class AppController {
     $('help-panel').classList.add('hidden');
   }
 
-  private showHoverStats(adcode: string) {
-    if (this.current?.id !== 'free') return;
-    const granularity = this.freeMode.getAnalysisGranularity();
-    if (granularity === 'world') {
-      // 世界档：悬停国家 → 顶部卡片显示国名 + 档位词（颜色同地图档位）+ 对错次数
-      const country = this.data.countries.find((c) => c.iso === adcode);
-      if (!country) return;
-      const practice = this.store.getWorldPractice(adcode);
-      const level = provinceLevelOf(practice.score);
-      const card = $('hover-stats');
-      card.innerHTML = t('main.hoverStatsProvince', {
-        name: country.name,
-        levelClass: level,
-        levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
-        correct: practice.correctCount,
-        wrong: practice.wrongCount,
-      });
-      card.classList.remove('hidden');
-      return;
-    }
-    if (granularity === 'province') {
-      // 省级档：悬停省面 → 顶部卡片显示省名 + 档位词（颜色同地图档位）+ 对错次数
-      const province = this.data.provinces.find((p) => p.adcode === adcode);
-      if (!province) return;
-      const practice = this.store.getProvincePractice(adcode);
-      const level = provinceLevelOf(practice.score);
-      const card = $('hover-stats');
-      card.innerHTML = t('main.hoverStatsProvince', {
-        name: province.name,
-        levelClass: level,
-        levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
-        correct: practice.correctCount,
-        wrong: practice.wrongCount,
-      });
-      card.classList.remove('hidden');
-      return;
-    }
-    const unit = this.idx.byAdcode.get(adcode);
-    if (!unit) return;
-    const practice = this.store.getPractice(adcode);
+  /**
+   * 悬停统计卡片。
+   *
+   * 三档粒度（世界 / 省级 / 地级）各自取名字与熟练度的方式不同，但卡片本身逐字相同 ——
+   * 原先那份 `t('main.hoverStatsProvince', …)` + 档位词 + 显示，在三个分支里各抄了一遍。
+   */
+  private showHoverCard(name: string, practice: { correctCount: number; wrongCount: number; score: number }) {
     const level = provinceLevelOf(practice.score);
     const card = $('hover-stats');
     card.innerHTML = t('main.hoverStatsProvince', {
-      name: unit.name,
+      name,
       levelClass: level,
       levelWord: t(PROVINCE_LEVEL_WORD_KEY[level]),
       correct: practice.correctCount,
@@ -502,18 +469,41 @@ export class AppController {
     card.classList.remove('hidden');
   }
 
+  private showHoverStats(adcode: string) {
+    if (this.current?.id !== 'free') return;
+    const granularity = this.freeMode.getAnalysisGranularity();
+    if (granularity === 'world') {
+      // 世界档：悬停国家 → 顶部卡片显示国名 + 档位词（颜色同地图档位）+ 对错次数
+      const country = this.data.countries.find((c) => c.iso === adcode);
+      if (country) this.showHoverCard(country.name, this.store.getWorldPractice(adcode));
+      return;
+    }
+    if (granularity === 'province') {
+      // 省级档：悬停省面 → 顶部卡片显示省名 + 档位词（颜色同地图档位）+ 对错次数
+      const province = this.data.provinces.find((p) => p.adcode === adcode);
+      if (province) this.showHoverCard(province.name, this.store.getProvincePractice(adcode));
+      return;
+    }
+    const unit = this.idx.byAdcode.get(adcode);
+    if (unit) this.showHoverCard(unit.name, this.store.getPractice(adcode));
+  }
+
   private hideHoverStats() {
     $('hover-stats').classList.add('hidden');
   }
 
-  private currentModeHelp(): { title: string; body: string } {
+  /**
+   * 当前模式的说明文案；返回 `null` 表示该模式没有说明（留言板/管理端不是地图模式，
+   * 说明按钮由 chromeSync 在这两个模式下隐藏 —— 以前它们会回落到「自由模式说明」，是错的）。
+   */
+  private currentModeHelp(): { title: string; body: string } | null {
     const mode = this.current?.id;
     if (mode === 'self') return { title: t('help.self.title'), body: t('help.self.body') };
     if (mode === 'endless') return { title: t('help.endless.title'), body: t('help.endless.body') };
     if (mode === 'free') return { title: t('help.free.title'), body: t('help.free.body') };
     if (mode === 'puzzle') return { title: t('help.puzzle.title'), body: t('help.puzzle.body') };
     if (mode === 'click') return { title: t('help.click.title'), body: t('help.click.body') };
-    return { title: t('help.memory.title'), body: t('help.memory.body') };
+    return null;
   }
 
   // ==================== 成绩提交 / 侧栏刷新 ====================
@@ -543,7 +533,7 @@ export class AppController {
       else this.stats.refresh(this.renderer.currentProvince());
       return Promise.resolve();
     }
-    if (!this.isLeaderboardMode(this.current?.id)) return Promise.resolve();
+    if (!isLeaderboardMode(this.current?.id)) return Promise.resolve();
     const scopeProvince = this.current.getScopeProvince() ?? null;
     return this.leaderboard.refresh(this.current.id, scopeProvince, this.scopeLabel(scopeProvince));
   }
@@ -556,10 +546,6 @@ export class AppController {
     const sr = subregionFromScope(scopeProvince);
     if (sr) return this.data.subregions.find((s) => s.id === sr)?.name ?? t('common.world');
     return scopeProvince ? this.data.provinces.find((p) => p.adcode === scopeProvince)?.name ?? t('common.currentProvince') : t('common.nation');
-  }
-
-  private isLeaderboardMode(mode: Mode | undefined): mode is LeaderboardMode {
-    return mode === 'self' || mode === 'click' || mode === 'endless' || mode === 'puzzle';
   }
 
   // ==================== 结算流程 ====================
@@ -575,6 +561,8 @@ export class AppController {
     if (mode !== 'self' && mode !== 'click' && mode !== 'puzzle') return;
     const active = this.current as ModeController;
     active.pause();
+    // 记「已结束」：结算卡片既已弹出，未开始的浏览标签就该复现（口径见 browseLabels.ts）
+    active.onSettlementShown?.();
     const result = active.collectResult() ?? null;
     if (!result) {
       this.doReset();
@@ -669,7 +657,7 @@ export class AppController {
       btn.addEventListener('click', () => this.switchMode(btn.dataset.mode as Mode));
     });
 
-    // 右区按钮：熟练度分析 → 自由模式；留言板 → 留言板模式
+    // 右区按钮：熟练度分析 → free 模式；留言板 → 留言板模式
     ($('btn-free') as HTMLButtonElement).addEventListener('click', () => this.switchMode('free'));
     ($('btn-board') as HTMLButtonElement).addEventListener('click', () => this.switchMode('board'));
   }
@@ -679,7 +667,7 @@ export class AppController {
     const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
     const isAnalysisPanel = () => this.current?.id === 'free';
     sidePanelToggle.addEventListener('pointerdown', (event) => {
-      if (!isAnalysisPanel() && !this.isLeaderboardMode(this.current?.id)) return;
+      if (!isAnalysisPanel() && !isLeaderboardMode(this.current?.id)) return;
       this.sidePanel.beginDrag(event.pointerId, event.clientX, isAnalysisPanel());
     });
     sidePanelToggle.addEventListener('pointermove', (event) => {
@@ -736,11 +724,10 @@ export class AppController {
 
   /** 范围类分段按钮：粒度、大洲、次区域、熟练度分析档位，以及拼图难度。 */
   private wireScopeToggles() {
-    // 点击/输入/自由模式的「世界/省级/市级」粒度切换
-    // （测验模式仅全国视图、未开始测试时可操作；自由模式纯浏览，随时可切且不支持下钻）
+    // 点击/输入模式的「世界/省级/市级」粒度切换（仅全国视图、未开始测试时可操作）
     this.wireSegmented('granularity-toggle', (btn) => {
       const g = btn.dataset.granularity as Granularity;
-      // 以当前模式为准：输入/自由模式各自记住自己的粒度，其它情况回落点击模式
+      // 以当前模式为准：输入/点击各自记住自己的粒度，其它支持粒度的模式自己处理
       const target = this.current?.setGranularity ? this.current : this.clickMode;
       target.setGranularity?.(g);
       this.afterScopeChange();
@@ -774,6 +761,28 @@ export class AppController {
       this.freeMode.setAnalysisGranularity(btn.dataset.analysisGranularity as Granularity);
       this.afterScopeChange();
     });
+
+    // 取名口径（2026-09 新增）：世界档「国名/首都」与「中文/英文」、省级全国档「省名/简称」。
+    // 只改题面与地图标签的文字，**不动范围**，故不走 afterScopeChange（那会白刷进度条与侧栏）；
+    // 模式自己负责重绘（setQuestionNaming 内部 refresh），这里只要把分段高亮同步过来。
+    this.wireSegmented('world-name-toggle', (btn) => {
+      this.namingTarget()?.setQuestionNaming?.({ world: btn.dataset.worldName as QuestionNaming['world'] });
+      this.syncModeChrome();
+    });
+    this.wireSegmented('world-lang-toggle', (btn) => {
+      this.namingTarget()?.setQuestionNaming?.({ lang: btn.dataset.worldLang as QuestionNaming['lang'] });
+      this.syncModeChrome();
+    });
+    this.wireSegmented('province-name-toggle', (btn) => {
+      this.namingTarget()?.setQuestionNaming?.({ province: btn.dataset.provinceName as QuestionNaming['province'] });
+      this.syncModeChrome();
+    });
+  }
+
+  /** 支持取名口径切换的当前模式（输入/点击）；其它模式返回 null。 */
+  private namingTarget(): ModeController | null {
+    const current = this.current;
+    return current?.getQuestionNaming ? current : null;
   }
 
   /** 主题开关 + 全局设置面板 + 每模式设置浮层。 */

@@ -241,6 +241,31 @@ describe('buildWorldLabelData', () => {
     expect(labels[0].value[3]).toBe(THEME.labelGreen);
   });
 
+  /**
+   * 回归闸门（2026-09 实测缺陷）：未开始的浏览标签与测验的 worldLabel **同时存在**时，
+   * 旧实现在 worldLabel 分支里 `return out`，把全量浏览标签整段吃掉 ——
+   * 表现是「点击/输入模式世界档未开始时不显示国名」（省级/地级两档却正常）。
+   */
+  it('测验档 + 浏览态同时存在：已作答保留绿/红，其余补中性色（不被 worldLabel 吃掉）', () => {
+    const labels = buildWorldLabelData(
+      ctx({
+        worldMode: true,
+        worldLabelAnchors: anchors,
+        state: {
+          worldLabel: (iso) => (iso === 'CHN' ? { text: '中国', color: 'green' as const } : null),
+          worldShowAllLabels: true,
+          worldLabelZoomThreshold: 0, // 未开始的浏览标签：任何倍率都显示
+        },
+      }),
+    );
+    expect(new Set(labels.map((l) => l.name))).toEqual(new Set(['中国', '法国', '巴西']));
+    const china = labels.find((l) => l.name === '中国')!;
+    const fra = labels.find((l) => l.name === '法国')!;
+    expect(china.value[3]).toBe(THEME.labelGreen); // 已作答：保留答题反馈色
+    expect(fra.value[3]).toBe(THEME.labelNeutral); // 未作答：中性浏览标签
+    expect(china.value[2]).toBe('中国'); // 文本用当前取名口径（此处即国名）
+  });
+
   it('分析档：未到倍率阈值时不常显', () => {
     const labels = buildWorldLabelData(
       ctx({ worldMode: true, zoom: 1, worldLabelAnchors: anchors, state: { worldShowAllLabels: true } }),

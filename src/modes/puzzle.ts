@@ -44,7 +44,7 @@ import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
 import { project, unitScale, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
-import { puzzleStatus, setHint, toast } from '../ui/dom';
+import { puzzleStatus, setHint, showStartCard, toast } from '../ui/dom';
 
 /** 难度：简单 = 显示名称；困难 = 不显示（用户口径：难度只管标签，且运行中锁定）。 */
 export type PuzzleDifficulty = 'easy' | 'hard';
@@ -328,7 +328,7 @@ export class PuzzleMode extends BaseMode {
       this.state = null;
       this.pieces = [];
       this.renderScopeMap();
-      this.showStartCard();
+      this.renderStartCard();
       puzzleStatus('');
       this.ctx.syncChrome?.();
       return;
@@ -404,14 +404,14 @@ export class PuzzleMode extends BaseMode {
 
   // ==================== 开始 / 暂停 / 重置 ====================
 
-  private showStartCard() {
-    const actions = `<button id="puzzle-start" class="start-action">${t('common.start')}</button>`;
-    setHint(
-      `<div class="start-panel"><div class="start-title">${t('puzzle.startTitle')}</div>` +
-        `<div class="start-subtitle">${t('puzzle.startSubtitle', { scope: this.scopeLabel() })}</div>${actions}</div>`,
-    );
-    const btn = document.getElementById('puzzle-start') as HTMLButtonElement | null;
-    if (btn) btn.onclick = () => this.startRun();
+  /** 选范围阶段的开始卡片（骨架与其它三个模式共用 `ui/dom.showStartCard`）。 */
+  private renderStartCard() {
+    showStartCard({
+      id: 'puzzle-start',
+      title: t('puzzle.startTitle'),
+      subtitle: t('puzzle.startSubtitle', { scope: this.scopeLabel() }),
+      onStart: () => this.startRun(),
+    });
   }
 
   /** 点「开始」：按当前范围建碎片、隐藏地图、启动计时。 */

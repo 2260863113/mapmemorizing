@@ -265,7 +265,7 @@ export function buildWorldRegionData(ctx: LayerInput): GeoRegion[] {
 }
 
 /**
- * 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。
+ * 国名标签：世界测验档仅已作答国（绿/红）显；世界分析档与**未开始的浏览态**常显全部国名（中性）。
  * 大洲视图只显本洲标签。
  */
 export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
@@ -277,7 +277,8 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
     ctx.worldSubregion
       ? ctx.isoSubregion.get(iso) === ctx.worldSubregion
       : !ctx.worldContinent || ctx.isoContinent.get(iso) === ctx.worldContinent;
-  // 测验档：仅已作答国显示绿/红简称
+  // 测验档：仅已作答国显示绿/红（当前取名口径的名字）
+  const colored = new Set<string>();
   if (state.worldLabel) {
     for (const c of ctx.data.countries) {
       if (!visible(c.iso)) continue;
@@ -287,13 +288,17 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
       if (!lab) continue;
       const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
       out.push({ name: c.name, value: [...anchor, lab.text, color, 0, 0] });
+      colored.add(c.iso);
     }
-    return out;
   }
-  // 分析/浏览档：按 worldLabelZoomThreshold（省略时为 WORLD_LABEL_ZOOM）决定是否常显全部国名
+  // 分析/浏览档：按 worldLabelZoomThreshold（省略时为 WORLD_LABEL_ZOOM）决定是否常显全部国名。
+  //
+  // ⚠ 这一支**不能**写成「有 worldLabel 就 return」（旧实现如此）：测验模式（点击/输入）永远会传
+  // worldLabel，于是未开始的浏览标签被整段吃掉 —— 2026-09 实测缺陷「世界档未开始时不显示国名」。
+  // 已作答的国家保留绿/红，其余补中性色（与地级市标签系列同一先后关系）。
   if (state.worldShowAllLabels && ctx.zoom > (state.worldLabelZoomThreshold ?? WORLD_LABEL_ZOOM)) {
     for (const c of ctx.data.countries) {
-      if (!visible(c.iso)) continue;
+      if (!visible(c.iso) || colored.has(c.iso)) continue;
       const anchor = ctx.worldLabelAnchors.get(c.iso);
       if (!anchor) continue;
       out.push({ name: c.name, value: [...anchor, c.name, theme.labelNeutral, 0, 0] });

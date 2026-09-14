@@ -227,43 +227,140 @@ try {
   check('关闭后恢复显示标签', shown.labels?.hideLabels === false && shown.labels?.showAllLabels === true, shown.labels);
   await ev(`(() => { document.getElementById('mode-settings-panel').classList.add('hidden'); return true })()`);
 
-  // ---------------- 需求 3：自由模式分段按钮 + 不下钻 ----------------
-  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="memory"]').click(); return true })()`);
+  // ---------------- 需求 3（2026-09）：自由模式下线，浏览标签并入前四个模式 ----------------
+  // 口径：未开始显示全量地名（阈值 0）、开始后清空（已作答绿/红保留）、结束（结算/重置）后复现。
+  const tabs = JSON.parse(await ev(`JSON.stringify(Array.prototype.map.call(document.querySelectorAll('#mode-tabs button'), function(b){ return b.textContent; }))`));
+  check('模式标签页只剩四个（自由模式已下线）', tabs.join('/') === '点击模式/输入模式/拼图模式/无尽闯关', tabs);
+
+  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="click"]').click(); return true })()`);
+  await sleep(700);
+  await ev(`(() => { document.getElementById('granularity-city').click(); return true })()`);
   await sleep(900);
-  const browseCity = JSON.parse(await ev(`JSON.stringify((function(){
-    var g = document.getElementById('granularity-toggle');
-    var active = g.querySelector('button.active');
-    return { visible: !g.classList.contains('hidden'), labels: Array.prototype.map.call(g.querySelectorAll('button'), function(b){return b.textContent;}), active: active && active.textContent };
-  })())`));
-  check('自由模式显示「世界/省级/市级」分段按钮，默认市级', browseCity.visible && browseCity.labels.join('/') === '世界/省级/市级' && browseCity.active === '市级', browseCity);
-  const cityState = await ui();
-  check('自由模式·市级档：地级地图 + 全部地名标签默认显示（阈值 0，全景也画标签）',
-    cityState.view.worldMode === false && cityState.view.provinceMode === false
-      && cityState.labels.showAllLabels === true && cityState.labels.labelZoomThreshold === 0 && cityState.labelCounts.city >= 300,
-    { view: cityState.view, labels: cityState.labels, counts: cityState.labelCounts, zoom: cityState.zoom });
+  const browseCity = await ui();
+  check('点击模式·市级未开始：全部地名标签显示（阈值 0，全景也画标签）',
+    browseCity.labels.showAllLabels === true && browseCity.labels.labelZoomThreshold === 0 && browseCity.labelCounts.city >= 300,
+    { labels: browseCity.labels, counts: browseCity.labelCounts, zoom: browseCity.zoom });
   await shot('round3-5-browse-city.png');
 
   await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
   await sleep(900);
-  const provState = await ui();
-  check('自由模式·省级档：省级地图、无港澳放大框、不允许下钻、省名标签默认显示',
-    provState.view.provinceMode === true && provState.view.provinceModeDrill === false && provState.view.provinceModeInset === false
-      && provState.labels.showAllProvinceLabels === true && provState.labelCounts.province >= 30,
-    { view: provState.view, labels: provState.labels, counts: provState.labelCounts });
+  const browseProv = await ui();
+  check('点击模式·省级全国未开始：省名标签全量显示（省级地图且不支持下钻）',
+    browseProv.view.provinceMode === true && browseProv.labels.showAllProvinceLabels === true && browseProv.labelCounts.province >= 30,
+    { view: browseProv.view, labels: browseProv.labels, counts: browseProv.labelCounts });
   await shot('round3-6-browse-province.png');
 
   await ev(`(() => { document.getElementById('granularity-world').click(); return true })()`);
   await sleep(900);
-  const worldState = await ui();
-  const noScopeRows = JSON.parse(await ev(`JSON.stringify({ continent: document.getElementById('continent-toggle').classList.contains('hidden'), subregion: document.getElementById('subregion-toggle').classList.contains('hidden') })`));
-  check('自由模式·世界档：世界地图 + 国名标签默认显示（阈值 0，全景也画国名）',
-    worldState.view.worldMode === true && worldState.labels.worldShowAllLabels === true
-      && worldState.labels.worldLabelZoomThreshold === 0 && worldState.labelCounts.world >= 190,
-    { view: worldState.view, labels: worldState.labels, counts: worldState.labelCounts, zoom: worldState.zoom });
-  check('自由模式世界档不显示大洲/次区域行（不支持下钻）', noScopeRows.continent && noScopeRows.subregion, noScopeRows);
-  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="memory"]').click(); return true })()`);
-  await sleep(700);
+  const browseWorld = await ui();
+  check('点击模式·世界档未开始：国名标签全量显示（阈值 0）',
+    browseWorld.view.worldMode === true && browseWorld.labels.worldShowAllLabels === true
+      && browseWorld.labels.worldLabelZoomThreshold === 0 && browseWorld.labelCounts.world >= 190,
+    { view: browseWorld.view, labels: browseWorld.labels, counts: browseWorld.labelCounts });
   await shot('round3-7-browse-world.png');
+
+  // 回到省级全国：开始答题 → 全量标签清空；已作答的绿/红标签必须保留
+  await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
+  await sleep(900);
+  await ev(`(() => { document.getElementById('click-start').click(); return true })()`);
+  await sleep(800);
+  const afterStart = await ui();
+  check('开始答题后全量标签清空（省级全国不再常显省名）',
+    afterStart.labels.showAllProvinceLabels === false && afterStart.labels.showAllLabels === false,
+    afterStart.labels);
+  await ev(`window.__probe.answerCurrent()`);
+  await sleep(600);
+  const answered = await ui();
+  const answeredTexts = JSON.parse(await ev(`JSON.stringify(window.__probe.namingTexts().provinceLabels)`));
+  check('已作答单位的绿/红标签保留（答题反馈不退化）',
+    answered.labelCounts.province === 1 && answeredTexts.length === 1, { counts: answered.labelCounts, texts: answeredTexts });
+
+  // 重置（第一次点击是二次确认）→ 省级全国进行中会弹结算卡片 → 卡片出现即算「已结束」→ 标签复现
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(200);
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(900);
+  const settled = JSON.parse(await ev(`JSON.stringify({
+    cardOpen: !document.getElementById('settlement').classList.contains('hidden'),
+    labels: window.__probe.round3Ui().labels
+  })`));
+  check('结算卡片弹出即复现全量标签', settled.cardOpen === true && settled.labels.showAllProvinceLabels === true, settled);
+  await ev(`(() => { document.getElementById('settlement-close').click(); return true })()`);
+  await sleep(800);
+  const afterReset = await ui();
+  check('关闭结算卡片（= 重置回开始状态）后标签仍在', afterReset.labels.showAllProvinceLabels === true, afterReset.labels);
+
+  // 无尽闯关未开始：显示地名（不再是空白地图 + 价格）
+  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="endless"]').click(); return true })()`);
+  await sleep(1000);
+  const endlessPre = await ui();
+  check('无尽闯关未开始：显示全部地级市名（自由模式并入后的口径）',
+    endlessPre.labels?.showAllLabels === true && endlessPre.labels?.labelZoomThreshold === 0 && endlessPre.labelCounts.city >= 300,
+    { labels: endlessPre.labels, counts: endlessPre.labelCounts });
+
+  // 全局开关关掉 → 未开始也不显示；再打开 → 复现
+  const setBrowseLabels = async (on) => {
+    await ev(`(() => { document.getElementById('btn-settings').click(); return true })()`);
+    await sleep(400);
+    await ev(`(() => {
+      var cb = document.getElementById('set-show-browse-labels');
+      if (cb.checked !== ${on}) cb.click();
+      document.getElementById('set-save').click();
+      return true;
+    })()`);
+    await sleep(800);
+  };
+  await setBrowseLabels(false);
+  const switchOff = await ui();
+  check('关掉全局「未开始时显示地图标签」后，未开始也不显示地名',
+    switchOff.labels?.showAllLabels === false, switchOff.labels);
+  await setBrowseLabels(true);
+  const switchOn = await ui();
+  check('重新打开该开关后标签复现', switchOn.labels?.showAllLabels === true, switchOn.labels);
+
+  // ---------------- 需求 4（2026-09）：游客点右上角直接进登录界面 ----------------
+  await ev(`(() => { document.getElementById('user-center').click(); return true })()`);
+  await sleep(500);
+  const guestLogin = JSON.parse(await ev(`JSON.stringify({
+    overlayOpen: !document.getElementById('auth-panel').classList.contains('hidden'),
+    hasLoginForm: !!document.getElementById('auth-login-name') && !!document.getElementById('auth-login-submit')
+  })`));
+  check('游客点右上角直接打开登录界面（不再是"菜单里全是禁用项"）', guestLogin.overlayOpen === true && guestLogin.hasLoginForm === true, guestLogin);
+  await ev(`(() => { document.getElementById('auth-cancel').click(); return true })()`);
+  await sleep(300);
+
+  // ---------------- 需求 5（2026-09）：未登录写留言被拦下，但草稿不丢 ----------------
+  // 静态服务器没有 /api，故先把 board 接口打桩，让留言板能渲染出输入框
+  await ev(`(() => {
+    var real = window.fetch.bind(window);
+    window.fetch = function (u, o) {
+      if (String(u).indexOf('/api/board') === 0 || String(u).indexOf('/api/board') > -1) {
+        return Promise.resolve(new Response(JSON.stringify({ posts: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return real(u, o);
+    };
+    return true;
+  })()`);
+  await ev(`(() => { document.getElementById('btn-board').click(); return true })()`);
+  await sleep(900);
+  await ev(`(() => {
+    var ta = document.getElementById('board-new-content');
+    ta.value = '验收草稿';
+    ta.dispatchEvent(new Event('input'));
+    return true;
+  })()`);
+  await ev(`(() => { document.getElementById('board-new-submit').click(); return true })()`);
+  await sleep(600);
+  const draft = JSON.parse(await ev(`JSON.stringify({
+    overlayOpen: !document.getElementById('auth-panel').classList.contains('hidden'),
+    stored: localStorage.getItem('china-admin-board-draft-v1')
+  })`));
+  check('未登录发帖：弹出登录界面，且草稿已落本地（登录后自动发布、放弃登录也不丢）',
+    draft.overlayOpen === true && draft.stored === '验收草稿', draft);
+  await ev(`(() => { document.getElementById('auth-cancel').click(); return true })()`);
+  await sleep(300);
+  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="click"]').click(); return true })()`);
+  await sleep(600);
 
   // ---------------- 需求 2：阶梯断点 + 分析模式世界档标签默认显示 ----------------
   await ev(`(() => { document.getElementById('btn-free').click(); return true })()`);
@@ -386,7 +483,8 @@ try {
   await shot('round3-10-analysis-popup-light.png');
   await ev(`(() => { document.getElementById('mode-settings-panel').classList.add('hidden'); return true })()`);
 
-  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="memory"]').click(); return true })()`);
+  // 白天模式下的浏览标签截图（原「自由模式」已并入点击模式）
+  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="click"]').click(); return true })()`);
   await sleep(900);
   await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
   await sleep(900);

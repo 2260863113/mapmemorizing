@@ -1,6 +1,7 @@
 import type { AppData, Continent, Province, SubregionId, Unit } from './types';
 import { CONTINENTS, SUBREGION_IDS } from './types';
 import { normalizeProvince } from './matcher';
+import abbrRules from './province-abbr.json';
 
 /**
  * 省级粒度（省级全国练习 / 省名熟练度分析）与粒度共用常量的共享数据与规则。
@@ -67,10 +68,53 @@ export function provinceByAdcode(data: AppData, adcode: string): Province | null
   return data.provinces.find((p) => p.adcode === adcode) ?? null;
 }
 
-/** 省 adcode → 去行政后缀的简称（如 广东省 → 广东；新疆维吾尔自治区 → 新疆）。 */
+/**
+ * 省 adcode → 去行政后缀的简称（如 广东省 → 广东；新疆维吾尔自治区 → 新疆）。
+ *
+ * ⚠ 这与「省级简称」**不是一回事**：这里剥后缀得到两个字（广东），车牌照式的单字简称（粤）
+ * 见 `provinceAbbr()`。两者在本仓库里各有用途，别混用。
+ */
 export function provinceShortName(data: AppData, adcode: string): string {
   const p = provinceByAdcode(data, adcode);
   return p ? normalizeProvince(p.name) : adcode;
+}
+
+/**
+ * 省级**单字简称**表（京 / 沪 / 粤 …）：「省名 / 简称」分段按钮的显示与判题口径。
+ *
+ * 为什么单独一张 JSON 而不是塞进 units.json：简称是**判题与显示口径**（与 `normalize-rules.json`
+ * 同类），不是地图几何；而中国行政区数据管线（fetch-cn-atlas → build-data）的产物被大量代码与
+ * 验收脚本按字段依赖，为 34 条静态映射重跑整条管线并不划算。`provinceAbbr.test.ts` 断言
+ * 这张表的 adcode 集合与数据里的 34 个省完全一致，数据变了会立刻报错。
+ *
+ * `alt` = 官方同时认可的另一简称（川/蜀、贵/黔、云/滇、陕/秦、甘/陇）：**只用于接受输入**，
+ * 显示一律用主简称 —— 与「地图标签显示简称」的口径保持一致。
+ */
+const PROVINCE_ABBR = abbrRules.abbr as Record<string, string>;
+const PROVINCE_ABBR_ALT = abbrRules.alt as Record<string, string[]>;
+
+/** 该省的主简称（表里没有该 adcode 时回落去后缀省名，保证调用方永远拿得到可显示文本）。 */
+export function provinceAbbr(data: AppData, adcode: string): string {
+  return PROVINCE_ABBR[adcode] ?? provinceShortName(data, adcode);
+}
+
+/** 该省接受的**全部**简称写法（主简称 + 别名）。 */
+export function provinceAbbrInputs(data: AppData, adcode: string): string[] {
+  const main = PROVINCE_ABBR[adcode];
+  if (!main) return [provinceShortName(data, adcode)];
+  return [main, ...(PROVINCE_ABBR_ALT[adcode] ?? [])];
+}
+
+/**
+ * 简称档判题：只认简称（含别名），**不认省全名与去后缀省名**。
+ *
+ * 口径理由（用户 2026-09 需求「按照简称来出例如沪」）：简称档考的正是「省 ↔ 单字简称」这条记忆，
+ * 若同时接受「上海」，不记得「沪」的人也能过关，这一档就白开了。与 `Matcher.bestUnit`
+ * 「不做模糊匹配、避免错误答案蒙混过关」是同一原则。
+ */
+export function isProvinceAbbrInput(data: AppData, adcode: string, input: string): boolean {
+  const s = input.trim();
+  return !!s && provinceAbbrInputs(data, adcode).includes(s);
 }
 
 /**

@@ -26,6 +26,25 @@ export function setHint(html: string) {
   bottomHost.innerHTML = useTop ? '' : html;
 }
 
+/**
+ * 开始卡片：输入 / 点击 / 无尽 / 拼图四个模式共用的「标题 + 副标题 + 开始按钮」骨架。
+ *
+ * 原先四个模式各抄一份逐字相同的 HTML 与接线，其中三份还用 `setTimeout(…, 0)` 去取按钮 ——
+ * 但 `setHint` 是**同步**写 innerHTML 的，那个延时纯属多余（白多一个宏任务，也让
+ * 「点开始没反应」这类缺陷更难查）。ID 仍由调用方给，各模式沿用既有的 `#<mode>-start`。
+ */
+export function showStartCard(opts: { id: string; title: string; subtitle: string; onStart: () => void }) {
+  setHint(
+    '<div class="start-panel">' +
+      `<div class="start-title">${opts.title}</div>` +
+      `<div class="start-subtitle">${opts.subtitle}</div>` +
+      `<button id="${opts.id}" class="start-action">${t('common.start')}</button>` +
+      '</div>',
+  );
+  const btn = document.getElementById(opts.id) as HTMLButtonElement | null;
+  if (btn) btn.onclick = () => opts.onStart();
+}
+
 export function showTimer(remain: number | null, urgent = false) {
   const el = $('test-timer');
   if (remain === null) {

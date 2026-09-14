@@ -1,5 +1,158 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：留言板草稿不再丢 + 取消自由模式（浏览标签并入四模式）+ 游客登录入口
+
+三件事都来自用户报的现象，前两件是产品变更、第三件是缺陷。
+
+### 1. 留言板：未登录写完点发布，登录/注册后**直接发布**（草稿不再丢）
+
+**缺陷有两处**（只修一处都还会丢内容）：
+1. `submitPost()` 未登录时直接 `return` —— 草稿**只存在于 DOM 输入框里，从未被抓取**；
+2. 登录成功回调是 `this.render()`，而 `render()` 会 `el.innerHTML = …` **重绘整个面板**，DOM 连同输入框内容一起作废。
+
+**现在的做法**（与排行榜提交成绩早已在用的 `ScoreSubmitter` 同一套路「未登录先挂起、登录后自动补交」对齐）：
+- 先取内容 → 未登录则 `authPanel.requestLogin(() => publishPost(content))` → 登录/注册成功（`completeSuccess` 两条路径共用）自动发布，用户不必重写；
+- 草稿**随打随存**在 `localStorage`（`src/ui/boardDraft.ts`，键 `china-admin-board-draft-v1`）：放弃登录、切模式、刷新页面都不丢；**只有发布成功才清空**（用户口径）；
+- 回复同样处理（内容捕获 + 登录后续发；失败则保留回复框与内容）；删除**不**自动续做（破坏性操作让用户再点一次）；
+- 发布失败会把内容回填进输入框并提示。
+- ⚠ **`try` 只包住网络调用**：早先写成「try { createPost; clearDraft; render; toast }」，于是渲染或提示抛错会被当成"发布失败"而把草稿又存回去 —— 用户会以为没发出去，再点一次就**重复发帖**。改动后是 `try { createPost } catch {…} clearDraft(); render(); toast()`。
+
+**测试**：`src/ui/boardPanel.test.ts` 用一个**模拟真实重绘语义**的假 DOM（`innerHTML` 赋值即作废此前的子元素，与浏览器一致）——旧实现在这套测试下会挂在「登录后输入框空了 / `createPost` 从未被调用」。另有 `boardDraft.test.ts`（存储契约）与运行时验收两条（见下）。
+
+### 2. 取消「自由模式」：浏览标签并入前四个模式
+
+- 第 5 个标签页与 `FreeBrowseMode`（`memory` 模式）**整体删除**（不是留着不接线）；`Mode` 联合类型、`chromeSync` 的四处分支、`capabilities` 表、`modeSettings` 的旧开关一并清理。id 删除为何安全见 **ADR 0001 的 2026-09 补记**。
+- 口径（用户逐条确认）：**未开始显示全量地名**（与自由模式逐字一致：阈值 0，任何倍率都显示）→ **开始答题后收起**（只收浏览标签，已作答的绿/红**保留**）→ **结束（结算卡片出现 / 答完 / 重置）后复现**；**暂停不算结束**。
+- 粒度决定显示哪一层：世界=国名、省级全国=省名、**其余（含省级全国下钻某省）=地级市名**（浏览的是"画面上现在有什么"）。
+- 无尽闯关：未开始显示地名，开始后回到自己的价格/已收集显示；**拼图不改**（名称由难度档说话，困难档刻意不给提示）。
+- 实现：`src/modes/browseLabels.ts`（片段工厂）+ `MapQuizMode.browseLabelState()`（`started && !settled` 时才给）+ `ModeController.onSettlementShown?()`（外壳在弹结算卡片后调用，把这次会话记为"已结束"）。全局开关 `Settings.showBrowseLabels` 落在导航栏「设置 → 地图标签」，默认开。
+- **旧键迁移**：老用户若在自由模式里关过标签（`china-admin-memory-hide-labels-v1` = `'1'`），新开关初值取反 → 保持关闭；`china-admin-mode-granularity:memory` 直接丢弃。见 `src/store.test.ts`。
+- ⚠ **顺手修掉一个真缺陷**（运行时验收抓到的）：`buildWorldLabelData` 原来在 `state.worldLabel` 分支里 `return out`，而点击/输入模式**永远**会传 `worldLabel` —— 于是世界档未开始的国名标签被整段吃掉（省级/地级两档正常，所以肉眼很难发现）。现在已作答的保留绿/红、其余补中性色，并有 `layers.test.ts` 的回归闸门。
+
+### 3. 游客点右上角进不去登录界面（缺陷）
+
+`authPanel.renderMenu()` 在未登录时把「个人资料 / 修改密码 / 退出」**全部置为 disabled**，而 `#user-center` 的点击只负责展开菜单 —— 于是游客点右上角后**一项都点不动**，也没有别的入口（按钮文案却写着「点击登录」）。现在：游客点右上角**直接打开登录卡片**，菜单只对已登录用户展开。
+
+### 验收
+
+- `npm run check` **exit 0**；vitest **40 文件 / 427 用例**（本轮新增 `boardPanel` / `boardDraft` / `browseLabels` / `store` 四个测试文件）。
+- 运行时：`verify-round3` **46/46**（新增 8 条：模式页签只剩四个、三档未开始的浏览标签、开始后清空且已作答保留、结算卡片即复现、关卡片后仍在、全局开关关/开、游客点右上角进登录、未登录发帖草稿落本地）；`verify-round2` 38/38、`verify-puzzle` 75/75（页签断言已更新）、`verify-naming` 22/22 —— 合计 **181/181**。
+- 写验收脚本时的两个注意点：① `#btn-reset` 是**二次确认**按钮，要点两次；② 省级/世界全国进行中点重置会**弹结算卡片**（这正是"结算即复现"的验收点），**验完必须点 `#settlement-close` 收掉** —— 否则后面那条"按钮文字对比度 ≥3.5:1"的客观体检会扫到卡片里的白字绿底按钮（1.92:1）而失败。那个对比度是**既有**问题，不是本轮引入（卡片一直存在），要改属独立一轮。
+
+## 本轮（功能）：取名口径 —— 世界档「国名/首都」+「中文/英文」、省级全国档「省名/简称」
+
+用户需求要点：世界模式下（输入 / 点击）在「随机/错题」右边加「国名/首都」，选首都时按首都名出题**且地图标签也显示首都名**；再往右加「中文/英文」，切换**顶部出题框与地图标签**的语言（UI 交互仍只用中文）；省级全国模式下右侧加「省名/简称」，选简称后按单字简称（沪）出题、标签也显示简称，**省级档不加中英文按钮**。
+
+### 数据（两个新文件，都是可重生成的冻结产物）
+
+| 文件 | 内容 | 生成方式 |
+|---|---|---|
+| `public/data/world_names.json` | 194 条 `iso → { en, capital, capitalEn }` | `node scripts/fetch-world-names.mjs` |
+| `src/province-abbr.json` | 34 省 `adcode → 单字简称`（另有 5 省的官方并存写法 `alt`） | 静态表，无需生成 |
+
+- 世界数据源与仓库既有几何管线**同源**：Natural Earth v5.1.2（公有领域）—— 国家英文名取 `ne_10m_admin_0_countries_chn` 的 `NAME_EN`，首都取 `ne_10m_populated_places` 里 `ADM0CAP=1` 的据点。**为什么单独一张表而不并进 countries.json**：那条几何管线的输出契约被 lib 与探针逐字依赖（见 `fetch-world-data-v2.mjs` 顶部「一行不改」的口径），语言/首都属于可独立重建的另一类事实。
+- 脚本重跑幂等（连跑两次 sha256 相同，无时间戳）；人工校订全部收在 `NAME_OVERRIDES`（31 国、38 处改动，每条带中文理由），末尾打印 before→after 供审计。**源数据并不干净**：5 条繁体字（三蘭港/維多利亞/馬拿瓜/瓜地馬拉/培亞）、3 国源里连不到首都（NRU/PSE，以及实测发现的 SSD —— 两个源的 `ADM0_A3` 不一致、Juba 的 `ADM0CAP=0`）、14 条台湾译名（京斯敦/摩加迪休/嘉柏隆里…）、1 条过时地名（KAZ 仍是努尔苏丹，2022 已改回阿斯塔纳）。
+- `src/worldNamesData.test.ts` 断言两侧 iso **集合完全一致**、三字段非空、无繁体残留、source 写明来源。少一条的表现是「某国首都题永远显示国名」，只在点开地图时才发现 —— 故必须逐条断言。
+- 省份简称单独成表而不加进 `units.json`：它是**判题与显示口径**（与 `normalize-rules.json` 同类），不是几何；`provinceAbbr.test.ts` 断言它的 adcode 集合与真实数据的 34 个省一致、简称互不重复、且每个简称确实是单字。
+
+### 代码落点（口径只允许有一个来源）
+
+- 状态：`modes/types.ts` 的 `QuestionNaming { world, lang, province }` + `ModeController.getQuestionNaming/setQuestionNaming`；持久化在 `modes/namingStore.ts`（**逐字段**回落默认，一个字段写坏不牵连另两个）。
+- **`MapQuizMode.displayNameOf()` 是题面（点击模式题卡）、地图标签、答错提示三处的唯一名字来源** —— 三处若各拼一份，就会出现「题卡写首都、标签写国名」这种自相矛盾的界面。省级档例外一处：标签历史上就是去后缀省名（广东省→广东）而题面是省全名，故另开 `provinceLabelTextOf()`，「简称」档两者统一成单字。
+- 守卫在模式层：`setQuestionNaming` 在 `started` 时直接返回（UI 侧这些行也开始后收起，但守卫下沉到代码，免得将来某条路径绕开 UI）。
+- UI：`index.html` 三组 `mode-segmented`（`#world-name-toggle` / `#world-lang-toggle` / `#province-name-toggle`），显隐与高亮由 `ChromeSync.syncNamingRows()` 按「模式 + 粒度 + 是否已开始」算（`syncSegments` 因此超了 ESLint 的 60 行上限，顺手拆出该方法）；接线在 `appController.wireScopeToggles`，只改口径不改范围，故**不走** `afterScopeChange`。
+- 输入框占位提示跟着口径走（`self.capitalPlaceholder` / `self.abbrPlaceholder` / …）：口径变了提示不变，用户不知道该输入什么。
+
+### 判题口径（有意的「宽严两套」，别当成不一致）
+
+- **改的是考什么 → 严格**：国名档只认国名、首都档只认首都名、简称档只认简称（不认省名）。理由：简称档若同时接受「上海」，不记得「沪」的人也能过关，这一档就白开了；与 `Matcher.bestUnit`「不做模糊匹配」同一原则。
+- **中/英文是同一个名字的两种写法 → 两种都接受**：语言开关只换显示文字，不改变"考什么"。
+- **首都档不走 `bestMatch` 的「重名剔除」，改用 `acceptsCapital(iso, input)`**（重要！）：判据本来就该是"这个输入是不是**当前这一题**的合法名字"。沿用国名档的剔除会造成真实死角 —— 牙买加 Kingston 与圣文森特 Kingstown 的**大陆通用译名同为「金斯敦」**，两边都被剔掉后这两国在「首都 + 中文」下**永远答不出来**（`worldNames.test.ts` 有回归闸门）。国名档仍保留剔除（刚果（金）/刚果（布）剥后缀同名的「刚果」两国都不接受），因为数据侧本来就给了带括号的消歧写法、且该决策有既有测试。
+- 首都接受名另有别名表 `WORLD_CAPITAL_ALIASES`：数据侧取一个（如 ZAF 比勒陀利亚、BOL 苏克雷、BEN 波多诺伏），另一说（开普敦/拉巴斯/科托努）与"同城异名"（华盛顿、海牙、多多马、拉姆安拉、恩吉鲁穆德）都接受。国家英文名同理有 `WORLD_EN_ALIASES`（United States / UK / Gambia / Bahamas…）。
+
+### 验收
+
+- `npm run check`（两套 tsconfig + ESLint + 单测）**exit 0**；vitest **37 文件 / 392 用例**（此前 37 / 350）。
+- 运行时：**新增** `scripts/verify-naming.mjs` **22/22**（三组按钮按粒度显隐、世界首都/英文的题面与**画布标签**、省级简称、省名档历史口径回归）；既有 `verify-round2` **38/38**、`verify-round3` **38/38**、`verify-puzzle` **75/75** —— 合计 **173 项全过**。
+- 新增探针方法 `quizProbe.namingTexts()` / `answerCurrent()`（读顶栏题面 DOM + 两条标签系列**实际会画出的文字**）与 `uiProbe` 的 `labelTexts`：验收脚本拿数据文件当真值比对，而不是"看起来像"。探针的 `QuizSessionDiagnostics` 补了 `naming`（可读写）与 `started` 的 setter，用于构造「已开始」场景。
+
+### 两个坑（下一个人别再踩）
+
+1. **不要用 PowerShell 的字符串替换改含中文的源文件**：`Get-Content -Raw` + `-replace` + `Set-Content -NoNewline` 会把 UTF-8 写坏（实测把一个测试文件的「上海市」写成乱码，且随后文件工具因「invalid UTF-8」拒绝读它，只能删掉重写）。改写用文件工具，别走 shell 管道。
+2. 数据子代理（Natural Earth 两条源的连接、繁体/台湾译名、多首都取舍、源缺失）值得单独交出去做：它额外找出 3 条繁体字、SSD 与 KAZ 两处源问题，是主线实现时容易漏掉的量。但**它的输出必须自己复核**：本次复核就发现「JAM/VCT 同形首都名会让两国答不出来」这条它会 WARN 但不会修 —— 那是消费端的判题逻辑问题，属于主线。
+
+## 本轮（重构 P5）：按收益排序的五项收敛 + 一处顺手发现的判题口径问题
+
+体检口径与前面几轮一致（耦合 / 可读性 / 可维护性）；结论是**没有新的结构性病灶**，
+剩下的收益全在「散落的重复」与「只能靠手测的纯逻辑」这两类上。按收益排序做了五项：
+
+### 1. `authPanel.ts` 的纯逻辑搬出面板（收益最高：619 → 478 行）
+
+新增 `src/ui/hometown.ts`（82 行）与 `src/ui/avatarImage.ts`（56 行），**+23 个单测**。
+
+为什么这是最高收益项：那 160 行是「用户输入的『广东』到底对应哪个 adcode」的领域规则 ——
+结果会写进 D1、再显示在排行榜上（写错就是永久错），却因为长在面板类里只能靠浏览器手测。
+`compressAvatar`（canvas 压缩阶梯）同理。抽出后：
+
+- `resolveHometown` 用**可辨识联合**返回 `empty / invalidProvince / invalidCity / ok`，
+  面板只按类别选 i18n 文案，测试只断言类别；比原先「返回 `UserHometown | null | Error`」好断言得多。
+- 口径被单测锁住：省市必须同时填（只填省 = `invalidCity`）、跨省拒绝、装饰面 `100000_JD` 不当城市、
+  空输入返回 `empty`（合法，不清掉草稿）。
+
+### 2. 开始卡片 4 处重复 → `ui/dom.showStartCard`
+
+输入 / 点击 / 无尽 / 拼图各抄了一份逐字相同的 `start-panel` HTML + 按钮接线，其中**三份**还用
+`setTimeout(…, 0)` 去取按钮 —— 但 `setHint` 是同步写 innerHTML 的，那个延时纯属多余
+（白多一个宏任务，也让「点开始没反应」更难查）。现在四处都只剩一次 6 行的调用。
+注意拼图那边的私有方法因此改名 `renderStartCard`，避免与方法名同名的导入函数混淆。
+
+### 3. 模式能力表 `src/modes/capabilities.ts`（新增，防「新增模式漏改一处」）
+
+三组集合原先以谓词链的形式散在 `appController`（排行榜资格）与 `chromeSync`（侧栏、按钮显隐、搜索框）**4 处**，
+只靠注释提醒「与 xx 保持一致」：
+
+| 集合 | 含义 | 原先出现在 |
+|---|---|---|
+| `LEADERBOARD_MODES` | 有排行榜 / 可提交 | appController ×1、chromeSync ×1 |
+| `TIMED_TEST_MODES` | 有 开始/暂停/跳过 生命周期 | chromeSync ×2 |
+| `GRANULARITY_MODES` | 拥有「世界/省级/市级」粒度行 | chromeSync ×1 |
+
+新增模式（拼图就是这么加的）漏一处的表现是**静默的 UI 不一致**（按钮显示但功能没接上），不是编译错误。
+`LeaderboardMode` 类型也改为由运行期表推导（`typeof LEADERBOARD_MODES[number]`），
+`leaderboardStore.ts` 转出以保持既有导入路径。`capabilities.test.ts` 断言前端集合与服务端
+`validMode` 白名单**逐项一致**（与 `subregions.test.ts` 断言前后端哨兵同一手法）。
+
+### 4. 无尽的两个价格开关并入 `modeSettings.ts`
+
+`endless.ts` 尾部手写的 4 个 localStorage 函数（各自带一份 try/catch）与 2 个键常量删除，
+改走该文件已有的 `loadBool/saveBool` —— 全仓其它模式的开关都在 `modeSettings.ts`，只有无尽在外。**-60 行**。
+
+### 5. `appController` 悬停卡片三处重复 → `showHoverCard`
+
+世界 / 省级 / 地级三档取名字与熟练度的方式不同，但卡片本身（`t('main.hoverStatsProvince', …)` + 档位词 + 显示）
+原先逐字抄了三遍。
+
+### 顺手发现的口径问题（**没有改**，留给作者决定）
+
+`matcher.normalize` 的 `while` 循环会**反复**剥后缀，于是 `广州市 → 广`、`徐州市 → 徐`、`苏州市 → 苏`。
+实测 `public/data/units.json` 的 373 个地级单位里有 **43 个（11.5%）**规范化后只剩单字；
+而 `Matcher.bestUnit` 的判据是 `ni === r.nf`，所以**输入模式下单字「广」会被判成「广州」正确**。
+
+- 这是 `normalize` 的既有语义（`matcher.test.ts` 只覆盖了 `北京市 → 北京` 这类单次剥离），**不是本轮引入的**；
+  本轮只是把它的后果写进了 `hometown.test.ts` 的一条用例里。
+- 未改原因：这是**判题口径**，不是重构。`normalize` 同时被判题（`Matcher`）、家乡匹配、排名共用，
+  收紧它可能挡掉本来想要的简写容错（「苏」对苏州算不算对？）—— 需要先定口径。
+- 若要收紧，最小改法是「后缀只剥**一次**」：`北京市 → 北京` 不变，`广州市 → 广州`（不再是「广」），
+  再补 `matcher.test.ts` 的用例。改动会影响所有依赖 `normalize` 的判题路径，**别顺手做**。
+
+### 验收
+
+- `npm run check`（两套 tsconfig + ESLint + 单测）**exit 0**；vitest **33 文件 / 350 用例**（此前 30 / 321）。
+- 运行时：`verify-round2` **38/38**、`verify-round3` **38/38**、`verify-puzzle` **75/75** ——
+  **151 项全过**，其中覆盖了本次改动的开始卡片接线（含拼图开始卡片）、排行榜侧栏的收起/展开、模式分段行显隐。
+- 本机提醒（沿用上轮结论）：跑运行时验收前若怀疑读到旧产物，用 PowerShell 清 `dist`
+  （`Remove-Item -Recurse -Force dist`），node 的删除在本机被静默拦截。
+
 ## P4（工程守卫 + 后端收口）
 
 ### 加了什么

@@ -6,6 +6,7 @@ import { pickWrongNext } from './wrongOrder';
 import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
+import { showStartCard } from '../ui/dom';
 
 /**
  * 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。
@@ -112,13 +113,12 @@ export class ClickMode extends MapQuizMode {
   }
 
   showStartHint() {
-    const scope = this.scopeLabel();
-    const actions = '<button id="click-start" class="start-action">' + t('common.start') + '</button>';
-    this.ctx.setHint('<div class="start-panel"><div class="start-title">' + t('click.startTitle') + '</div><div class="start-subtitle">' + t('click.startSubtitle', { scope }) + '</div>' + actions + '</div>');
-    window.setTimeout(() => {
-      const start = document.getElementById('click-start') as HTMLButtonElement | null;
-      if (start) start.onclick = () => this.start(false);
-    }, 0);
+    showStartCard({
+      id: 'click-start',
+      title: t('click.startTitle'),
+      subtitle: t('click.startSubtitle', { scope: this.scopeLabel() }),
+      onStart: () => this.start(false),
+    });
   }
 
   refresh() {
@@ -129,6 +129,8 @@ export class ClickMode extends MapQuizMode {
         return 'gray';
       },
       disableTooltip: true,
+      // 未开始（浏览态）：显示全量地名；开始后清空，只留已作答的绿/红（见 browseLabels.ts）
+      ...this.browseLabelState(),
       // 省名标签 / 国名标签：与输入模式共用基类实现（原先两个子类各抄了一份）
       provinceLabel: this.provinceLabelOf(),
       worldLabel: this.worldLabelOf(),
@@ -146,7 +148,8 @@ export class ClickMode extends MapQuizMode {
   protected onCorrect(_q: string) { this.ctx.toast(t('click.correctToast')); }
 
   private showQuestionHint(unit: Unit) {
-    // 省级全国测验：顶部显示省全名；世界全国测验：显示国家中文名（点击模式不在地图上高亮目标）
-    this.ctx.setHint('<div class="start-panel click-question"><div class="start-title">' + unit.name + '</div></div>');
+    // 省级全国测验：顶部显示省全名 或 单字简称；世界全国测验：显示 国名/首都名 的 中/英文
+    // （点击模式不在地图上高亮目标）。文本一律由基类的 displayNameOf 统一给出，避免与标签口径分叉。
+    this.ctx.setHint('<div class="start-panel click-question"><div class="start-title">' + this.displayNameOf(unit) + '</div></div>');
   }
 }
