@@ -153,4 +153,16 @@ describe('canDrillProvince（唯一层级省级单位不下钻）', () => {
     expect(drillTargetOfUnit(data, '110000')).toBe('110000');
     expect(canDrillProvince(drillTargetOfUnit(data, '110000'))).toBe(false);
   });
+
+  it('drillTargetOfUnit 也认装饰面（省直辖县级市/兵团城市在图上可点）', () => {
+    // 回归闸门：早先只查 data.units（不含装饰面），点"济源市"会退化成"拿它自己当省"，
+    // 于是钻出一个没有下级单位的空范围。
+    const data = makeAppData({
+      units: [u('410100', '410000')],
+      allUnits: [u('410100', '410000'), { ...u('419001', '410000'), decorative: true }],
+      provinces: [p('410000', '河南省')],
+    });
+    expect(drillTargetOfUnit(data, '419001')).toBe('410000');
+    expect(canDrillProvince(drillTargetOfUnit(data, '419001'))).toBe(true);
+  });
 });

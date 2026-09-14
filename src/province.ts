@@ -131,9 +131,13 @@ export function canDrillProvince(adcode: string | null | undefined): boolean {
  *
  * 市级视图里点一下地级市，renderer 会自动钻到它的省；点京津沪渝/港澳台这类单位的代表面时，
  * 钻的目标就是它自己 —— 这正是要被 `canDrillProvince` 拦下的情形。
+ *
+ * ⚠ 查的是 `allUnits`（含装饰面）：省直辖县级市/兵团城市这些**装饰面也在地图上可点**，
+ * 它们的 `provinceAdcode` 才是正确的下钻目标；只查 `units` 会退化成"拿它自己当省"，
+ * 于是钻出一个不存在下级单位的空范围。
  */
 export function drillTargetOfUnit(data: AppData, adcode: string): string {
-  const unit = data.units.find((u) => u.adcode === adcode);
+  const unit = data.allUnits.find((u) => u.adcode === adcode) ?? data.units.find((u) => u.adcode === adcode);
   return unit ? unit.provinceAdcode : adcode;
 }
 

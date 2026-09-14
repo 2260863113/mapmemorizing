@@ -27,6 +27,7 @@ import {
   canDrillProvince,
   continentFromScope,
   continentScope,
+  drillTargetOfUnit,
   provinceShortName,
   PROVINCE_NATION_SCOPE,
   subregionFromScope,
@@ -142,12 +143,20 @@ export class PuzzleMode extends BaseMode {
     return this.granularity;
   }
 
-  /** 切粒度：回到该粒度的全国范围（运行中不允许——此时按钮已收起）。 */
+  /**
+   * 切粒度：回到该粒度的全国范围（运行中不允许——此时按钮已收起）。
+   *
+   * 已经在该粒度上时**也有效**：若当前停在某个下钻范围（如市级档下的某省），点同级按钮 = 回到全国，
+   * 于是粒度行本身就是"退出下钻"的出口（否则用户会以为按钮坏了）。
+   */
   setGranularity(g: Granularity) {
-    if (this.boardPhase() || this.granularity === g) return;
+    if (this.boardPhase()) return;
+    const nation = this.nationScopeFor(g);
+    const changed = this.granularity !== g;
+    if (!changed && this.scope === nation) return; // 已经是"该粒度的全国"，无事可做
     this.granularity = g;
     this.persistGranularity();
-    this.scope = this.nationScopeFor(g);
+    this.scope = nation;
     this.enter();
   }
 
@@ -239,10 +248,12 @@ export class PuzzleMode extends BaseMode {
   // ==================== 地图下钻（选范围阶段） ====================
 
   /**
-   * 点地图上的单位 = 下钻（世界：国家→大洲→次区域；省级/市级：省→该省地级市）。
+   * 点地图上的单位 = **收窄范围**（世界：国家→大洲→次区域；中国侧：省级档点省 / 市级档点地级单位 → 该省地级市）。
    *
-   * 两条边界（用户口径）：① 唯一层级的京津沪渝/港澳台不下钻（只有 1 片，没有意义）；
-   * ② 大洋洲不再细分次区域（`hasSubregions` 已按 `NO_SUBREGION_DRILL` 关闭）。
+   * 三条边界（用户口径）：① 唯一层级的京津沪渝/港澳台不下钻（只有 1 片，没有意义）；
+   * ② 大洋洲不再细分次区域（`hasSubregions` 已按 `NO_SUBREGION_DRILL` 关闭）；
+   * ③ **市级档点地级单位必须真的收窄到它所属的省** —— 否则 renderer 的兜底下钻只动了地图视图，
+   * 拼图范围仍是「全国 340 个」（用户报的缺陷：看起来下钻了，范围没变）。
    */
   onUnitClick(adcode: string): boolean {
     if (this.boardPhase()) return false;
@@ -263,20 +274,27 @@ export class PuzzleMode extends BaseMode {
       }
       return false;
     }
-    const province = this.ctx.data.provinces.find((p) => p.adcode === adcode);
-    if (!province) return false;
-    if (!canDrillProvince(adcode)) {
+    // 中国侧：省级档点的是省（粒度切到市级），市级档点的是地级单位（收窄到它所属的省）
+    const target = this.granularity === 'province' ? adcode : drillTargetOfUnit(this.ctx.data, adcode);
+    if (!canDrillProvince(target)) {
       this.ctx.toast(t('common.noDrillSingleUnit'));
       return true;
     }
+    if (!this.ctx.data.provinces.some((p) => p.adcode === target)) return false;
+    if (this.scope === target) return true; // 已在该省，不重复下钻
     this.granularity = 'city';
     this.persistGranularity();
-    this.scope = adcode;
+    this.scope = target;
     this.enter();
     return true;
   }
 
-  /** 点空白 = 退回上一层（世界：次区域→大洲→世界；下钻某省→市级全国）。 */
+  /**
+   * 点空白 = 退回上一层（世界：次区域→大洲→世界；下钻某省→市级全国）。
+   *
+   * 顺带兜底**视图与范围不同步**的情况：若地图被别处下钻了（`renderer.currentProvince()`）而本模式的范围
+   * 还是全国，也一并 `enter()` 把地图退回全国 —— 否则空白点击会像"没反应"。
+   */
   onBackToNation() {
     if (this.boardPhase()) return; // 盘面阶段地图已隐藏，这里只是防御
     if (this.granularity === 'world') {
@@ -293,9 +311,11 @@ export class PuzzleMode extends BaseMode {
       }
       return;
     }
-    if (this.granularity === 'city' && this.scope) {
-      this.scope = null;
-      this.enter();
+    if (this.granularity === 'city') {
+      if (this.scope || this.ctx.renderer.currentProvince()) {
+        this.scope = null;
+        this.enter(); // 市级全国范围：地图一并退回全国（renderScopeMap 会清掉下钻省）
+      }
     }
   }
 
@@ -366,6 +386,11 @@ export class PuzzleMode extends BaseMode {
     }
     this.ctx.renderer.setProvinceMode(false, { inset: false });
     if (this.scope) this.ctx.renderer.drillToProvince(this.scope);
+    // ⚠ 必须显式回全国：市级视图里 `setProvinceMode(false)` 会**提前 return**（已经是这个状态），
+    // 于是 renderer 里残留的下钻省不会被清掉 —— 范围已经是"全国 340"，地图却还锁在某个省上。
+    // 加 `currentProvince()` 判断是**防重入**：backToNation 会触发 onViewChange → 模式 refresh() →
+    // 又回到这里，只有第一次（下钻省确实存在时）才需要真的退，之后立刻变成 no-op。
+    else if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
     this.ctx.renderer.render({
       colorOf: () => 'gray',
       hideLabels,

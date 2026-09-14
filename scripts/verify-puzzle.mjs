@@ -256,6 +256,45 @@ try {
   check('从下钻的省返回后回到「全国 340 个地级单位」', backCity.scope === null && backCity.granularity === 'city' &&
     (await scopeUI()).subtitle === '把全国 340 个地级单位拼成一幅完整的地图', backCity.scope);
 
+  // ---- 市级档点地级单位：必须**真的**收窄到它所属的省（用户报的缺陷：范围仍是 340） ----
+  await setScope('city', null); // 探针把状态摆到「市级 + 全国」
+  await sleep(500);
+  const cityNationBefore = await puzzle();
+  check('市级全国：范围就是全国 340 片',
+    cityNationBefore.granularity === 'city' && cityNationBefore.scope === null &&
+      (await scopeUI()).subtitle === '把全国 340 个地级单位拼成一幅完整的地图', cityNationBefore);
+  const cityClick = await mapPoint(0.5, 0.42); // 市级全国视图中心 = 四川一带
+  await click(cityClick.x, cityClick.y);
+  const cityDrilled = await puzzle();
+  const cityDrilledUI = await scopeUI();
+  check('市级全国里单击一个地级单位 → 范围**收窄到它所属的省**（不再停留在 340 片）',
+    cityDrilled.granularity === 'city' && /^\d{6}$/.test(cityDrilled.scope ?? '') &&
+      /^把.+的 \d+ 个地级单位/.test(cityDrilledUI.subtitle),
+    { before: cityNationBefore.scope, scope: cityDrilled.scope, subtitle: cityDrilledUI.subtitle });
+  const drilledCount = Number(cityDrilledUI.subtitle.match(/(\d+) 个地级单位/)?.[1] ?? 0);
+  await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+  await sleep(900);
+  const cityDrilledBoard = await puzzle();
+  check('开局片数 = 该省的地级单位数（不是 340），进度行同步',
+    cityDrilledBoard.total === drilledCount && drilledCount > 1 && drilledCount < 340 &&
+      (await ev(`document.getElementById('puzzle-status').textContent`)).includes(`已拼 1/${drilledCount}`),
+    { total: cityDrilledBoard.total, drilledCount });
+  await resetClick();
+  // 「点空白返回」在这一步走探针（等价于空白点击后的模式回调，`puzzleBack`）：
+  // 四川的取景框（lng 87–119 / lat 23.9–36.5）里**看不到海面**，而该视图下其它省的面与
+  // 南海诸岛装饰面都会被 renderer 忽略（不算空白），所以这个视图里没有可点的真空白点。
+  // 鼠标级的空白返回已在世界档那两条（东亚→亚洲→全世界）用真实点击验证过。
+  await ev(`window.__probe.puzzleBack()`);
+  await sleep(500);
+  const backNation = await puzzle();
+  check('市级下钻后点空白 → 回到「全国 340 个地级单位」，地图也一并退回全国',
+    backNation.scope === null && backNation.granularity === 'city' &&
+      (await scopeUI()).subtitle === '把全国 340 个地级单位拼成一幅完整的地图' &&
+      (await json(`window.__probe.quizScope().viewProvince`)) === null,
+    { scope: backNation.scope, viewProvince: await json(`window.__probe.quizScope().viewProvince`) });
+  check('已在市级档时再点「市级」= 回到全国市级（粒度按钮可当"退出下钻"用）',
+    (await (async () => { await setScope('city', '130000'); await sleep(300); await ev(`(() => { document.getElementById('granularity-city').click(); return true })()`); await sleep(500); return puzzle(); })()).scope === null);
+
   // ==================== 开始 = 拼图盘面（地图隐藏、画布清空） ====================
   await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
   await sleep(600);

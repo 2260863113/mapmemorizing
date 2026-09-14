@@ -445,12 +445,16 @@ interface MemoryState {
 
 ### 17.1 两个阶段与范围口径
 
-- **选范围阶段（`puzzlePhase() === 'scope'`）**：`#map` 可见、`#puzzle` 隐藏、出「开始」卡片（副标题写明"把 xx 拼成一幅完整的地图"，xx 带片数与单位口径）。顶部**「世界/省级/市级」**切换粒度；**世界档**另有「全世界/各大洲」与次区域两行；**单击地图单位下钻**（世界：国家 → 大洲 → 次区域；省级/市级：省 → 该省地级市），**点空白退回上一层**（走现成的 `onBlankClick` → 模式 `onBackToNation`）。三档共用点击/输入模式的**同一套 scope 哨兵**（`PROVINCE_NATION_SCOPE` / `WORLD_NATION_SCOPE` / `__continent_XX__` / `__subregion_XXX__` / 省 adcode），所以大洲与次区域两行分段按钮、`isNationLikeScope` 等现成逻辑直接复用。
+- **选范围阶段（`puzzlePhase() === 'scope'`）**：`#map` 可见、`#puzzle` 隐藏、出「开始」卡片（副标题写明"把 xx 拼成一幅完整的地图"，xx 带片数与单位口径）。顶部**「世界/省级/市级」**切换粒度；**世界档**另有「全世界/各大洲」与次区域两行；**单击地图单位即收窄范围**（世界：国家 → 大洲 → 次区域；中国侧见下一条），**点空白退回上一层**（走现成的 `onBlankClick` → 模式 `onBackToNation`）。三档共用点击/输入模式的**同一套 scope 哨兵**（`PROVINCE_NATION_SCOPE` / `WORLD_NATION_SCOPE` / `__continent_XX__` / `__subregion_XXX__` / 省 adcode），所以大洲与次区域两行分段按钮、`isNationLikeScope` 等现成逻辑直接复用。
 - **拼图盘面（`puzzlePhase() === 'board'`）**：`#map` 隐藏（港澳放大框 `#hkmac-inset` 是独立 DOM，必须显式 `setProvinceMode(false, { inset: false })`，否则会浮在画布上）、`#puzzle` 显示、进度行显示、**粒度行与难度行收起**（运行中不许换范围/换难度），左下缩放角标也收起（那是地图渲染器的倍率，盘面自带缩放）。一局结束后（`finished`）盘面保留、**难度行重新出现**；「重置」回到选范围阶段。
 - **片数口径**：省级全国 34（省级 plus 档，排除装饰面）；世界 194 个答题国，可再按大洲/次区域收窄（亚洲 48、东亚 5…）；市级 340 个真实地级单位，可下钻某省（河北 11、四川 21…）。**装饰面（`decorative: true` 的 33 个：省直辖县级市/兵团城市/南海诸岛）一律不作碎片**（见 17.4）。
 - 分母与副标题的片数由 `countScopePieces()` 现算（只数不解析几何，毫秒级），单测断言它与 `buildPieces().length` **逐档相等**。
 - ⚠ **次区域哨兵里不含大洲**：选到次区域后 `continentFromScope()` 会返回 null，若直接用它当"当前大洲"会让洲行掉高亮，并让 `setWorldMode(true, null, 'EAS')` 被渲染器当成"没有大洲"而**忽略次区域**（地图退回全世界、`hasDrillLevel()` 变 false、点空白也返回不了）。故模式的 `getWorldContinent()` 在次区域档要**用 `subregions` 元数据反查一次**。同理 `setWorldSubregion()` 取当前大洲也不能再用 `continentFromScope(scope)`。
 - **下钻的两条边界**（用户口径，适用于所有模式）：① **唯一层级的省级单位不下钻** —— 京津沪渝与港澳台各自只有 1 个下级单位（`SINGLE_UNIT_PROVINCES` + `canDrillProvince`），点它们只在原地给一行提示；城市视图里点它们的代表面也拦（`drillTargetOfUnit`），老存档若停在它们身上按全国处理（`loadScopeProvince`）。② **大洋洲不再细分次区域**（`NO_SUBREGION_DRILL`）：大洋洲仍可选、可点国家进入，但 `hasSubregions('OC') === false`，因此不显示次区域行、不响应次区域下钻，深链带来的次区域参数也会被忽略；四个次区域的哨兵与数据都保留（ADR-0001：`__subregion_ANZ__` 等已写进 D1，只是界面不可达）。
+- **中国侧的点法**：省级档点的是**省**（粒度切到市级档、范围收窄到该省）；**市级档点的是地级单位**，目标是**它所属的省**（`drillTargetOfUnit` 要查 `allUnits`，才能覆盖省直辖县级市/兵团城市这些**可点的装饰面**）。
+  ⚠ 只靠 renderer 的兜底下钻是不够的 —— 那条路只动**地图视图**，模式的范围不变，用户会看到"下钻了但还是全国 340 个地级市"（实测缺陷）。模式必须在 `onUnitClick` 里返回 `true` 把事件收下并**真的改范围**，同时 `renderScopeMap()` 负责把地图同步到该范围。
+  ⚠ 反向同步也要显式做：市级视图里 `setProvinceMode(false)` 会**提前 return**（本来就是这个状态），renderer 里残留的下钻省不会被清掉，于是"范围已是全国 340、地图还锁在某个省上"。所以无范围时要判 `renderer.currentProvince()` 再调 `backToNation()`；**这个判断同时是防重入的关键**（`backToNation` → `onViewChange` → 模式 `refresh()` → 又回到 `renderScopeMap()`，不判就会无限递归到爆栈）。
+- **粒度行同时是"退出下钻"的出口**：点**已经选中**的档位 = 回到该档的全国范围（如市级档下钻某省后再点「市级」→ 全国 340），否则用户会以为按钮坏了。
 
 ### 17.2 1x 比例尺 = 地图 1x（用户口径）
 

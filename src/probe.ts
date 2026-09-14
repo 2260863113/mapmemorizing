@@ -652,6 +652,40 @@ export function installProbe(app: AppController) {
     },
 
     /**
+     * 当前测验模式的范围快照（只读）：模式 / 粒度 / 范围哨兵 / **出题池大小** / 大洲与次区域。
+     * 用于断言"下钻是否真的把范围收窄了"（地图视图与出题范围是两件事，必须分开看）。
+     */
+    quizScope() {
+      const app = anyApp as unknown as {
+        current?: {
+          id?: string;
+          getGranularity?: () => unknown;
+          getScopeProvince?: () => unknown;
+          isStarted?: () => boolean;
+        } | null;
+      };
+      const mode = app.current as unknown as {
+        activePool?: () => unknown[];
+        order?: string[];
+        scopeProvince?: string | null;
+        worldContinent?: string | null;
+        worldSubregion?: string | null;
+      } | null;
+      const pool = mode?.activePool ? mode.activePool().length : null;
+      return {
+        mode: app.current?.id ?? null,
+        granularity: app.current?.getGranularity?.() ?? null,
+        scopeProvince: app.current?.getScopeProvince?.() ?? null,
+        started: app.current?.isStarted?.() ?? false,
+        poolSize: pool,
+        orderSize: Array.isArray(mode?.order) ? mode.order.length : null,
+        worldContinent: mode?.worldContinent ?? null,
+        worldSubregion: mode?.worldSubregion ?? null,
+        viewProvince: (renderer as unknown as { currentProvince?: () => string | null }).currentProvince?.() ?? null,
+      };
+    },
+
+    /**
      * 本轮 UI 验收（只读）：主题/边界深浅等全局设置、熟练度分析隐藏标签、
      * 自由模式的粒度与「不支持下钻」能力位、当前渲染状态里的标签开关。
      *

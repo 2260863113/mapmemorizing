@@ -1,6 +1,22 @@
 # 给下一个 AI 的交接文档
 
-## 本轮（拼图收口：1x 比例尺、困难档无提示、下钻边界、拼图排行榜）
+## 本轮补丁（用户报缺陷）：市级档点地级单位没有收窄范围
+
+**症状**：市级档（全国 340 片）里点一个地级单位，**地图确实钻进了那个省**，但拼图范围仍是「全国 340 个地级单位」；点空白"能回到上层"（其实只是地图回去了，范围从头到尾没变）。
+
+**根因**：模式的 `onUnitClick` 在市级档直接 `return false`，于是事件落到 renderer 的**兜底下钻**上 —— 那条路只改**地图视图**（`drillToProvince`），模式自己的 scope 一点没动。省级档之所以没这个问题，是因为它在模式里显式调 `drillFromProvinceNation`。
+
+**修法**（`src/modes/puzzle.ts`）：
+1. 中国侧统一成一个目标：省级档 → 点到的省；市级档 → `drillTargetOfUnit(data, adcode)`（**它所属的省**）。合法就 `scope = target` + `enter()` 并返回 `true`（把事件收下，别让 renderer 再兜底）；唯一层级省级单位仍然只给提示。
+2. `drillTargetOfUnit` 改成查 **`allUnits`**：省直辖县级市/兵团城市是**可点的装饰面**，只查 `units` 会让它们退化成"自己当省"，钻出一个没有下级单位的空范围。
+3. 反向同步：`renderScopeMap()` 在市级档且无范围时，因为 `setProvinceMode(false)` 会提前 return（本来就是这个状态），renderer 里残留的下钻省不会被清 —— 必须判 `renderer.currentProvince()` 后调 `backToNation()`。**这个判断同时是防重入的**：`backToNation()` → `onViewChange` → 模式 `refresh()` → 又回 `renderScopeMap()`，不判就无限递归（实测 ECharts `_buildGeoJSON` 里 stack overflow）。
+4. `setGranularity(g)` 允许**点已选中的档位**：此时把范围重置回该档的全国范围（市级档下钻某省 → 再点「市级」= 回到全国 340）。粒度行因此也是"退出下钻"的出口。
+
+**顺带**：`probe.ts` 新增只读快照 `quizScope()`（模式/粒度/范围哨兵/出题池大小/大洲/次区域/地图下钻省），用来分辨"地图下钻"与"范围收窄"这两件事 —— 以后凡是涉及下钻的断言都该看它。
+
+**验收**：vitest 271/271；`verify-puzzle.mjs` **70/70**（新增：市级全国点一个地级单位 → 范围变 6 位 adcode、副标题写「把四川的 21 个地级单位」、开局片数 21 且进度行 `已拼 1/21`；点空白 → 回全国 340 且 `viewProvince === null`；点已选档位 → 回全国）。
+
+## 上一轮（拼图收口：1x 比例尺、困难档无提示、下钻边界、拼图排行榜）
 
 需求（用户一次给了 6 条）：
 
