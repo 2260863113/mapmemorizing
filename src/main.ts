@@ -12,6 +12,8 @@ async function boot() {
   // 用法见 README「运行时验收探针」与 scripts/verify-round2.mjs。
   if (new URLSearchParams(location.search).get('probe') === '1') {
     try {
+      // 目录导入（而非 './probe/index'）：Vite 据此把 chunk 命名为自描述的 `probe-*.js`，
+      // 而不是与主包同名的 `index-*.js`。
       const { installProbe } = await import('./probe');
       installProbe(app);
     } catch (e) {

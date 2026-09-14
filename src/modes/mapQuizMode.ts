@@ -1,6 +1,8 @@
-import type { Continent, Mode, RoundResult, SubregionId, Unit } from '../types';
+import type { Continent, Mode, RenderState, RoundResult, SubregionId, Unit } from '../types';
 import { CONTINENTS } from '../types';
 import type { ModeCtx, OrderMode, ProgressSegment } from './types';
+import type { QuizSessionDiagnostics } from './quizDiagnostics';
+import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView } from './progress';
@@ -240,27 +242,12 @@ export abstract class MapQuizMode extends BaseMode {
     this.enter();
   }
 
-  private granularityStorageKey() {
-    return 'china-admin-mode-granularity:' + this.storagePrefix();
-  }
-
   private loadGranularity(): Granularity {
-    try {
-      const raw = localStorage.getItem(this.granularityStorageKey());
-      if (raw === 'city') return 'city';
-      if (raw === 'world') return 'world';
-      return 'province'; // 首次默认省级
-    } catch {
-      return 'province';
-    }
+    return loadStoredGranularity(this.storagePrefix(), 'province'); // 首访默认省级
   }
 
   private persistGranularity() {
-    try {
-      localStorage.setItem(this.granularityStorageKey(), this.granularity);
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveStoredGranularity(this.storagePrefix(), this.granularity);
   }
 
   // ==================== 出题顺序 ====================
@@ -818,4 +805,84 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.isWorldNation()) return this.ctx.store.getWorldPractice(u.adcode).score;
     return this.ctx.store.getPractice(u.adcode).score;
   };
+
+  // ==================== 渲染状态片段（输入 / 点击共用） ====================
+
+  /** 世界国家中文名（找不到就回落 iso）。 */
+  protected countryName(iso: string): string {
+    return this.ctx.data.countries.find((c) => c.iso === iso)?.name ?? iso;
+  }
+
+  /**
+   * 省级全国的省名标签：已作答省显示绿/红简称，未作答返回 `null`。
+   *
+   * 非省级全国返回 `undefined`，即渲染状态里不使用这个系列。
+   * 原先输入与点击两个子类各自抄了一份逐字相同的实现，且输入模式还私藏了一份
+   * `provinceShortName`（与 `province.ts` 的同名函数完全等价），一并收敛到这里。
+   */
+  protected provinceLabelOf(): RenderState['provinceLabel'] {
+    if (!this.isProvinceNation()) return undefined;
+    return (provinceAdcode) => {
+      if (this.green.has(provinceAdcode)) {
+        return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'green' as const };
+      }
+      if (this.red.has(provinceAdcode)) {
+        return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'red' as const };
+      }
+      return null;
+    };
+  }
+
+  /** 世界全国的国名标签：已作答国显示绿/红国名，未作答返回 `null`。非世界全国返回 `undefined`。 */
+  protected worldLabelOf(): RenderState['worldLabel'] {
+    if (!this.isWorldNation()) return undefined;
+    return (iso) => {
+      if (this.green.has(iso)) return { text: this.countryName(iso), color: 'green' as const };
+      if (this.red.has(iso)) return { text: this.countryName(iso), color: 'red' as const };
+      return null;
+    };
+  }
+
+  /**
+   * 验收探针的**会话状态视图**（见 `quizDiagnostics.ts` 的说明）。
+   *
+   * 生产路径不调用（只有 URL 带 `?probe=1` 时探针取两次）。存在的意义是把「探针依赖哪些
+   * protected 状态」变成一份**编译器可校验**的契约：方法体在类内部，任何被改名 / 删除 /
+   * 改签名的成员都会让 `tsc` 在这里直接报错，而不是让探针在验收时静默读到 `undefined`。
+   *
+   * 返回的是**活值**（getter / setter 直接读写当前字段），故探针取一次即可长期持有。
+   */
+  diagnostics(): QuizSessionDiagnostics {
+    const self = this;
+    return {
+      get green() { return self.green; },
+      set green(v: Set<string>) { self.green = v; },
+      get red() { return self.red; },
+      set red(v: Set<string>) { self.red = v; },
+      get question() { return self.question; },
+      set question(v: string | null) { self.question = v; },
+      get results() { return self.results; },
+      set results(v: ProgressSegment[]) { self.results = v; },
+      get fail() { return self.fail; },
+      set fail(v: number) { self.fail = v; },
+      get started() { return self.started; },
+      get order() { return self.order; },
+      get scopeProvince() { return self.scopeProvince; },
+      get worldContinent() { return self.worldContinent; },
+      set worldContinent(v: Continent | null) { self.worldContinent = v; },
+      get worldSubregion() { return self.worldSubregion; },
+      set worldSubregion(v: SubregionId | null) { self.worldSubregion = v; },
+      get orderMode() { return self.orderMode; },
+      set orderMode(v: OrderMode) { self.orderMode = v; },
+      get errorRollback() { return self.errorRollback; },
+      set errorRollback(v: boolean) { self.errorRollback = v; },
+      get rollbackCounted() { return self.rollbackCounted; },
+      get rollbacking() { return self.rollbacking; },
+      activePool: () => self.activePool(),
+      worldScopedPool: () => self.worldScopedPool(),
+      persist: () => self.persist(),
+      start: (continueSaved) => self.start(continueSaved),
+      answer: (correct, scored, timedOut) => self.answer(correct, scored, timedOut),
+    };
+  }
 }

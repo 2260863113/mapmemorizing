@@ -86,7 +86,7 @@ node scripts/shot-round2.mjs       # 出验收截图到 docs/shots/
 ```
 
 - **必须用 Edge**：本机 `C:\Program Files (x86)\Google\Chrome\...` 是 **Chrome 38**，不支持 ES module，headless 下主 bundle 根本不执行，会得到「应用没启动」的假象。
-- 探针代码在 `src/probe.ts`，仅当 URL 带 `?probe=1` 时动态加载（独立 chunk，普通用户不拉取）。
+- 探针代码在 `src/probe/`（按域拆成 internals / map / quiz / puzzle / ui 五个模块），仅当 URL 带 `?probe=1` 时动态加载（独立 chunk，普通用户不拉取）。私有状态一律通过生产类自带的诊断视图读取（`AppController.diagnostics()` 等），因此探针目录**没有反射式强转**：成员改名会让 `tsc` 报错而不是让断言静默失效，理由见 [ADR 0007](docs/adr/0007-probe-reads-internals-via-typed-diagnostics-view.md)。
 - 验收覆盖：空白区无交互（事件层 + 渲染层双重断言）、梵蒂冈不在池内、极小国家开关、错误回滚每次标红 + 1500ms、世界跟随缩放单调性、答错跟随不改缩放、跟随钳制（取景边界/倍率下限）、UI 收尾（按钮回滚、开关样式、标签默认显示）、拼图模式（选范围阶段的地图/**省级与市级两种下钻都真的收窄范围**/空白返回、拼图 1x 与地图 1x 实测比对、困难档无提示、开始后清空画布、拖拽、磁吸、面积层级、难度收起与重现、暂停、三个粒度各自的获胜、「拼图完成」标题、重置回开始卡片、拼图排行榜与提交门槛）、唯一层级省级单位不下钻、大洋洲不再细分次区域。
 - 说明：`scripts/` 下其余 `probe-*.mjs` / `diag-*.mjs` 为一次性探针，按 `.gitignore` 不入库；本轮这个因为要长期防回归，特意改名 `verify-*` 入库。
 
@@ -108,6 +108,7 @@ src/
   store.ts               # 答题统计、旧记忆兼容与设置（localStorage）
   modes/                 # 输入 / 挑战 / 点击 / 自由 / 熟练度分析
   ui/                    # 搜索框、倒计时、统计面板、设置面板
+  probe/                 # 运行时验收探针（?probe=1）；私有状态经「诊断视图」读取，无反射强转（ADR 0007）
   main.ts                # 装配入口
 ```
 
@@ -128,5 +129,5 @@ npm run build:seo   # 只重新生成次区域数据 + 落地页（build 已自�
 ```bash
 npm run build    # 生成次区域数据与落地页 + 类型检查 + 生产构建（dist/）
 npm run preview  # 预览生产构建
-npm test         # vitest（225 个用例）
+npm test         # vitest（307 个用例）
 ```

@@ -16,6 +16,7 @@ import {
 } from '../modeSettings';
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
+import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
 import { WorldMatcher } from '../worldNames';
 
@@ -179,8 +180,6 @@ export class InputMode extends MapQuizMode {
   }
 
   refresh() {
-    const provinceNation = this.isProvinceNation();
-    const worldNation = this.isWorldNation();
     this.ctx.renderer.render({
       colorOf: (adcode) => {
         if (this.green.has(adcode)) return 'green';
@@ -188,35 +187,10 @@ export class InputMode extends MapQuizMode {
         if (this.red.has(adcode)) return 'red';
         return 'gray';
       },
-      // 省级全国：已作答省显示绿/红省名简称标签；当前题蓝色高亮由省级地图渲染
-      provinceLabel: provinceNation
-        ? (provinceAdcode) => {
-            if (this.green.has(provinceAdcode)) {
-              return { text: this.provinceShortName(provinceAdcode), color: 'green' as const };
-            }
-            if (this.red.has(provinceAdcode)) {
-              return { text: this.provinceShortName(provinceAdcode), color: 'red' as const };
-            }
-            return null;
-          }
-        : undefined,
-      // 世界全国：已作答国显示绿/红国名标签（当前题蓝色高亮由地图着色；不外泄题面）
-      worldLabel: worldNation
-        ? (iso) => {
-            if (this.green.has(iso)) {
-              return { text: this.countryName(iso), color: 'green' as const };
-            }
-            if (this.red.has(iso)) {
-              return { text: this.countryName(iso), color: 'red' as const };
-            }
-            return null;
-          }
-        : undefined,
+      // 省名标签 / 国名标签：与点击模式共用基类实现（原先两个子类各抄了一份）
+      provinceLabel: this.provinceLabelOf(),
+      worldLabel: this.worldLabelOf(),
     });
-  }
-
-  private countryName(iso: string): string {
-    return this.ctx.data.countries.find((c) => c.iso === iso)?.name ?? iso;
   }
 
   // ==================== 输入特有：钩子覆写 ====================
@@ -273,11 +247,6 @@ export class InputMode extends MapQuizMode {
   }
 
   // ==================== 输入特有：BFS 顺序出题 ====================
-
-  private provinceShortName(provinceAdcode: string) {
-    const p = this.ctx.data.provinces.find((x) => x.adcode === provinceAdcode);
-    return p ? normalizeProvince(p.name) : provinceAdcode;
-  }
 
   /**
    * 顺序模式出题：**严格广度优先**（实现与「不可能出现空洞」的论证见 bfsOrder.ts）。
@@ -342,6 +311,24 @@ export class InputMode extends MapQuizMode {
       .filter((p) => this.hasUnvisitedInProvince(p.adcode))
       .sort((a, b) => dist2(a.center, last?.center ?? [104.5, 35]) - dist2(b.center, last?.center ?? [104.5, 35]));
     return provinces[0]?.adcode ?? this.unvisited()[0]?.provinceAdcode ?? '';
+  }
+
+  /**
+   * 验收探针的**顺序出题状态视图**（见 `quizDiagnostics.ts` 的说明）。
+   *
+   * BFS 前沿队列是本类独有状态，基类的 `diagnostics()` 已由基类实现，故另开一个入口
+   * （比用原型链把两个视图拼在一起更好读）。方法体在类内部，成员改名会让 `tsc` 报错。
+   */
+  orderDiagnostics(): QuizOrderDiagnostics {
+    const self = this;
+    return {
+      get lastGreen() { return self.lastGreen; },
+      set lastGreen(v: string | null) { self.lastGreen = v; },
+      get bfsQueue() { return self.bfsQueue; },
+      set bfsQueue(v: string[]) { self.bfsQueue = v; },
+      get bfsDomain() { return self.bfsDomain; },
+      set bfsDomain(v: string) { self.bfsDomain = v; },
+    };
   }
 }
 

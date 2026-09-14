@@ -43,6 +43,7 @@ import { PuzzleState, SNAP_TOLERANCE_PX, type DropResult } from '../puzzle/state
 import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
 import { project, unitScale, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
+import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { puzzleStatus, setHint, showSummary, toast } from '../ui/dom';
 
 /** 难度：简单 = 显示名称；困难 = 不显示（用户口径：难度只管标签，且运行中锁定）。 */
@@ -116,27 +117,12 @@ export class PuzzleMode extends BaseMode {
 
   // ==================== 粒度与范围 ====================
 
-  private granularityStorageKey() {
-    return 'china-admin-mode-granularity:puzzle';
-  }
-
   private loadGranularity(): Granularity {
-    try {
-      const raw = localStorage.getItem(this.granularityStorageKey());
-      if (raw === 'city') return 'city';
-      if (raw === 'world') return 'world';
-      return 'province';
-    } catch {
-      return 'province';
-    }
+    return loadStoredGranularity('puzzle', 'province'); // 首访默认省级
   }
 
   private persistGranularity() {
-    try {
-      localStorage.setItem(this.granularityStorageKey(), this.granularity);
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveStoredGranularity('puzzle', this.granularity);
   }
 
   getGranularity(): Granularity {

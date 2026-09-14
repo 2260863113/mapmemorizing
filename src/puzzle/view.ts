@@ -12,6 +12,7 @@
  * 后续 move/up，而捕获目标取同一个容器最省事。
  */
 import { PUZZLE_BBOX, projectBBox, pxBBoxOf, project, svgPathOf, type PuzzleFamily } from './projection';
+import { MAX_ZOOM, MIN_ZOOM } from '../map/zoom';
 import { PuzzleState, type DropResult } from './state';
 
 /** 当前范围全部碎片的经纬度 bbox（开局取景用）。 */
@@ -66,13 +67,11 @@ export interface PuzzleViewOptions {
 }
 
 /**
- * 缩放范围与**地图页完全一致**（`renderer.ts` 的 MIN_ZOOM/MAX_ZOOM）。
+ * 缩放范围与**地图页共用同一份常量**（见 `../map/zoom.ts`）。
  *
  * 1x 的比例已经等于地图 1x（见 `unitScale`），上限若还停在 6x，下钻某省（地图自己用 24.8x）
  * 时根本放不大；下限同理（0.8x 与地图一致，能一眼看全整幅）。
  */
-export const MIN_ZOOM = 0.8;
-export const MAX_ZOOM = 28;
 
 interface SlotPointer {
   pointerId: number;

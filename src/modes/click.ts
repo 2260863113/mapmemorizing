@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { formatElapsedSeconds } from '../ui/format';
 import { pickWrongNext } from './wrongOrder';
 import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
-import { canDrillProvince, drillTargetOfUnit, provinceShortName } from '../province';
+import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 
 /**
@@ -122,8 +122,6 @@ export class ClickMode extends MapQuizMode {
   }
 
   refresh() {
-    const provinceNation = this.isProvinceNation();
-    const worldNation = this.isWorldNation();
     this.ctx.renderer.render({
       colorOf: (adcode) => {
         if (this.green.has(adcode)) return 'green';
@@ -131,35 +129,10 @@ export class ClickMode extends MapQuizMode {
         return 'gray';
       },
       disableTooltip: true,
-      // 省级全国：已作答省显示绿/红省名简称标签
-      provinceLabel: provinceNation
-        ? (provinceAdcode) => {
-            if (this.green.has(provinceAdcode)) {
-              return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'green' as const };
-            }
-            if (this.red.has(provinceAdcode)) {
-              return { text: provinceShortName(this.ctx.data, provinceAdcode), color: 'red' as const };
-            }
-            return null;
-          }
-        : undefined,
-      // 世界全国：已作答国显示绿/红国名标签
-      worldLabel: worldNation
-        ? (iso) => {
-            if (this.green.has(iso)) {
-              return { text: this.countryName(iso), color: 'green' as const };
-            }
-            if (this.red.has(iso)) {
-              return { text: this.countryName(iso), color: 'red' as const };
-            }
-            return null;
-          }
-        : undefined,
+      // 省名标签 / 国名标签：与输入模式共用基类实现（原先两个子类各抄了一份）
+      provinceLabel: this.provinceLabelOf(),
+      worldLabel: this.worldLabelOf(),
     });
-  }
-
-  private countryName(iso: string): string {
-    return this.ctx.data.countries.find((c) => c.iso === iso)?.name ?? iso;
   }
 
   // ==================== 点击特有：钩子覆写 ====================

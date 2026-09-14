@@ -4,6 +4,7 @@ import { BaseMode } from './baseMode';
 import { t } from '../i18n';
 import type { Granularity } from '../province';
 import { loadMemoryHideLabels, saveMemoryHideLabels, type ModeSettingsPanel } from '../modeSettings';
+import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 
 /**
  * 自由模式：全图显示所有地图单位名称（白底标签），纯浏览、不交互；可隐藏标签。
@@ -46,28 +47,12 @@ export class FreeBrowseMode extends BaseMode {
     this.enter();
   }
 
-  private granularityStorageKey() {
-    // 与 mapQuizMode 的键格式保持一致（按模式分开记忆粒度）
-    return 'china-admin-mode-granularity:memory';
-  }
-
   private loadGranularity(): Granularity {
-    try {
-      const raw = localStorage.getItem(this.granularityStorageKey());
-      if (raw === 'province') return 'province';
-      if (raw === 'world') return 'world';
-      return 'city'; // 默认地级（现状）
-    } catch {
-      return 'city';
-    }
+    return loadStoredGranularity('memory', 'city'); // 自由浏览默认地级（现状）
   }
 
   private persistGranularity() {
-    try {
-      localStorage.setItem(this.granularityStorageKey(), this.granularity);
-    } catch {
-      /* 忽略存储失败 */
-    }
+    saveStoredGranularity('memory', this.granularity);
   }
 
   enter() {

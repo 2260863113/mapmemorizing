@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampFollowAxis } from './renderer';
+import { clampFollowAxis } from './follow';
 
 /**
  * 跟随钳制的单轴纯函数（用户 2026-09 需求）：

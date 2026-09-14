@@ -1,13 +1,32 @@
 import * as echarts from 'echarts';
 import type { AppData, BoundaryTone, Continent, RenderState, SubregionId, Unit, UnitColor } from '../types';
 import { t } from '../i18n';
-import { normalizeProvince } from '../matcher';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
 import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
+import { buildLabelAnchors, buildProvinceLines } from './geoIndex';
+import { MAX_ZOOM, MIN_ZOOM, clampZoom } from './zoom';
+import { clampFollowCenter, followZoomFloor, isComfortablyVisible, isNegligibleMove } from './follow';
 import { InsetMap } from './inset';
+import { registerMaps } from './mapRegistry';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
-import { worldFaceInteractive, worldFeatureVisible, type WorldFaceContext } from './worldFaces';
-import { TIER_ZOOM_MIN, tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
+import { worldFaceInteractive, type WorldFaceContext } from './worldFaces';
+import { tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
+import type { MapRendererDiagnostics } from './rendererDiagnostics';
+import {
+  buildCityEventData,
+  buildLabelData,
+  buildProvinceEventData,
+  buildProvinceLabelData,
+  buildProvinceRegionData,
+  buildRegionData,
+  buildWorldEventData,
+  buildWorldLabelData,
+  buildWorldRegionData,
+  WORLD_LABEL_ZOOM,
+  type GeoRegion,
+  type LabelPoint,
+  type LayerInput,
+} from './layers';
 import {
   CITY_LABEL_SIZE,
   PRICE_LABEL_SIZE,
@@ -17,54 +36,30 @@ import {
   parseLabelValue,
 } from './labels';
 
-type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
-type LabelPoint = { name: string; value: [number, number, string, string, number, number] }; // [lng, lat, text, color, isPrice, noBg]
+/**
+ * `series` 数组的**元素**类型。从 ECharts 自己的 option 类型里取（而不是去猜它内部
+ * `SeriesOption$1` 之类被重命名的名字）。
+ *
+ * 为什么需要显式标注：series 的元素原本嵌在 `const option: echarts.EChartsOption = {...}`
+ * 里，靠上下文把 `type: 'custom'` 收窄成字面量类型、把 `renderItem(_params, api)` 的
+ * 参数推断出来。一旦把某条 series 搬进独立方法，上下文就丢了 —— 会得到
+ * `Type 'string' is not assignable to type '"lines"'` 与一串 `implicitly has an any type`。
+ */
+type SeriesItem = Exclude<NonNullable<echarts.EChartsOption['series']>, readonly unknown[]>;
 const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
 const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
-const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖
-const WORLD_LABEL_ZOOM = 2.2; // 世界分析档国名标签阈值（世界图 zoom 1 即全球，2.2 已较近）
-const MIN_ZOOM = 0.8;
-const MAX_ZOOM = 28;
+const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖（世界档的 WORLD_LABEL_ZOOM 在 ./layers.ts）
 const FOLLOW_ANIMATION_MS = 650;
 const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
 const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-/**
- * 跟随钳制的边距比例：视口**短边**的 10%。
- *
- * 一个数同时承担三件事（见 `clampFollowCenter` / `isComfortablyVisible`）：
- *   1. 钳制时允许镜头偏离目标正中的上限；
- *   2. 目标正好落在取景边界上时被容忍的露白上限（推导：露白 ≤ m）；
- *   3. 只平移的跟随里判定"目标已舒适可见、无需移动"的距离阈值。
- */
-const FOLLOW_MARGIN_RATIO = 0.1;
-export { FOLLOW_MARGIN_RATIO };
 
 /** 投影 bbox（[[lng0,lat0],[lng1,lat1]]）拉平成 [lng0, lat0, lng1, lat1]（与 CONTINENT_VIEWS 同构）。 */
 function flattenBBox(bb: [[number, number], [number, number]]): [number, number, number, number] {
   return [bb[0][0], bb[0][1], bb[1][0], bb[1][1]];
 }
 
-/**
- * 单轴跟随钳制（纯函数，便于单测）：`clamp( clamp(t, min+hw, max−hw), t−(hw−m), t+(hw−m) )`。
- *
- * @param t    目标坐标（lng 或 lat）
- * @param span 该轴视口跨度（数据单位，目标倍率下）
- * @param m    边距（数据单位，目标倍率下）
- * @param min  取景边界下界
- * @param max  取景边界上界
- */
-export function clampFollowAxis(t: number, span: number, m: number, min: number, max: number): number {
-  const hw = Math.max(span, 0) / 2;
-  const lo = min + hw;
-  const hi = max - hw;
-  // 内层：视口不越出取景边界；边界比视口还小时（区间为空）退化为边界中心
-  const inner = lo > hi ? (min + max) / 2 : Math.min(hi, Math.max(lo, t));
-  // 外层：目标离屏幕边至少 m；与内层冲突时让步（允许 ≤ m 的露白）
-  const slack = Math.max(hw - m, 0);
-  return Math.min(t + slack, Math.max(t - slack, inner));
-}
 // 五档缩放档位的阈值与地图名映射统一放在 ./tiers.ts（纯逻辑 + 单测覆盖），
 // renderer 只经 activeTier() / chinaTierMapName() / provinceTierMapName() 间接使用，
 // 避免地级与省级各写一套阈值而漂移。见该文件顶部注释的精细度阶梯表。
@@ -128,10 +123,6 @@ export interface MapHandlers {
   onBlankClick: () => void;
   onUnitHover?: (adcode: string) => void;
   onUnitHoverEnd?: () => void;
-}
-
-function clampZoom(zoom: number) {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
 /**
@@ -274,44 +265,53 @@ export class MapRenderer {
   onZoomChange: (() => void) | null = null;
 
   constructor(private el: HTMLElement, private data: AppData, private handlers: MapHandlers) {
-    // 地级五档（精细度阶梯 ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%）
-    echarts.registerMap('china-ultra', data.ultraGeoJson as never); // zoom < 2
-    echarts.registerMap('china-pro', data.proGeoJson as never); // 2 ≤ zoom < 6
-    echarts.registerMap('china', data.geoJson as never); // 6 ≤ zoom < 10（fine 15%）
-    echarts.registerMap('china-coarse', data.coarseGeoJson as never); // 历史别名 = pro 档，保留注册避免旧缓存引用
-    echarts.registerMap('china-plus', data.plusGeoJson as never); // 10 ≤ zoom < 14
-    echarts.registerMap('china-lossless', data.losslessGeoJson as never); // zoom ≥ 14（100% 顶点）
-    // 省级五档（与地级同一套阈值）
-    echarts.registerMap('china-provinces-ultra', data.provincesUltraGeoJson as never); // zoom < 2
-    echarts.registerMap('china-provinces-pro', data.provincesProGeoJson as never); // 2 ≤ zoom < 6
-    echarts.registerMap('china-provinces', data.provincesGeoJson as never); // 6 ≤ zoom < 10（fine 15%）
-    echarts.registerMap('china-provinces-coarse', data.provincesCoarseGeoJson as never); // 历史别名 = ultra 档
-    echarts.registerMap('china-provinces-plus', data.provincesPlusGeoJson as never); // 10 ≤ zoom < 14
-    echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // zoom ≥ 14（100% 顶点）
-    echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
-    this.inset = new InsetMap({
+    registerMaps(data); // 13 张地图的注册表（见 ./mapRegistry.ts）
+    this.inset = this.createInset(data); // 港澳放大框
+    this.chart = echarts.init(el);
+    this.units = data.allUnits; // 留在构造器里赋值：strictPropertyInitialization 要求
+    this.buildIndexTables(data); // 构造期查表：单位索引 / 五档省界 / 文字锚点 / 世界面表
+    this.wireChartEvents(); // 单击 / 悬停 / 双击 / 缩放平移
+    window.addEventListener('resize', this.handleResize);
+  }
+
+  /**
+   * 港澳放大框。主题 / 当前状态 / 边界深浅都传 **lambda** —— 它们是活值：
+   * 放大框要跟着主题与设置走，不能在构造时取快照。
+   */
+  private createInset(data: AppData): InsetMap {
+    const inset = new InsetMap({
       theme: () => this.theme(),
       state: () => this.lastState,
       boundaryTone: () => this.provinceBoundaryTone,
       handlers: this.handlers,
       provincesGeoJson: data.hkmacGeoJson ?? data.provincesGeoJson, // 港澳放大框用无压缩面（回退到省界细档）
     });
-    this.inset.registerMap(); // 港澳放大框：香港+澳门+广东沿海
-    this.chart = echarts.init(el);
+    inset.registerMap(); // 港澳放大框：香港+澳门+广东沿海
+    return inset;
+  }
+
+  /**
+   * 构造期只建一次的查表：单位索引、五档省界折线、两级文字锚点、省名表、世界面表。
+   *
+   * 这些以前全摊在 223 行的构造器里，与「注册地图」「接 ECharts 事件」混在一起，
+   * 读的人分不清哪几行属于几何、哪几行属于事件接线。
+   */
+  private buildIndexTables(data: AppData) {
     for (const c of data.countries) this.isoContinent.set(c.iso, c.continent); // 大洲视图过滤表
     for (const [iso, sr] of Object.entries(data.isoSubregion)) this.isoSubregion.set(iso, sr); // 次区域视图过滤表
-    this.units = data.allUnits;
     for (const u of this.units) {
       this.nameToUnit.set(u.name, u);
       this.adcodeToUnit.set(u.adcode, u);
     }
-    this.provinceLines.ultra = this.buildProvinceLines(data.provincesUltraGeoJson);
-    this.provinceLines.pro = this.buildProvinceLines(data.provincesProGeoJson);
-    this.provinceLines.fine = this.buildProvinceLines(data.provincesGeoJson);
-    this.provinceLines.plus = this.buildProvinceLines(data.provincesPlusGeoJson);
-    this.provinceLines.lossless = this.buildProvinceLines(data.provincesRawGeoJson);
-    this.labelAnchors = this.buildLabelAnchors();
-    this.provinceLabelAnchors = this.buildProvinceLabelAnchors();
+    // 构造期几何索引：纯函数建表（见 ./geoIndex.ts）
+    this.provinceLines.ultra = buildProvinceLines(data.provincesUltraGeoJson, data.provincesGeoJson);
+    this.provinceLines.pro = buildProvinceLines(data.provincesProGeoJson, data.provincesGeoJson);
+    this.provinceLines.fine = buildProvinceLines(data.provincesGeoJson, data.provincesGeoJson);
+    this.provinceLines.plus = buildProvinceLines(data.provincesPlusGeoJson, data.provincesGeoJson);
+    this.provinceLines.lossless = buildProvinceLines(data.provincesRawGeoJson, data.provincesGeoJson);
+    // 地级与省级的文字锚点用的是同一套算法，只是数据源不同
+    this.labelAnchors = buildLabelAnchors(data.geoJson as { features?: GeoFeature[] });
+    this.provinceLabelAnchors = buildLabelAnchors(data.provincesGeoJson as { features?: GeoFeature[] });
     // 省全名 → 省 adcode（省级地图点击/悬浮命中整省时回传）
     const provGeo = data.provincesGeoJson as { features?: GeoFeature[] };
     for (const f of provGeo.features ?? []) {
@@ -330,6 +330,19 @@ export class MapRenderer {
         if (polygons.length) this.worldLabelAnchors.set(iso, bestLabelAnchor(polygons));
       }
     }
+  }
+
+  // ==================== ECharts 事件接线 ====================
+
+  private wireChartEvents() {
+    this.wireChartClick();
+    this.wireChartHover();
+    this.wireChartDblClick();
+    this.wireChartRoam();
+  }
+
+  /** 单击：命中单位 / 装饰面 / 空白，三档粒度各一套语义（各分支的判断理由见方法内注释）。 */
+  private wireChartClick() {
     this.chart.on('click', (p) => {
       this.clearFlash(); // 点击任何位置先清除黄色高亮，避免点空白处不消失
       const params = p as { componentType?: string; seriesType?: string; name?: string };
@@ -380,7 +393,10 @@ export class MapRenderer {
     this.chart.getZr().on('click', (event) => {
       if (!event.target && this.hasDrillLevel()) this.handlers.onBlankClick();
     });
+  }
 
+  /** 悬停：世界面按「可交互性」决定回传还是显式结束（防止残留高亮）。 */
+  private wireChartHover() {
     this.chart.on('mouseover', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       if (params.componentType !== 'series' || params.seriesType !== 'map') return;
@@ -408,7 +424,10 @@ export class MapRenderer {
       const params = p as { componentType?: string; seriesType?: string };
       if (params.componentType === 'series' && params.seriesType === 'map') this.handlers.onUnitHoverEnd?.();
     });
+  }
 
+  /** 双击：世界下钻 / 省级浏览下钻 / 中国全国下钻。双击空白**不是**下钻语义（那由 zr click 负责）。 */
+  private wireChartDblClick() {
     this.chart.on('dblclick', (p) => {
       const params = p as { componentType?: string; seriesType?: string; name?: string };
       // 世界模式：双击答题国 → 交给模式层「逐层下钻」（熟练度分析世界档靠这条下钻；
@@ -448,7 +467,10 @@ export class MapRenderer {
         this.handlers.onUnitDblClick(u.adcode);
       }
     });
+  }
 
+  /** 缩放/拖动：只同步相机与裁剪，**不**重建 map/lines（理由见方法内注释）。 */
+  private wireChartRoam() {
     // 缩放/拖动时只记录 zoom。不要在 georoam 中完整 setOption 重建 map/lines，
     // 否则 ECharts 会让地级 MapDraw 进入过渡态，而省界 lines 已经跟随新坐标系。
     this.chart.on('georoam', (p) => {
@@ -490,8 +512,6 @@ export class MapRenderer {
       this.cullToViewport(); // 视口移动后可见集合变化：刷新裁剪（约 1.3ms，可每帧执行）
       this.onZoomChange?.();
     });
-
-    window.addEventListener('resize', this.handleResize);
   }
 
   /** 容器尺寸变化（如从留言板切回地图）时重算画布。 */
@@ -799,27 +819,35 @@ export class MapRenderer {
     return MAP_THEMES[this.themeName];
   }
 
-  /** 省界折线：省界 GeoJSON 的每个环转为线坐标（用于 lines 系列粗线渲染）。五个档位各调一次。 */
-  private buildProvinceLines(src: unknown): { adcode: string; coords: number[][] }[] {
-    const geo = (src ?? this.data.provincesGeoJson) as {
-      features: { properties: { adcode: string }; geometry: { type: string; coordinates: unknown } }[];
+  /**
+   * 组装数据层的只读输入。
+   *
+   * 这是 `MapRenderer` 与 `./layers.ts` 之间**唯一**的桥：本类的 19 个字段在此摊平成一份
+   * 显式 context，数据层因此不持有对渲染器的任何引用 —— 它可以脱离 ECharts 实例单独测。
+   * 每次 render 组装一次，同一个 context 喂给所有构造器。
+   */
+  private layerInput(state: RenderState): LayerInput {
+    return {
+      data: this.data,
+      state,
+      theme: this.theme(),
+      zoom: this.zoom,
+      worldMode: this.worldMode,
+      provinceMode: this.provinceMode,
+      viewProvince: this.viewProvince,
+      labelMode: this.labelMode,
+      worldContinent: this.worldContinent,
+      worldSubregion: this.worldSubregion,
+      cityBoundaryTone: this.cityBoundaryTone,
+      worldBoundaryTone: this.worldBoundaryTone,
+      excludedIso: this.excludedIso,
+      units: this.units,
+      labelAnchors: this.labelAnchors,
+      provinceLabelAnchors: this.provinceLabelAnchors,
+      worldLabelAnchors: this.worldLabelAnchors,
+      isoContinent: this.isoContinent,
+      isoSubregion: this.isoSubregion,
     };
-    const out: { adcode: string; coords: number[][] }[] = [];
-    for (const f of geo.features) {
-      const g = f.geometry;
-      const rings: unknown[] = [];
-      if (g.type === 'Polygon') rings.push(...(g.coordinates as unknown[]));
-      else if (g.type === 'MultiPolygon') {
-        for (const poly of g.coordinates as unknown[]) rings.push(...(poly as unknown[]));
-      }
-      for (const ring of rings) {
-        const coords = (ring as unknown[])
-          .filter((c) => Array.isArray(c) && typeof (c as number[])[0] === 'number')
-          .map((c) => c as number[]);
-        if (coords.length >= 2) out.push({ adcode: f.properties.adcode, coords });
-      }
-    }
-    return out;
   }
 
   /**
@@ -847,158 +875,6 @@ export class MapRenderer {
     // 逐帧裁剪需要每个元素的数据坐标 bbox：构建时算一次，拖动时只做区间比较
     this.lineBoxes = lines.map((l) => boxOfCoords(l.coords));
     return lines;
-  }
-
-  /** 标签锚点只服务文字位置，不影响聚焦和下钻使用的地图相机中心。 */
-  private buildLabelAnchors(): Map<string, GeoPoint> {
-    const geo = this.data.geoJson as { features?: GeoFeature[] };
-    const out = new Map<string, GeoPoint>();
-    for (const feature of geo.features ?? []) {
-      const adcode = feature.properties.adcode;
-      if (!adcode) continue;
-      const polygons = polygonsOf(feature);
-      if (!polygons.length) continue;
-      out.set(adcode, bestLabelAnchor(polygons));
-    }
-    return out;
-  }
-
-  /** 省级名字标签锚点：从省界 GeoJSON 计算（省级练习/熟练度分析的省名标签用）。 */
-  private buildProvinceLabelAnchors(): Map<string, GeoPoint> {
-    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
-    const out = new Map<string, GeoPoint>();
-    for (const feature of geo.features ?? []) {
-      const adcode = feature.properties.adcode;
-      if (!adcode) continue;
-      const polygons = polygonsOf(feature);
-      if (!polygons.length) continue;
-      out.set(adcode, bestLabelAnchor(polygons));
-    }
-    return out;
-  }
-
-  private labelAnchorOf(u: Unit): GeoPoint {
-    return this.labelAnchors.get(u.adcode) ?? u.center;
-  }
-
-  private buildRegionData(state: RenderState): GeoRegion[] {
-    const theme = this.theme();
-    return this.units.map((u) => {
-      const inView = !this.viewProvince || u.provinceAdcode === this.viewProvince;
-      const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-      const coinCoins = state.coin && !u.decorative ? state.coin.coins(u.adcode) : 0;
-      return {
-        name: u.name,
-        silent: !inView,
-        itemStyle: {
-          areaColor: state.coin ? (theme.coinGreen(coinCoins) ?? theme.fill[color]) : inView ? theme.fill[color] : 'rgba(0,0,0,0)',
-          // 省级模式不画地级边界（省界由 province-lines 系列单独绘制）
-          borderColor: inView && !this.provinceMode ? theme.boundary[this.cityBoundaryTone] : 'rgba(0,0,0,0)',
-          borderWidth: inView && !this.provinceMode ? 0.6 : 0,
-        },
-        emphasis: {
-          itemStyle: {
-            areaColor: state.coin ? (theme.coinGreen(coinCoins, true) ?? theme.emphasis[color]) : theme.emphasis[color],
-          },
-          label: { show: false },
-        },
-        label: { show: false },
-      };
-    });
-  }
-
-  /** 省级模式的省面数据（供 map series 的 tooltip/事件按省全名匹配）。 */
-  private buildProvinceEventData(): { name: string }[] {
-    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
-    return (geo.features ?? [])
-      .filter((f) => f.properties.adcode !== '100000_JD') // 南海诸岛装饰面不参与事件
-      .map((f) => ({ name: f.properties.name ?? '' }));
-  }
-
-  /** 省级模式的省面 region 数据：整省着色 + 整个省悬浮高亮。 */
-  private buildProvinceRegionData(state: RenderState): GeoRegion[] {    const theme = this.theme();
-    const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
-    return (geo.features ?? []).map((f) => {
-      const adcode = f.properties.adcode ?? '';
-      const isDecorative = adcode === '100000_JD';
-      const color: UnitColor = isDecorative || !adcode ? 'gray' : state.colorOf(adcode);
-      return {
-        name: f.properties.name ?? '',
-        silent: isDecorative,
-        itemStyle: {
-          areaColor: theme.fill[color],
-          borderColor: 'rgba(0,0,0,0)', // 省界由 province-lines 系列单独绘制
-          borderWidth: 0,
-        },
-        emphasis: {
-          itemStyle: { areaColor: theme.emphasis[color] }, // 整个省面高亮
-          label: { show: false },
-        },
-        label: { show: false },
-      };
-    });
-  }
-
-  private buildLabelData(state: RenderState): LabelPoint[] {
-    if (this.worldMode) return []; // 世界国名标签走 world-labels 系列
-    if (state.hideLabels) return []; // 「隐藏地图标签」：地级市标签整组关闭
-    if (this.labelMode !== 'city') return [];
-    const theme = this.theme();
-    return this.units.flatMap((u) => {
-      if (this.viewProvince && u.provinceAdcode !== this.viewProvince) return [];
-      if (state.coin) {
-        if (u.decorative) return [];
-        const lab = state.coin.label(u.adcode);
-        if (!lab) return [];
-        const anchor = this.labelAnchorOf(u);
-        return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0, lab.noBg ? 1 : 0] }];
-      }
-      const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-      if (color === 'blue') return []; // 答题模式不泄露当前题目答案
-      const anchor = this.labelAnchorOf(u);
-      if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0, 0] }];
-      if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0, 0] }];
-      if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral, 0, 0] }];
-      return [];
-    });
-  }
-
-  /** 省名标签：已作答省（省级练习，绿/红）或省级地图常显全部省名（熟练度分析省级档，中性色）。 */
-  private buildProvinceLabelData(state: RenderState): LabelPoint[] {
-    if (!this.provinceMode) return [];
-    if (state.hideLabels) return []; // 「隐藏地图标签」：省名标签整组关闭
-    const theme = this.theme();
-    const out: LabelPoint[] = [];
-    for (const p of this.data.provinces) {
-      const anchor = this.provinceLabelAnchors.get(p.adcode);
-      if (!anchor) continue;
-      // 熟练度分析省级档：全部省名中性色常显
-      if (state.showAllProvinceLabels) {
-        out.push({ name: p.name, value: [...anchor, normalizeProvince(p.name), theme.labelNeutral, 0, 0] });
-        continue;
-      }
-      // 测验档：仅已作答省显示绿/红简称
-      if (!state.provinceLabel) return [];
-      const lab = state.provinceLabel(p.adcode);
-      if (!lab) continue;
-      const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
-      out.push({ name: p.name, value: [...anchor, lab.text, color, 0, 0] });
-    }
-    return out;
-  }
-
-  /** 世界模式的国面数据（供 map series 的 tooltip/事件按国名匹配；装饰面不参与；大洲视图只含本洲）。 */
-  private buildWorldEventData(): { name: string }[] {
-    const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
-    return (geo.features ?? [])
-      .filter((f) => !f.properties.decorative)
-      .filter((f) => this.worldFeatureVisible(f.properties.iso_a3 ? String(f.properties.iso_a3) : '', false))
-      .map((f) => ({ name: f.properties.name ?? '' }));
-  }
-
-  /** 世界模式下某国家面是否属于当前范围（全空时全部可见；次区域优先于大洲）。 */
-  private worldFeatureVisible(iso: string, isDecorative: boolean): boolean {
-    return worldFeatureVisible(this.worldFaceContext(), iso, isDecorative);
   }
 
   private worldFaceContext(): WorldFaceContext {
@@ -1030,89 +906,6 @@ export class MapRenderer {
     });
   }
 
-  /**
-   * 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。
-   *
-   * 大洲/次区域视图下**非本范围的面不渲染外观但仍登记为 `silent` 透明面**：
-   * 只 continue 跳过外观会让这些面回落到 geo 层默认样式——几何依然参与命中测试、
-   * 且 geo.emphasis 的悬停遮罩照常生效，于是「空白处悬停高亮看不见的国家、点击
-   * 跳到它的上级区域」。登记为 silent 后 ECharts 既不派发鼠标事件也不做 emphasis，
-   * 空白区因此彻底无交互。
-   */
-  private buildWorldRegionData(state: RenderState): GeoRegion[] {
-    const theme = this.theme();
-    const geo = this.data.worldGeoJson as { features?: GeoFeature[] };
-    const out: GeoRegion[] = [];
-    for (const f of geo.features ?? []) {
-      const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
-      const isDecorative = f.properties.decorative === 1 || !iso;
-      const excluded = !isDecorative && this.excludedIso.has(iso);
-      const gray = isDecorative || excluded; // 装饰面与被排除的极小国：灰显
-      if (!this.worldFeatureVisible(iso, isDecorative)) {
-        // 范围外：保留几何（否则 ECharts 会把它当默认面处理）但不可见、不可交互
-        out.push({
-          name: f.properties.name ?? '',
-          silent: true,
-          itemStyle: { areaColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
-          emphasis: { disabled: true, itemStyle: { areaColor: 'rgba(0,0,0,0)' }, label: { show: false } },
-          label: { show: false },
-        });
-        continue;
-      }
-      const color: UnitColor = gray ? 'gray' : state.colorOf(iso);
-      out.push({
-        name: f.properties.name ?? '',
-        silent: gray,
-        itemStyle: {
-          areaColor: theme.fill[color],
-          borderColor: theme.boundary[this.worldBoundaryTone], // 国家细边界（深浅可在全局设置里调）
-          borderWidth: excluded ? 0.2 : 0.4,
-        },
-        emphasis: {
-          disabled: gray,
-          itemStyle: { areaColor: gray ? theme.fill.gray : theme.emphasis[color] },
-          label: { show: false },
-        },
-        label: { show: false },
-      });
-    }
-    return out;
-  }
-
-  /** 国名标签：世界测验档仅已作答国（绿/红）常显；世界分析档放大到阈值后全部国名中性显。大洲视图只显本洲标签。 */
-  private buildWorldLabelData(state: RenderState): LabelPoint[] {
-    if (!this.worldMode) return [];
-    if (state.hideLabels) return []; // 「隐藏地图标签」：国名标签整组关闭
-    const theme = this.theme();
-    const out: LabelPoint[] = [];
-    const visible = (iso: string) =>
-      this.worldSubregion
-        ? this.isoSubregion.get(iso) === this.worldSubregion
-        : !this.worldContinent || this.isoContinent.get(iso) === this.worldContinent;
-    // 测验档：仅已作答国显示绿/红简称
-    if (state.worldLabel) {
-      for (const c of this.data.countries) {
-        if (!visible(c.iso)) continue;
-        const anchor = this.worldLabelAnchors.get(c.iso);
-        if (!anchor) continue;
-        const lab = state.worldLabel(c.iso);
-        if (!lab) continue;
-        const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
-        out.push({ name: c.name, value: [...anchor, lab.text, color, 0, 0] });
-      }
-      return out;
-    }
-    // 分析/浏览档：按 worldLabelZoomThreshold（省略时为 WORLD_LABEL_ZOOM）决定是否常显全部国名
-    if (state.worldShowAllLabels && this.zoom > (state.worldLabelZoomThreshold ?? WORLD_LABEL_ZOOM)) {
-      for (const c of this.data.countries) {
-        if (!visible(c.iso)) continue;
-        const anchor = this.worldLabelAnchors.get(c.iso);
-        if (!anchor) continue;
-        out.push({ name: c.name, value: [...anchor, c.name, theme.labelNeutral, 0, 0] });
-      }
-    }
-    return out;
-  }
 
   private provinceFeatureName(adcode: string): string {
     const geo = this.data.provincesGeoJson as { features?: GeoFeature[] };
@@ -1145,10 +938,11 @@ export class MapRenderer {
     this.labelScaleApplied = scale;
     if (changed && this.lastState) {
       // 世界分析档国名标签随缩放进出显示阈值，也在缩放结束后同步
+      const ctx = this.layerInput(this.lastState);
       const patch: Record<string, unknown> = {
-        'city-labels': { data: this.buildLabelData(this.lastState) },
-        'province-labels': { data: this.buildProvinceLabelData(this.lastState) },
-        'world-labels': { data: this.buildWorldLabelData(this.lastState) },
+        'city-labels': { data: buildLabelData(ctx) },
+        'province-labels': { data: buildProvinceLabelData(ctx) },
+        'world-labels': { data: buildWorldLabelData(ctx) },
       };
       this.chart.setOption({ series: Object.entries(patch).map(([id, o]) => ({ id, ...(o as object) })) } as never);
     }
@@ -1178,182 +972,20 @@ export class MapRenderer {
 
     // 世界模式 geo 切世界地图；省级模式切省级地图；否则地级地图（按 zoom/钻省切五档）
     const mapName = this.currentMapName();
-    // map series 只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。
-    const eventData = this.worldMode
-      ? this.buildWorldEventData()
-      : this.provinceMode
-        ? this.buildProvinceEventData()
-        : this.units.map((u) => ({ name: u.name }));
-    const labelData = this.buildLabelData(state);
-    const provinceLabelData = this.buildProvinceLabelData(state);
-    const worldLabelData = this.buildWorldLabelData(state);
     const theme = this.theme();
+    // 数据层的只读输入组装**一次**，喂给所有构造器（见 ./layers.ts）
+    const ctx = this.layerInput(state);
 
+    // option 的三块大件各自成方法：它们原先首尾相接成一坨 166 行的字面量，
+    // 读的人分不清哪几行属于 tooltip、哪几行属于 geo 的投影钉死、哪几行属于 5 条 series。
     const option: echarts.EChartsOption = {
       backgroundColor: theme.background,
       animation: false,
       animationDuration: 0,
       animationDurationUpdate: 0,
-      tooltip: state.disableTooltip
-        ? { show: false }
-        : {
-            trigger: 'item',
-            backgroundColor: theme.tooltipBg,
-            borderColor: theme.tooltipBorder,
-            textStyle: { color: theme.tooltipText },
-            formatter: (p) => {
-              const params = p as { name?: string };
-              const hitName = params.name ?? '';
-              if (this.worldMode) {
-                const iso = this.worldNameToIso.get(hitName);
-                // 不可交互的面（其他洲 / 被排除的极小国 / 装饰面）不显示答题态 tooltip
-                if (!iso || !this.worldFaceInteractive(hitName)) return String(hitName);
-                const color: UnitColor = state.colorOf(iso);
-                return t('map.tooltip.worldBody', { name: hitName, status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }) });
-              }
-              const u = this.nameToUnit.get(hitName);
-              if (!u) return String(hitName);
-              if (state.coin) {
-                const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
-                const coinsTxt = coins > 0 ? `${coins}￥` : t('map.tooltip.coinCollected');
-                return t('map.tooltip.body', { name: u.name, province: u.province, coins: coinsTxt });
-              }
-              const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-              const status = u.decorative ? '' : t('map.tooltip.statusLine', { status: STATUS_TXT[color] });
-              return t('map.tooltip.bodyBase', { name: u.name, province: u.province, status });
-            },
-          },
-      geo: {
-        map: mapName, // 世界/省级用专属地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
-        roam: true,
-        scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
-        silent: false,
-        selectedMode: false,
-        tooltip: { show: false },
-        label: { show: false },
-        emphasis: {
-          label: { show: false },
-          itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个面）
-        },
-        select: { label: { show: false } },
-        itemStyle: {
-          areaColor: 'rgba(0,0,0,0)',
-          borderColor: 'rgba(0,0,0,0)',
-          borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
-        },
-        regions: this.worldMode
-          ? this.buildWorldRegionData(state)
-          : this.provinceMode
-            ? this.buildProvinceRegionData(state)
-            : this.buildRegionData(state),
-        // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
-        // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
-        // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
-        // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
-        boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
-      },
-      series: [
-        {
-          id: 'city-events',
-          type: 'map',
-          map: mapName,
-          geoIndex: 0,
-          selectedMode: false,
-          label: { show: false },
-          emphasis: { label: { show: false } },
-          select: { label: { show: false } },
-          data: eventData,
-        },
-        {
-          id: 'province-lines',
-          type: 'lines',
-          coordinateSystem: 'geo',
-          geoIndex: 0,
-          z: 3, // 画在地级面之上
-          silent: true,
-          tooltip: { show: false },
-          polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-          lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
-          data: this.buildLineData(),
-        },
-        {
-          id: 'world-labels',
-          type: 'custom',
-          coordinateSystem: 'geo',
-          geoIndex: 0,
-          z: 10,
-          silent: true,
-          tooltip: { show: false },
-          renderItem: (_params, api) => {
-            const parsed = parseLabelValue(api);
-            if (!parsed) return { type: 'group', children: [] };
-            const scale = labelScale(this.zoom);
-            return buildLabelGraphic({
-              ...parsed,
-              scale,
-              theme,
-              fontSize: PROVINCE_LABEL_SIZE * scale,
-              padX: 7 * scale,
-              padY: 4 * scale,
-              minWidth: 30 * scale,
-              fontWeight: 600,
-            });
-          },
-          data: worldLabelData,
-        },
-        {
-          id: 'city-labels',
-          type: 'custom',
-          coordinateSystem: 'geo',
-          geoIndex: 0,
-          z: 10,
-          silent: true,
-          tooltip: { show: false },
-          renderItem: (_params, api) => {
-            const parsed = parseLabelValue(api);
-            if (!parsed) return { type: 'group', children: [] };
-            const scale = labelScale(this.zoom);
-            const fontSize = (parsed.isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
-            return buildLabelGraphic({
-              ...parsed,
-              scale,
-              theme,
-              fontSize,
-              padX: (parsed.isPrice ? 4 : 8) * scale,
-              padY: (parsed.isPrice ? 3 : 6) * scale,
-              minWidth: (parsed.isPrice ? 26 : 34) * scale,
-              fontWeight: parsed.isPrice ? 700 : 600,
-            });
-          },
-          data: labelData,
-        },
-        {
-          // 省级练习省名标签：已作答省的简称，始终显示。字号固定为最大（scale=1），不随缩放缩小。
-          id: 'province-labels',
-          type: 'custom',
-          coordinateSystem: 'geo',
-          geoIndex: 0,
-          z: 9, // 低于 city-labels 但高于省界线
-          silent: true,
-          tooltip: { show: false },
-          renderItem: (_params, api) => {
-            const parsed = parseLabelValue(api);
-            if (!parsed) return { type: 'group', children: [] };
-            const scale = 1; // 省名标签恒按放大足够时的样式渲染（字号/衬底/间距统一最大）
-            return buildLabelGraphic({
-              ...parsed,
-              scale,
-              theme,
-              fontSize: PROVINCE_LABEL_SIZE * scale,
-              padX: 7 * scale,
-              padY: 4 * scale,
-              minWidth: 30 * scale,
-              fontWeight: 600,
-            });
-          },
-          data: provinceLabelData,
-        },
-      ],
+      tooltip: this.buildTooltipOption(state, theme),
+      geo: this.buildGeoOption(mapName, ctx),
+      series: this.buildSeriesOption(mapName, ctx),
     };
     // ECharts 已知问题：geo 组件的 map 在多个已注册地图间切换（省级↔市级↔世界）时，
     // 普通 setOption 合并会让 geo 停留在上一次绘制状态 → 切回后中国地图整片空白。
@@ -1383,6 +1015,203 @@ export class MapRenderer {
     // 视口裁剪必须放在最后一次 setOption 之后：replaceMerge 会重建 region 组、
     // 清掉上一轮的 ignore 标记，且换档后可见集合本身也变了。
     this.cullToViewport();
+  }
+
+  /** tooltip：三档粒度各一套文案；不可交互的面（其他洲 / 被排除的极小国 / 装饰面）只显示面名。 */
+  private buildTooltipOption(state: RenderState, theme: MapTheme): echarts.EChartsOption['tooltip'] {
+    return state.disableTooltip
+      ? { show: false }
+      : {
+          trigger: 'item',
+          backgroundColor: theme.tooltipBg,
+          borderColor: theme.tooltipBorder,
+          textStyle: { color: theme.tooltipText },
+          formatter: (p) => {
+            const params = p as { name?: string };
+            const hitName = params.name ?? '';
+            if (this.worldMode) {
+              const iso = this.worldNameToIso.get(hitName);
+              // 不可交互的面（其他洲 / 被排除的极小国 / 装饰面）不显示答题态 tooltip
+              if (!iso || !this.worldFaceInteractive(hitName)) return String(hitName);
+              const color: UnitColor = state.colorOf(iso);
+              return t('map.tooltip.worldBody', { name: hitName, status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }) });
+            }
+            const u = this.nameToUnit.get(hitName);
+            if (!u) return String(hitName);
+            if (state.coin) {
+              const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
+              const coinsTxt = coins > 0 ? `${coins}￥` : t('map.tooltip.coinCollected');
+              return t('map.tooltip.body', { name: u.name, province: u.province, coins: coinsTxt });
+            }
+            const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
+            const status = u.decorative ? '' : t('map.tooltip.statusLine', { status: STATUS_TXT[color] });
+            return t('map.tooltip.bodyBase', { name: u.name, province: u.province, status });
+          },
+        };
+  }
+
+  /** geo 组件：地图名 + 投影钉死（boundingCoords）+ regions（世界 / 省级 / 地级三分支）。 */
+  private buildGeoOption(mapName: string, ctx: LayerInput): echarts.EChartsOption['geo'] {
+    const state = ctx.state;
+    const theme = ctx.theme;
+    return {
+      map: mapName, // 世界/省级用专属地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
+      roam: true,
+      scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
+      silent: false,
+      selectedMode: false,
+      tooltip: { show: false },
+      label: { show: false },
+      emphasis: {
+        label: { show: false },
+        itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个面）
+      },
+      select: { label: { show: false } },
+      itemStyle: {
+        areaColor: 'rgba(0,0,0,0)',
+        borderColor: 'rgba(0,0,0,0)',
+        borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
+      },
+      regions: ctx.worldMode
+        ? buildWorldRegionData(ctx)
+        : ctx.provinceMode
+          ? buildProvinceRegionData(ctx)
+          : buildRegionData(ctx),
+      // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
+      // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
+      // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
+      // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
+      boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
+    };
+  }
+
+  /** 5 条 series：事件层、省界线、以及三条标签层。 */
+  private buildSeriesOption(mapName: string, ctx: LayerInput): echarts.EChartsOption['series'] {
+    const theme = ctx.theme;
+    return [
+      this.eventSeries(mapName, ctx),
+      this.provinceLinesSeries(theme),
+      // 世界练习的国名标签：随缩放缩小
+      this.provinceLikeLabelSeries('world-labels', 10, buildWorldLabelData(ctx), theme, () => labelScale(this.zoom)),
+      this.cityLabelSeries(buildLabelData(ctx), theme),
+      // 省级练习的省名标签：已作答省的简称，**始终显示**。字号固定为最大档（scale=1）、
+      // 不随缩放缩小，故恒按「放大足够时」的样式渲染（字号/衬底/间距统一最大）；
+      // z = 9 低于 city-labels 但高于省界线。
+      this.provinceLikeLabelSeries('province-labels', 9, buildProvinceLabelData(ctx), theme, () => 1),
+    ];
+  }
+
+  /** 事件层：只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。 */
+  private eventSeries(mapName: string, ctx: LayerInput): SeriesItem {
+    const data = ctx.worldMode
+      ? buildWorldEventData(ctx)
+      : ctx.provinceMode
+        ? buildProvinceEventData(ctx.data)
+        : buildCityEventData(ctx.units);
+    return {
+      id: 'city-events',
+      type: 'map',
+      map: mapName,
+      geoIndex: 0,
+      selectedMode: false,
+      label: { show: false },
+      emphasis: { label: { show: false } },
+      select: { label: { show: false } },
+      data,
+    };
+  }
+
+  /** 省界线层：粗线画在地级面之上（世界模式无省界线，buildLineData 返回空）。 */
+  private provinceLinesSeries(theme: MapTheme): SeriesItem {
+    return {
+      id: 'province-lines',
+      type: 'lines',
+      coordinateSystem: 'geo',
+      geoIndex: 0,
+      z: 3, // 画在地级面之上
+      silent: true,
+      tooltip: { show: false },
+      polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
+      lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
+      data: this.buildLineData(),
+    };
+  }
+
+  /**
+   * 国名 / 省名标签层。
+   *
+   * 这两条 series 的骨架**完全相同**（同 geoIndex、同 silent、同无 tooltip、同字号与衬底
+   * 比例），原先各写一份、只差 id / z / 「scale 从哪来」。合并成一个工厂，免得两份
+   * renderItem 各自漂移（改了一处忘另一处）。调用点：
+   *   · 国名标签（世界练习）随缩放缩小 → `() => labelScale(this.zoom)`
+   *   · 省名标签（省级练习）恒按放大足够时的样式渲染 → `() => 1`
+   *
+   * `scaleOf` 是**闭包**而不是值，这一点是硬要求：ECharts 会在缩放/拖动期间反复调用
+   * `renderItem`，每次都该读当时的 `this.zoom`。若在构建 option 时取快照，标签字号
+   * 会在缩放过程中卡住（不报错、只是"看起来有点怪"的回归）。
+   */
+  private provinceLikeLabelSeries(
+    id: string,
+    z: number,
+    data: LabelPoint[],
+    theme: MapTheme,
+    scaleOf: () => number,
+  ): SeriesItem {
+    return {
+      id,
+      type: 'custom',
+      coordinateSystem: 'geo',
+      geoIndex: 0,
+      z,
+      silent: true,
+      tooltip: { show: false },
+      renderItem: (_params, api) => {
+        const parsed = parseLabelValue(api);
+        if (!parsed) return { type: 'group', children: [] };
+        const scale = scaleOf();
+        return buildLabelGraphic({
+          ...parsed,
+          scale,
+          theme,
+          fontSize: PROVINCE_LABEL_SIZE * scale,
+          padX: 7 * scale,
+          padY: 4 * scale,
+          minWidth: 30 * scale,
+          fontWeight: 600,
+        });
+      },
+      data,
+    };
+  }
+
+  /** 地名标签层（含无尽闯关的价格标签：字号与衬底按 `isPrice` 分档，故与上面那条不共用）。 */
+  private cityLabelSeries(data: LabelPoint[], theme: MapTheme): SeriesItem {
+    return {
+      id: 'city-labels',
+      type: 'custom',
+      coordinateSystem: 'geo',
+      geoIndex: 0,
+      z: 10,
+      silent: true,
+      tooltip: { show: false },
+      renderItem: (_params, api) => {
+        const parsed = parseLabelValue(api);
+        if (!parsed) return { type: 'group', children: [] };
+        const scale = labelScale(this.zoom);
+        const fontSize = (parsed.isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
+        return buildLabelGraphic({
+          ...parsed,
+          scale,
+          theme,
+          fontSize,
+          padX: (parsed.isPrice ? 4 : 8) * scale,
+          padY: (parsed.isPrice ? 3 : 6) * scale,
+          minWidth: (parsed.isPrice ? 26 : 34) * scale,
+          fontWeight: parsed.isPrice ? 700 : 600,
+        });
+      },
+      data,
+    };
   }
 
   /**
@@ -1452,9 +1281,10 @@ export class MapRenderer {
       if (this.lastState) this.render(this.lastState);
     }
     const extent = this.framingExtent();
-    const zoom = this.followZoomFloor(extent, this.followZoomFor(u.provinceAdcode));
-    const center = this.clampFollowCenter(u.center, zoom, extent);
-    if (this.isNegligibleMove(center, zoom)) return; // 钳制后基本没动，就别白跑一趟动画
+    const win = this.viewportWindow();
+    const zoom = followZoomFloor(win, this.zoom, extent, this.followZoomFor(u.provinceAdcode));
+    const center = clampFollowCenter(win, this.zoom, u.center, zoom, extent);
+    if (isNegligibleMove(win, this.center, this.zoom, center, zoom)) return; // 钳制后基本没动，就别白跑一趟动画
     this.animateViewTo(center, zoom);
   }
 
@@ -1470,9 +1300,10 @@ export class MapRenderer {
     const center = this.worldLabelAnchors.get(iso);
     if (!center) return;
     const extent = this.framingExtent();
-    const zoom = this.followZoomFloor(extent, worldFollowZoom(this.countryArea(iso)));
-    const next = this.clampFollowCenter([center[0], center[1]], zoom, extent);
-    if (this.isNegligibleMove(next, zoom)) return;
+    const win = this.viewportWindow();
+    const zoom = followZoomFloor(win, this.zoom, extent, worldFollowZoom(this.countryArea(iso)));
+    const next = clampFollowCenter(win, this.zoom, [center[0], center[1]], zoom, extent);
+    if (isNegligibleMove(win, this.center, this.zoom, next, zoom)) return;
     this.animateViewTo(next, zoom);
   }
 
@@ -1542,78 +1373,17 @@ export class MapRenderer {
   }
 
   /**
-   * 跟随钳制：把目标从正中推开，使视口不越出**取景边界**，推开的幅度又不超过边距 m。
-   *
-   * 逐轴 `center = clamp( clamp(t, min+hw, max−hw), t−(hw−m), t+(hw−m) )`：
-   *   · 内层 = 视口不越出取景边界（露白 0）；取景边界比视口还小时（且已顶到 28x 上限）
-   *     区间为空，退化为边界中心 —— 这时的空白是"范围本身就这么小"，钳制无能为力；
-   *   · 外层 = 目标离屏幕边至少 m；当目标正好落在取景边界上、两条约束冲突时，
-   *     本层让步 → 允许露出 **≤ m** 的空白（用户口径：优先保证目标不贴屏幕边）。
-   */
-  private clampFollowCenter(target: [number, number], zoom: number, extent: [number, number, number, number]): [number, number] {
-    const win = this.viewportWindow();
-    if (!win) return [target[0], target[1]];
-    const k = this.zoom / Math.max(zoom, 1e-6); // 当前倍率下的视口跨度 → 目标倍率下的跨度
-    const spanX = (win.box[2] - win.box[0]) * k;
-    const spanY = (win.box[3] - win.box[1]) * k;
-    const marginPx = Math.min(win.width, win.height) * FOLLOW_MARGIN_RATIO;
-    const marginX = marginPx * win.perPxX * k;
-    const marginY = marginPx * win.perPxY * k;
-    return [
-      clampFollowAxis(target[0], spanX, marginX, extent[0], extent[2]),
-      clampFollowAxis(target[1], spanY, marginY, extent[1], extent[3]),
-    ];
-  }
-
-  /**
-   * 跟随倍率的**下限**：取景边界必须覆盖视口，否则无论怎么摆中心都会露白。
-   *
-   * 只抬高不压低：全国/世界/大洲档算出来约 1.25x，低于梯子最低档（世界 3x、中国 6x 起），
-   * 故这些档位不受影响；真正生效的是**下钻后的小省**（宁夏 12x → 约 22x），
-   * 夹在 [MIN_ZOOM, MAX_ZOOM] 内 —— 边界比 28x 视口还小的极小范围仍会留白，属固有代价。
-   */
-  private followZoomFloor(extent: [number, number, number, number], zoom: number): number {
-    const win = this.viewportWindow();
-    if (!win) return clampZoom(zoom);
-    // 该轴跨度 × 当前倍率 = 1x 时的跨度；它除以边界跨度即"覆盖视口所需倍率"
-    const extW = Math.max(extent[2] - extent[0], 1e-6);
-    const extH = Math.max(extent[3] - extent[1], 1e-6);
-    const needX = ((win.box[2] - win.box[0]) * this.zoom) / extW;
-    const needY = ((win.box[3] - win.box[1]) * this.zoom) / extH;
-    return clampZoom(Math.max(zoom, needX, needY));
-  }
-
-  /** 目标是否已"舒适可见"：在视口内且距四边 ≥ 边距 m（只平移的跟随用它决定动不动）。 */
-  private isComfortablyVisible(p: [number, number]): boolean {
-    const win = this.viewportWindow();
-    if (!win) return false;
-    const marginPx = Math.min(win.width, win.height) * FOLLOW_MARGIN_RATIO;
-    const mX = marginPx * win.perPxX;
-    const mY = marginPx * win.perPxY;
-    return (
-      p[0] >= win.box[0] + mX && p[0] <= win.box[2] - mX && p[1] >= win.box[1] + mY && p[1] <= win.box[3] - mY
-    );
-  }
-
-  /** 钳制后与当前镜头几乎重合（<1px）→ 不值得跑那 650ms 动画。 */
-  private isNegligibleMove(center: [number, number], zoom: number): boolean {
-    const win = this.viewportWindow();
-    if (!win) return false;
-    const k = this.zoom / Math.max(zoom, 1e-6);
-    const dx = (Math.abs(center[0] - this.center[0]) * k) / Math.max(win.perPxX, 1e-9);
-    const dy = (Math.abs(center[1] - this.center[1]) * k) / Math.max(win.perPxY, 1e-9);
-    return dx < 1 && dy < 1;
-  }
-
-  /**
    * 只平移的跟随（答错跟随，缩放不变）：目标已舒适可见就**完全不动**（闪红本身已是反馈），
    * 否则钳制后平移。
+   *
+   * 策略在 `./follow.ts`（纯函数），这里只负责**测量**（`viewportWindow()`）与执行动画。
    */
   private panFollow(target: [number, number]) {
-    if (this.isComfortablyVisible(target)) return;
+    const win = this.viewportWindow();
+    if (isComfortablyVisible(win, target)) return;
     const extent = this.framingExtent();
-    const center = this.clampFollowCenter(target, this.zoom, extent);
-    if (this.isNegligibleMove(center, this.zoom)) return;
+    const center = clampFollowCenter(win, this.zoom, target, this.zoom, extent);
+    if (isNegligibleMove(win, this.center, this.zoom, center, this.zoom)) return;
     this.animateViewTo(center, this.zoom);
   }
 
@@ -1780,6 +1550,49 @@ export class MapRenderer {
 
   currentZoom() {
     return this.zoom;
+  }
+
+  /**
+   * 验收探针的**只读**诊断视图（见 `rendererDiagnostics.ts` 的说明）。
+   *
+   * 生产路径不调用（只有 URL 带 `?probe=1` 时探针取一次）。存在的意义是把「探针依赖哪些
+   * 私有状态」变成一份**编译器可校验**的契约：方法体在类内部，任何被改名 / 删除 / 改签名的
+   * 成员都会让 `tsc` 在这里直接报错，而不是让探针在验收时静默读到 `undefined`。
+   *
+   * 返回的是**活值**（getter 直接读当前字段），故探针取一次即可长期持有。
+   */
+  diagnostics(): MapRendererDiagnostics {
+    const self = this;
+    return {
+      get chart() { return self.chart; },
+      get lastState() { return self.lastState; },
+      get zoom() { return self.zoom; },
+      get center() { return self.center; },
+      get labelMode() { return self.labelMode; },
+      get worldMode() { return self.worldMode; },
+      get provinceMode() { return self.provinceMode; },
+      get provinceModeDrill() { return self.provinceModeDrill; },
+      get provinceModeInset() { return self.provinceModeInset; },
+      get worldContinent() { return self.worldContinent; },
+      get worldSubregion() { return self.worldSubregion; },
+      get cityBoundaryTone() { return self.cityBoundaryTone; },
+      get provinceBoundaryTone() { return self.provinceBoundaryTone; },
+      get worldBoundaryTone() { return self.worldBoundaryTone; },
+      get worldNameToIso() { return self.worldNameToIso; },
+      get worldDecorativeNames() { return self.worldDecorativeNames; },
+      get worldExcludedNames() { return self.worldExcludedNames; },
+      get isoContinent() { return self.isoContinent; },
+      get worldLabelAnchors() { return self.worldLabelAnchors; },
+      currentGeoView: () => self.currentGeoView(),
+      animateViewTo: (center, zoom) => self.animateViewTo(center, zoom),
+      framingExtent: () => self.framingExtent(),
+      viewportWindow: () => self.viewportWindow(),
+      flash: (adcode) => self.flash(adcode),
+      // 数据层已迁到 ./layers.ts；这里保留同签名的薄封装，验收探针的契约不变。
+      buildLabelData: (state) => buildLabelData(self.layerInput(state)),
+      buildProvinceLabelData: (state) => buildProvinceLabelData(self.layerInput(state)),
+      buildWorldLabelData: (state) => buildWorldLabelData(self.layerInput(state)),
+    };
   }
 
   dispose() {

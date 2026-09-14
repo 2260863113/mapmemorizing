@@ -38,6 +38,7 @@ import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
 import { applyIgnoreTiny, ensureTinyCountries, ignoredIsos, loadTinyCountries } from './tinyCountries';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode } from './modes/types';
+import type { AppDiagnostics } from './appDiagnostics';
 
 function applyTheme(darkMode: boolean) {
   document.body.classList.toggle('theme-dark', darkMode);
@@ -104,7 +105,43 @@ export class AppController {
 
     this.sidePanel = new SidePanelController($('side-panel'), $('side-panel-toggle') as HTMLButtonElement);
 
-    this.renderer = new MapRenderer($('map'), data, {
+    this.renderer = this.createRenderer(data);
+    this.zoomDisplay = this.renderer.currentZoom();
+
+    const modes = this.createModes(this.buildModeCtx(data));
+    this.selfMode = modes.selfMode;
+    this.clickMode = modes.clickMode;
+    this.freeMode = modes.freeMode;
+    this.puzzleMode = modes.puzzleMode;
+    this.modes = modes.modes;
+
+    this.chrome = new ChromeSync({
+      current: () => this.current,
+      sidePanel: this.sidePanel,
+      zoom: () => this.zoomDisplay,
+      data,
+    });
+
+    this.scoreSubmitter = new ScoreSubmitter(
+      this.authStore,
+      this.leaderboardStore,
+      this.authPanel,
+      toast,
+      () => void this.refreshSidePanel(),
+      (result) => this.rejectToast(result),
+      (result) => this.canSubmit(result),
+    );
+  }
+
+  /**
+   * 建渲染器并接上相机回调。
+   *
+   * 抽出来是因为「new + 5 条回调 + 3 处初始化」原本和 20 行 `new 面板` 挤在同一个构造器里，
+   * 读的人分不清哪几行属于地图、哪几行属于面板。cameras 回调里的 `this.renderer` 是延迟求值，
+   * 因此这里用局部 `renderer` 更稳。
+   */
+  private createRenderer(data: AppData): MapRenderer {
+    const renderer = new MapRenderer($('map'), data, {
       onUnitClick: (adcode) => this.current?.onUnitClick(adcode),
       onUnitDblClick: (adcode) => this.current?.onUnitDblClick(adcode),
       onBlankClick: () => {
@@ -117,21 +154,24 @@ export class AppController {
       onUnitHover: (adcode) => this.showHoverStats(adcode),
       onUnitHoverEnd: () => this.hideHoverStats(),
     });
-    this.renderer.setDarkMode(this.settings.darkMode);
-    this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
-    this.zoomDisplay = this.renderer.currentZoom();
-    this.renderer.onViewChange = () => {
+    renderer.setDarkMode(this.settings.darkMode);
+    renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
+    renderer.onViewChange = () => {
       this.current?.onViewChange();
       this.current?.refresh();
       this.updateProgress();
       void this.refreshSidePanel();
     };
-    this.renderer.onZoomChange = () => {
-      this.zoomDisplay = this.renderer.currentZoom();
+    renderer.onZoomChange = () => {
+      this.zoomDisplay = renderer.currentZoom();
       this.syncViewChrome();
     };
+    return renderer;
+  }
 
-    const ctx: ModeCtx = {
+  /** 模式共享上下文：模式只通过它接触外壳（地图、匹配器、存储、进度行…）。 */
+  private buildModeCtx(data: AppData): ModeCtx {
+    return {
       data,
       renderer: this.renderer,
       matcher: this.matcher,
@@ -152,38 +192,52 @@ export class AppController {
       randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
       setTestRunning: (running: boolean) => this.setTestRunning(running),
     };
+  }
 
-    this.selfMode = new InputMode(ctx);
-    this.clickMode = new ClickMode(ctx);
-    this.freeMode = new AnalysisMode(ctx);
-    this.puzzleMode = new PuzzleMode(ctx);
-    this.modes = {
-      free: this.freeMode,
-      self: this.selfMode,
+  /**
+   * 建全部模式。四个「既进 `modes` 表、又被外壳直接调用」的模式（输入/点击/自由/拼图）
+   * 连表一并返回，由构造器落地字段 —— 这样严格遵守 `strictPropertyInitialization`，
+   * 不必给字段加 `!` 断言。
+   */
+  private createModes(ctx: ModeCtx) {
+    const selfMode = new InputMode(ctx);
+    const clickMode = new ClickMode(ctx);
+    const freeMode = new AnalysisMode(ctx);
+    const puzzleMode = new PuzzleMode(ctx);
+    const modes: Record<Mode, ModeController> = {
+      free: freeMode,
+      self: selfMode,
       endless: new EndlessMode(ctx),
-      click: this.clickMode,
+      click: clickMode,
       memory: new FreeBrowseMode(ctx),
-      puzzle: this.puzzleMode,
+      puzzle: puzzleMode,
       board: new BoardMode(this.boardPanel),
       admin: this.adminMode,
     };
+    return { selfMode, clickMode, freeMode, puzzleMode, modes };
+  }
 
-    this.chrome = new ChromeSync({
-      current: () => this.current,
+  /**
+   * 验收探针的**装配视图**（见 `appDiagnostics.ts` 的说明）。
+   *
+   * 生产路径不调用（只有 URL 带 `?probe=1` 时探针取一次）。存在的意义是把「探针依赖哪些
+   * 私有字段」变成一份**编译器可校验**的契约：方法体在类内部，字段改名 / 删除会让 `tsc`
+   * 直接报错，而不是让探针在验收时静默读到 `undefined`。
+   */
+  diagnostics(): AppDiagnostics {
+    const self = this;
+    return {
+      renderer: this.renderer,
+      clickMode: this.clickMode,
+      selfMode: this.selfMode,
+      freeMode: this.freeMode,
+      puzzleMode: this.puzzleMode,
+      data: this.data,
+      settings: this.settings,
       sidePanel: this.sidePanel,
-      zoom: () => this.zoomDisplay,
-      data,
-    });
-
-    this.scoreSubmitter = new ScoreSubmitter(
-      this.authStore,
-      this.leaderboardStore,
-      this.authPanel,
-      toast,
-      () => void this.refreshSidePanel(),
-      (result) => this.rejectToast(result),
-      (result) => this.canSubmit(result),
-    );
+      get current() { return self.current; },
+      syncModeChrome: () => self.syncModeChrome(),
+    };
   }
 
   /**
@@ -573,7 +627,27 @@ export class AppController {
 
   // ==================== DOM 事件接线 ====================
 
+  /**
+   * DOM 接线总表。
+   *
+   * 原先这里是一个 200 行的顺序函数：17 组互不相干的接线首尾相接，想找某个按钮的 handler
+   * 必须读完全文；而且「改完范围后刷新外壳」的四步收尾在 4 个 handler 里逐字重复。
+   * 现在按域拆成下面的方法，本函数只做分发 —— 一眼能看出应用一共接了哪些线。
+   */
   private wireDom() {
+    this.wireOverlays();
+    this.wireModeNavigation();
+    this.wireSidePanelToggle();
+    this.wireOrderToggles();
+    this.wireScopeToggles();
+    this.wireSettings();
+    this.wireTestControls();
+    this.wireStartActionLock();
+    this.wireSearch();
+  }
+
+  /** 两个浮层：暂停遮罩（点击恢复）与帮助面板。 */
+  private wireOverlays() {
     ($('pause-overlay') as HTMLElement).addEventListener('click', () => {
       if (!this.current?.isPaused()) return;
       this.current.resume();
@@ -587,7 +661,10 @@ export class AppController {
     $('help-panel').addEventListener('click', (event) => {
       if (event.target === $('help-panel')) this.hideHelp();
     });
+  }
 
+  /** 模式切换入口：顶部模式标签 + 右区两个入口按钮。 */
+  private wireModeNavigation() {
     document.querySelectorAll<HTMLButtonElement>('#mode-tabs button').forEach((btn) => {
       btn.addEventListener('click', () => this.switchMode(btn.dataset.mode as Mode));
     });
@@ -595,7 +672,10 @@ export class AppController {
     // 右区按钮：熟练度分析 → 自由模式；留言板 → 留言板模式
     ($('btn-free') as HTMLButtonElement).addEventListener('click', () => this.switchMode('free'));
     ($('btn-board') as HTMLButtonElement).addEventListener('click', () => this.switchMode('board'));
+  }
 
+  /** 侧栏把手：拖拽调宽 / 点击开合（仅排行榜与熟练度分析侧栏可用）。 */
+  private wireSidePanelToggle() {
     const sidePanelToggle = $('side-panel-toggle') as HTMLButtonElement;
     const isAnalysisPanel = () => this.current?.id === 'free';
     sidePanelToggle.addEventListener('pointerdown', (event) => {
@@ -615,57 +695,69 @@ export class AppController {
       this.syncModeChrome();
       void this.refreshSidePanel();
     });
+  }
 
-    document.querySelectorAll<HTMLButtonElement>('#self-order-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const mode = btn.dataset.order as OrderMode;
-        this.selfMode.setOrderMode(mode);
-        this.syncSegmentedToggle('self-order-toggle', mode);
-      });
+  /**
+   * 给一个分段按钮组接线：选择器统一为 `#<containerId> button`。
+   * 原先 6 处 `querySelectorAll(...).forEach(addEventListener)` 是逐字重复的。
+   */
+  private wireSegmented(containerId: string, onPick: (btn: HTMLButtonElement) => void) {
+    document.querySelectorAll<HTMLButtonElement>(`#${containerId} button`).forEach((btn) => {
+      btn.addEventListener('click', () => onPick(btn));
     });
-    document.querySelectorAll<HTMLButtonElement>('#click-order-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const mode = btn.dataset.order as ClickOrderMode;
-        this.clickMode.setOrderMode(mode);
-        this.syncSegmentedToggle('click-order-toggle', mode);
-      });
+  }
+
+  /**
+   * 范围/粒度类按钮点完后的统一收尾：分段高亮 → 模式 chrome → 进度行 → 侧栏。
+   *
+   * 这四步原先在 4 个 handler 里逐字重复，漏一处就会出现「按钮说东亚、地图是世界」
+   * （README 记过这个缺陷）。
+   */
+  private afterScopeChange() {
+    this.syncSegments();
+    this.syncModeChrome();
+    this.updateProgress();
+    void this.refreshSidePanel();
+  }
+
+  /** 出题顺序分段（输入模式支持 顺序/随机/错题；点击模式没有「顺序」）。 */
+  private wireOrderToggles() {
+    this.wireSegmented('self-order-toggle', (btn) => {
+      const order = btn.dataset.order as OrderMode;
+      this.selfMode.setOrderMode(order);
+      this.syncSegmentedToggle('self-order-toggle', order);
     });
+    this.wireSegmented('click-order-toggle', (btn) => {
+      const order = btn.dataset.order as ClickOrderMode;
+      this.clickMode.setOrderMode(order);
+      this.syncSegmentedToggle('click-order-toggle', order);
+    });
+  }
+
+  /** 范围类分段按钮：粒度、大洲、次区域、熟练度分析档位，以及拼图难度。 */
+  private wireScopeToggles() {
     // 点击/输入/自由模式的「世界/省级/市级」粒度切换
     // （测验模式仅全国视图、未开始测试时可操作；自由模式纯浏览，随时可切且不支持下钻）
-    document.querySelectorAll<HTMLButtonElement>('#granularity-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const g = btn.dataset.granularity as Granularity;
-        // 以当前模式为准：输入/自由模式各自记住自己的粒度，其它情况回落点击模式
-        const target = this.current?.setGranularity ? this.current : this.clickMode;
-        target.setGranularity?.(g);
-        this.syncSegments();
-        this.syncModeChrome();
-        this.updateProgress();
-        void this.refreshSidePanel();
-      });
+    this.wireSegmented('granularity-toggle', (btn) => {
+      const g = btn.dataset.granularity as Granularity;
+      // 以当前模式为准：输入/自由模式各自记住自己的粒度，其它情况回落点击模式
+      const target = this.current?.setGranularity ? this.current : this.clickMode;
+      target.setGranularity?.(g);
+      this.afterScopeChange();
     });
 
-    // 拼图模式的「简单/困难」：只影响是否显示省名（PuzzleMode.setDifficulty 内部重绘）
-    document.querySelectorAll<HTMLButtonElement>('#puzzle-difficulty-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const d = btn.dataset.puzzleDifficulty as PuzzleDifficulty;
-        this.puzzleMode.setDifficulty(d);
-        this.syncSegmentedToggle('puzzle-difficulty-toggle', this.puzzleMode.getDifficulty());
-      });
+    // 拼图模式的「简单/困难」：只影响是否显示省名，不是范围变化，故不走 afterScopeChange
+    this.wireSegmented('puzzle-difficulty-toggle', (btn) => {
+      this.puzzleMode.setDifficulty(btn.dataset.puzzleDifficulty as PuzzleDifficulty);
+      this.syncSegmentedToggle('puzzle-difficulty-toggle', this.puzzleMode.getDifficulty());
     });
 
     // 世界粒度下的「全世界/各大洲」范围切换
     // （测验模式仅世界粒度、全国视图、未开始测试时可操作；熟练度分析世界档无「开始」概念，随时可切）
-    document.querySelectorAll<HTMLButtonElement>('#continent-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const raw = btn.dataset.continent ?? '';
-        const c = raw ? (raw as Continent) : null;
-        this.worldScopeTarget()?.setWorldContinent?.(c);
-        this.syncSegments();
-        this.syncModeChrome();
-        this.updateProgress();
-        void this.refreshSidePanel();
-      });
+    this.wireSegmented('continent-toggle', (btn) => {
+      const raw = btn.dataset.continent ?? '';
+      this.worldScopeTarget()?.setWorldContinent?.(raw ? (raw as Continent) : null);
+      this.afterScopeChange();
     });
 
     // 次区域行的按钮由 chromeSync 按当前大洲**动态重建**，故用事件委托而非逐按钮接线。
@@ -674,30 +766,18 @@ export class AppController {
       if (!btn) return;
       const raw = btn.dataset.subregion ?? '';
       this.worldScopeTarget()?.setWorldSubregion?.(raw ? (raw as SubregionId) : null);
-      this.syncSegments();
-      this.syncModeChrome();
-      this.updateProgress();
-      void this.refreshSidePanel();
+      this.afterScopeChange();
     });
 
     // 熟练度分析的省级/地级切换
-    document.querySelectorAll<HTMLButtonElement>('#analysis-granularity-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const g = btn.dataset.analysisGranularity as Granularity;
-        this.freeMode.setAnalysisGranularity(g);
-        this.syncSegments();
-        this.syncModeChrome();
-        this.updateProgress();
-        void this.refreshSidePanel();
-      });
+    this.wireSegmented('analysis-granularity-toggle', (btn) => {
+      this.freeMode.setAnalysisGranularity(btn.dataset.analysisGranularity as Granularity);
+      this.afterScopeChange();
     });
+  }
 
-    // 点击「开始」按钮后立即锁定分段按钮（开始动作不经过 switchMode，同步需在此重新调用）
-    document.addEventListener('click', (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest?.('.start-action')) this.syncSegments();
-    });
-
+  /** 主题开关 + 全局设置面板 + 每模式设置浮层。 */
+  private wireSettings() {
     // 顶栏「黑夜模式 / 白天模式」开关（位于全局设置按钮左侧）：文案显示点击后将切换到的主题
     ($('btn-theme') as HTMLButtonElement).addEventListener('click', () => this.toggleTheme());
 
@@ -722,54 +802,83 @@ export class AppController {
     $('mode-settings-panel').addEventListener('click', (event) => {
       if (event.target === $('mode-settings-panel')) $('mode-settings-panel').classList.add('hidden');
     });
+  }
 
+  /** 答题控制：跳过 / 结束 / 重置。 */
+  private wireTestControls() {
     ($('btn-skip') as HTMLButtonElement).addEventListener('click', () => this.current?.onSkip());
     ($('btn-end') as HTMLButtonElement).addEventListener('click', () => {
       this.current?.onEnd();
       if (this.current?.isPaused()) this.showPauseOverlay();
     });
     ($('btn-reset') as HTMLButtonElement).addEventListener('click', (event) => {
-      this.confirmAction(event.currentTarget as HTMLButtonElement, () => {
-        if (this.current?.isPaused()) this.hidePauseOverlay();
-        if (this.current?.id === 'free') {
-          const granularity = this.freeMode.getAnalysisGranularity();
-          if (granularity === 'world') {
-            this.store.resetWorldPractice();
-            this.stats.refreshWorldLevel();
-          } else if (granularity === 'province') {
-            this.store.resetProvincePractice();
-            this.stats.refreshProvinceLevel();
-          } else {
-            this.store.resetPractice();
-            this.stats.refresh(this.renderer.currentProvince());
-          }
-          this.current.refresh();
-          toast(t('main.resetMasteryDone'));
-          return;
-        }
-        const mode = this.current?.id;
-        const scope = this.current?.getScopeProvince();
-        const isNationScope = isNationLikeScope(scope); // 含 null（市级全国）、省级/世界全国与大洲范围
-        if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
-          this.showSettlementCard();
-          return;
-        }
-        // 拼图模式：只有可提交的两个范围（世界全国 / 市级全国）进行中才弹结算卡片，
-        // 其余范围（省级全国、大洲、次区域、下钻某省）直接重置（用户口径）
-        if (mode === 'puzzle' && this.puzzleMode.isRankedScope() && this.current?.isStarted()) {
-          this.showSettlementCard();
-          return;
-        }
-        if (this.current?.onReset) {
-          this.current.onReset();
-          this.updateProgress();
-          this.syncPauseOverlay();
-        }
-      });
+      this.confirmAction(event.currentTarget as HTMLButtonElement, () => this.onResetClicked());
     });
+  }
 
-    // 搜索框接线（无下拉联想）
+  /**
+   * 「重置」确认后真正执行：可提交的范围先弹结算卡片，否则走模式自己的重置。
+   * 从 39 行的内联 handler 里抽出来 —— 那是唯一一处把业务判断混进 DOM 接线的地方。
+   */
+  private onResetClicked() {
+    if (this.current?.isPaused()) this.hidePauseOverlay();
+
+    if (this.current?.id === 'free') {
+      this.resetMastery();
+      return;
+    }
+    const mode = this.current?.id;
+    const scope = this.current?.getScopeProvince();
+    const isNationScope = isNationLikeScope(scope); // 含 null（市级全国）、省级/世界全国与大洲范围
+    if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
+      this.showSettlementCard();
+      return;
+    }
+    // 拼图模式：只有可提交的两个范围（世界全国 / 市级全国）进行中才弹结算卡片，
+    // 其余范围（省级全国、大洲、次区域、下钻某省）直接重置（用户口径）
+    if (mode === 'puzzle' && this.puzzleMode.isRankedScope() && this.current?.isStarted()) {
+      this.showSettlementCard();
+      return;
+    }
+    if (this.current?.onReset) {
+      this.current.onReset();
+      this.updateProgress();
+      this.syncPauseOverlay();
+    }
+  }
+
+  /** 熟练度分析的重置：按当前分析档位清空对应层级的熟练度。 */
+  private resetMastery() {
+    const granularity = this.freeMode.getAnalysisGranularity();
+    if (granularity === 'world') {
+      this.store.resetWorldPractice();
+      this.stats.refreshWorldLevel();
+    } else if (granularity === 'province') {
+      this.store.resetProvincePractice();
+      this.stats.refreshProvinceLevel();
+    } else {
+      this.store.resetPractice();
+      this.stats.refresh(this.renderer.currentProvince());
+    }
+    this.current?.refresh();
+    toast(t('main.resetMasteryDone'));
+  }
+
+  /**
+   * 「开始」按钮不经过 `switchMode`，所以「开始后锁定分段按钮」需要在这里补一次同步。
+   * 用委托而非逐按钮接线：开始卡片是被模式动态重建的。
+   */
+  private wireStartActionLock() {
+    document.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.('.start-action')) this.syncSegments();
+    });
+  }
+
+  /** 搜索框接线（无下拉联想）。 */
+  private wireSearch() {
     this.search.onSubmit((v) => this.current?.onSubmit(v));
     this.search.onInput((v) => this.current?.onInput(v));
   }
+
 }

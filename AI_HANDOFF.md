@@ -1,5 +1,82 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（重构 P0）：验收探针隔离 —— 消除「改名后验收静默失效」
+
+**动机**：探针（`?probe=1`）必须读应用内部非公开状态。旧实现在 `src/probe.ts` 里就地写匿名类型再 `as unknown as` 强转，**40 处**、成员一律可选、调用一律 `?.()`。后果是生产侧改名时 `tsc` 与单测全绿，探针却在运行时静默少读一个字段 —— 你会以为验收过了。
+
+**实测证据**（重构前后各做一次受控改名实验）：
+
+| 改名对象 | 重构前 probe 相关编译错误 | 重构后 |
+|---|---|---|
+| `MapRenderer.setWorldMode`（公开方法） | 1（受保护） | 1（受保护） |
+| `MapRenderer.worldNameToIso`（private 字段） | **0 —— 缺口** | **1**：`'zzWorldNameToIso' does not exist in type 'MapRendererDiagnostics'` |
+| `MapQuizMode.errorRollback`（protected 字段） | 0 | **1**：报在 `QuizSessionDiagnostics` 字面量上 |
+| `InputMode.bfsQueue`（private 字段） | 0 | **1**：报在 `QuizOrderDiagnostics` 字面量上 |
+
+**做法**：把「探针需要哪些内部状态」提升为生产类自己声明的编译期契约 —— 每个类加一个 `diagnostics()`（方法体在类内部，能看见私有成员），返回 getter/setter 组成的**活值视图**：
+
+- `AppController.diagnostics()` → 装配出的内部对象（`src/appDiagnostics.ts`）
+- `MapRenderer.diagnostics()` → 只读（`src/map/rendererDiagnostics.ts`）
+- `MapQuizMode.diagnostics()` / `InputMode.orderDiagnostics()` → 可读写，探针要构造场景再还原（`src/modes/quizDiagnostics.ts`）
+
+**同时拆分**：`src/probe.ts`（766 行、`installProbe` 单函数 751 行）→ `src/probe/` 五个模块，最长函数 **78 行**；`as unknown as` **40 → 1**（只剩挂 `window.__probe`，无法避免）。
+
+**验收**：tsc 0；vitest **273/273**；`verify-round2` 38/38、`verify-round3` 37/37、`verify-puzzle` 74/74 —— **149 项运行时断言与重构前逐项一致**。
+
+**三个坑**（下一个人别再踩）：
+
+1. 诊断视图返回的是活值 getter。**不要** `{...view}` 展开 —— 那会把 getter 求值成静态快照。
+2. 做「改名实验」验证编译器是否抓得住时，**不要用 `git checkout -- <file>` 还原**：那个文件里同时装着你刚写的新代码，会把改动一起抹掉。改用显式备份副本。
+3. `npm run build` **不会清空 `dist/`**（实测：往 `dist/` 放哑文件后重建，哑文件仍在；历史上 `dist/assets` 累积过 104 个旧 chunk）。验收脚本服务的正是 `dist/`，所以改完渲染/探针代码后如果怀疑"跑的还是旧代码"，先手动 `rm -rf dist` 再构建。
+
+**另**：探针的动态 chunk 名字由**入口文件 basename**决定，所以入口保留了顶层 `src/probe.ts` 作为 shim（`export { installProbe } from './probe/index'`），使 chunk 仍叫自描述的 `probe-*.js` 而不是与主包同名的 `index-*.js`。**不要**改用 `build.rollupOptions.output.manualChunks` 命名：实测它会把 echarts 等共享依赖拖进该 chunk，并把 `probe-*.js` 变成 index.html 的**静态**引用（每个用户下载 1.1 MB）。
+
+**重构进度（按紧急度）**：
+
+- ✅ **P0 验收探针隔离**（本轮）：见上。
+- ✅ **P1 瘦身 `appController`**：`wireDom` **200 → 11 行**（拆成 9 个按域的分发方法 + `wireSegmented()` / `afterScopeChange()` 两个助手），构造器 **113 → 51 行**（抽出 `createRenderer()` / `buildModeCtx()` / `createModes()`），全文件最长函数 **200 → 51 行**。顺手消掉两处重复：6 个分段按钮的 `querySelectorAll` 样板、4 个 handler 里逐字重复的「分段高亮→chrome→进度行→侧栏」四步收尾（漏一处就会出现「按钮说东亚、地图是世界」）。
+- ✅ **P2 模式层去重**：跨文件重复的 12 行代码块 **9 → 0**；`countryName` / 省名标签 / 国名标签上提到 `MapQuizMode`（输入模式还私藏了一份与 `province.ts` 完全等价的 `provinceShortName`，已删）；**粒度持久化 4 份拷贝 → `src/modes/granularityStore.ts`**，三个不同的默认值（输入·点击·拼图 = 省级，自由浏览 = 地级）变成调用点上的显式参数。
+- 🔶 **P3 拆分 `map/renderer.ts` 上帝类**（进行中）：1846 → **1752 行**（含新增的包装方法与方法级注释；纯搬移出去的部分约 290 行），**最长函数 222 → 49**（`render`），字段仍是 **64**（字段共享是这块硬骨头的核心）。已完成四刀：
+  - **第一刀**：构造期几何索引 → `src/map/geoIndex.ts`。`buildProvinceLines` 纯函数化；`buildLabelAnchors` 与 `buildProvinceLabelAnchors` 本是**逐字重复、只差数据源**，合并为一个纯函数。
+  - **第二刀**：`src/map/zoom.ts` + `src/map/follow.ts`。缩放范围 `[0.8, 28]` 原先在 `renderer.ts` 与 `puzzle/view.ts` **各定义一份**（只靠注释维系同步），现收敛为一份；跟随钳制的 5 个纯函数与 `FOLLOW_MARGIN_RATIO` / `ViewportWindow` 一并迁出。渲染器只保留**测量**（`viewportWindow()` / `framingExtent()`），**策略**全在 `follow.ts`。`clampFollowAxis` / `FOLLOW_MARGIN_RATIO` **不再从 `renderer.ts` 导出** —— 引用方已改指 `./follow`（单测）与 `../map/follow`（探针）。
+  - **第三刀**：构造器 **223 → 9 行**。地图注册表 → `src/map/mapRegistry.ts`；其余拆成 `createInset()` / `buildIndexTables()`，以及**六段内联 ECharts 事件处理器** → `wireChartEvents()` 分发到 `wireChartClick()` / `wireChartHover()` / `wireChartDblClick()` / `wireChartRoam()`。
+  - **第四刀**：`render()` **213 → 49 行**。166 行的 option 字面量拆成 `buildTooltipOption()` / `buildGeoOption()` / `buildSeriesOption()`。
+  - **第五刀**：`buildSeriesOption()` **113 行 → 5 个 series 构造器**（`eventSeries` / `provinceLinesSeries` / `provinceLikeLabelSeries` / `cityLabelSeries`），并消掉一处真实重复：`world-labels` 与 `province-labels` 的骨架**完全相同**（同 geoIndex、同 silent、同无 tooltip、同字号与衬底比例），原先各写一份、只差 id / z / 「scale 从哪来」，合并为 `provinceLikeLabelSeries(id, z, data, theme, scaleOf)`。**全文件最长函数 222 → 52 行**（起点是构造器 223 / `render` 213 / `wireDom` 199 三个巨物）。
+  - **第六刀（数据层）**：10 个纯构造器 + `labelAnchorOf` + `worldFeatureVisible` 薄封装 → **`src/map/layers.ts`**（304 行 / 14 个导出）。渲染器 **1776 → 1617 行、方法 76 → 68**。桥是 `MapRenderer.layerInput(state)`：把 19 个字段摊成一份显式 `LayerInput`，**每次 render 组装一次**喂给所有构造器，数据层因此不持有对渲染器的任何引用。
+    - **刻意的边界**：`buildLineData()`（回写 `lineBoxes`）、`applyLabelMode()` / `scheduleLabelModeUpdate()`（碰 ECharts 与定时器）、`worldFaceInteractive()` / `worldFaceContext()`（事件处理器薄封装）**留在渲染器** —— 它们有副作用或只服务事件层。
+    - `WORLD_LABEL_ZOOM`（世界国名标签阈值）随之迁到 `layers.ts`（`LABEL_ZOOM` 留在渲染器）。
+    - **诊断契约在迁移中被编译器保护**：`diagnostics()` 里暴露的 `buildLabelData` / `buildProvinceLabelData` / `buildWorldLabelData`（探针 `round3Ui` 的 `labelCounts` 用）在方法被删后立刻编译报错，于是改成**同签名的薄封装**（`(state) => buildLabelData(self.layerInput(state))`）—— 探针契约一字未动。**这就是 P0 那层诊断契约在后续重构里的实际价值。**
+
+**P3 状态：函数级拆分已完成。** 最长函数 222 → **52**，中位数 9 行，超过 52 行的函数一个都没有；类从 1846 行降到 **1617 行**，拆出 6 个协作模块（`geoIndex` / `zoom` / `follow` / `mapRegistry` / `layers` / 诊断契约）。
+
+**P3 剩下的只有「字段级」解耦**：类仍有 64 个字段（相机 center/zoom、五档几何缓存、标签定时器、各查表）。要把它们真正降下来需要更深的改造——把相机收成一个 `Camera` 对象、把五档几何收成一个 `TierCache` 对象。那是重新设计而不是"拆方法"，建议单独评估。
+
+**下一步建议（不是 P3 的延续，而是本轮拆分的兑现）**：给 `src/map/layers.ts` 补单测。它现在是**纯函数 + 显式输入**，可以直接构造一个合成 `LayerInput` 断言「范围外的面是 silent + 透明」「装饰面灰显且静默」「hideLabels / labelMode 的分组开关」「世界档国名可见性按次区域优先于大洲」—— 这些目前只能靠 headless Edge 的运行时探针验证，而它们恰恰是最不该依赖浏览器的那类逻辑。可参考 `src/testFixture.ts` 与 `src/map/worldFaces.test.ts` 的写法。
+
+**✅ 已兑现（`src/map/layers.test.ts`，34 个用例）**：上面这些规则现在都有单测锁定，其中最有价值的一条是把 README 记过的坑变成断言 —— **范围外的面必须仍然登记、但 `silent` + 透明 + `emphasis.disabled`**（只跳过外观会让它们回落到 geo 默认样式，于是「空白处悬停高亮看不见的国家」）。另外锁住了：装饰面/被排除极小国的灰显与静默、`worldBoundaryTone` 不影响边界宽度、国名标签的倍率阈值与 `RenderState` 覆盖、次区域优先于大洲、`colorOf` 返回 `blue` 时**不产生标签**（不泄露当前题目）。
+
+写这批测试时踩到的两点（供后续补测参考）：
+- `ctx()` 的入参类型要写成 `Partial<Omit<LayerInput, 'state'>> & { state?: Partial<RenderState> }` —— 否则每次传 `state` 都要把必填的 `colorOf` 一起写上。
+- `countries` 的元素类型是 `CountryMeta`（含 `fullName` / `neighbors`），不是只有 `iso/name/center/continent`。
+- 中文名的默认 `sort()` 是码点序，断言多元素集合时用 `new Set(...)` 比写死顺序更稳。
+
+**测试总数 273 → 307**（新增 `src/map/layers.test.ts` 34 个）。产物已核验**不含测试代码**（`layers.test` / `makeAppData` / 固件里的地名串在 `dist/assets/*.js` 中均搜不到）。
+
+**拆 option 构造器时的两个坑（第四刀实测踩到）**：
+
+1. **上下文类型会丢。** 这些对象字面量原本嵌在 `const option: echarts.EChartsOption = {...}` 里，靠上下文把 `type: 'custom'` 收窄成字面量类型、把 `renderItem(_params, api)` 的参数推断出来。搬成独立方法后必须**显式标注返回类型**才能恢复：
+   ```ts
+   private buildSeriesOption(...): echarts.EChartsOption['series'] { ... }
+   private buildTooltipOption(...): echarts.EChartsOption['tooltip'] { ... }
+   private buildGeoOption(...): echarts.EChartsOption['geo'] { ... }
+   ```
+   不加就会得到 `Type 'string' is not assignable to type '"lines"'` 与一串 `implicitly has an 'any' type`。
+2. **`renderItem` 里的 `labelScale(this.zoom)` 不能提前求值。** ECharts 在缩放/拖动时会**反复调用** custom series 的 `renderItem`，每次都该读当时的 `this.zoom`；构建 option 时取快照会让标签字号在缩放中卡住。要做标签系列工厂的话，`scale` 必须作为**闭包**传进去，不能作为值传。
+
+**一个以前没人记录的坑（本轮踩到并修了）**：`src/map/renderer.ts` 原先是 **CRLF**，而仓库里其它所有文件都是 **LF**（`core.autocrlf=true`，所以 git 里一致、只有工作区不一致）。任何按 `\n` 切分后做**严格字符串比较**的脚本（例如找 `"  }"` 收尾）会死循环。已把 `renderer.ts` 转成 LF（**diff 中性**，转前转后 `git diff --stat` 都是 69/166）。新写的脚本仍建议 `split(/\r?\n/)` 并按检测到的 EOL 拼回。
+
+**验收纪律**：每一步都必须同时跑 `npx tsc --noEmit`、`npm test`（273 用例）、以及 `node scripts/verify-round2.mjs` / `verify-round3.mjs` / `verify-puzzle.mjs`（合计 **149 项运行时断言**，基线 38 / 37 / 74）。三者全绿才算落地。
+
 ## 本轮补丁（用户三条口径）：叠放按组、容差分档、吸附方向
 
 1. **叠放改成"先组、后片"**（`view.renderStructure`）：排序键 `(组总面积 desc, 片自身面积 desc, groupId, adcode)`，两组面积都写进 DOM（`data-area` / `data-group-area`）。于是**许多小碎片拼成的大块会沉到中层碎片之下**（组面积 = 组内各片之和），组内仍旧小的压在大的之上（北京/天津在河北的环里）。实测验收输出：`{河北+北京} 组面积 21.45` 排在 `湖北 15.27` 之前，组内 河北(19.71) → 北京(1.73)。
