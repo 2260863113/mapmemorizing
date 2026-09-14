@@ -285,6 +285,21 @@ try {
     labels: window.__probe.round3Ui().labels
   })`));
   check('结算卡片弹出即复现全量标签', settled.cardOpen === true && settled.labels.showAllProvinceLabels === true, settled);
+  // 结算卡片「提交成绩」按钮：白字灰底（2026-09 用户口径）。绿底白字只有 1.92:1，故这里直接量对比度。
+  // 灰值按主题不同（明 rgb(55,65,81) / 暗 rgb(71,85,105)），故与 CSS 令牌比对而不是写死颜色。
+  const settleBtn = JSON.parse(await ev(`JSON.stringify((function(){
+    function srgb(c){ c = c/255; return c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+    function lum(rgb){ var m = rgb.match(/\\d+/g).map(Number); return 0.2126*srgb(m[0]) + 0.7152*srgb(m[1]) + 0.0722*srgb(m[2]); }
+    var b = document.getElementById('settlement-submit'), s = getComputedStyle(b);
+    // 令牌从**元素自身**读：明主题定义在 :root、暗主题在 body.theme-dark，读 documentElement 只会拿到明主题值
+    var token = s.getPropertyValue('--control-active-bg').trim();
+    var l1 = lum(s.color), l2 = lum(s.backgroundColor);
+    var ratio = (Math.max(l1,l2) + 0.05) / (Math.min(l1,l2) + 0.05);
+    return { text: s.color, bg: s.backgroundColor, token: token, bgImage: s.backgroundImage, ratio: Math.round(ratio*100)/100 };
+  })())`));
+  check('结算卡片「提交成绩」：白字灰底（= --control-active-bg，与分段按钮选中态同色）且对比度 ≥ 3.5:1',
+    settleBtn.text === 'rgb(255, 255, 255)' && settleBtn.bg === settleBtn.token && settleBtn.ratio >= 3.5,
+    settleBtn);
   await ev(`(() => { document.getElementById('settlement-close').click(); return true })()`);
   await sleep(800);
   const afterReset = await ui();
@@ -460,14 +475,14 @@ try {
   await ev(`(() => { document.getElementById('btn-settings').click(); return true })()`);
   await sleep(500);
   const swOffLight = await switchStyle();
-  check('白天模式·关闭：轨道为浅灰透明底、滑块在左侧且为黑色',
-    swOffLight.checked === false && swOffLight.track === 'rgba(0, 0, 0, 0.12)' && swOffLight.knobBg === 'rgb(15, 17, 21)',
+  check('白天模式·关闭：轨道为浅灰透明底、滑块在左侧且为深灰（2026-09 起不再纯黑）',
+    swOffLight.checked === false && swOffLight.track === 'rgba(0, 0, 0, 0.12)' && swOffLight.knobBg === 'rgb(55, 65, 81)',
     swOffLight);
   await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`);
   await sleep(300);
   const swOnLight = await switchStyle();
-  check('白天模式·打开：轨道转为全黑、滑块右移 16px（与黑夜模式相反）',
-    swOnLight.checked === true && swOnLight.track === 'rgb(15, 17, 21)' && swOnLight.knobBg === 'rgb(15, 17, 21)'
+  check('白天模式·打开：轨道转为深灰（与分段按钮选中态同色）、滑块右移 16px',
+    swOnLight.checked === true && swOnLight.track === 'rgb(55, 65, 81)' && swOnLight.knobBg === 'rgb(55, 65, 81)'
       && /matrix\(1,\s*0,\s*0,\s*1,\s*16,\s*0\)/.test(swOnLight.knobTransform),
     swOnLight);
   await ev(`(() => { document.getElementById('set-ignore-tiny').click(); return true })()`); // 还原为关闭

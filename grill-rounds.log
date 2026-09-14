@@ -721,3 +721,11 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - ⚠ 顺手修掉运行时验收抓到的真缺陷：buildWorldLabelData 在 worldLabel 分支 return，吃掉了世界档未开始的浏览标签（省级/地级正常故难发现），已加 layers.test.ts 回归闸门。
 - 验收：npm run check exit 0（40 文件/427 用例）；verify-round3 46/46（+8 条）、verify-round2 38/38、verify-puzzle 75/75、verify-naming 22/22 = 181/181。
 - ⚠ 既有问题（非本轮引入，未改）：结算卡片的「提交成绩」按钮为白字绿底，对比度 1.92:1，低于 verify-round3 的 3.5:1 客观体检线；验收脚本验完"结算即复现"务必点 #settlement-close 收掉卡片，否则该条会失败。
+================================================================
+2026-09-14 23:00  配色：结算提交按钮白字绿底→白字灰底；设置开关的纯黑→同款深灰
+- src/styles.css 新增一对令牌 --control-active-bg / --control-active-bg-hover（明 rgb(55,65,81) / 暗 rgb(71,85,105)，即分段按钮选中态渐变顶色的不透明等效），三处共用一份灰。
+- #settlement-submit 由 .primary 的白字绿底改为白字灰底（原对比度仅 1.92:1，低于验收线的 3.5:1；改后实测 7.58:1）。其余 .primary（发帖/保存/登录/继续）仍为品牌绿。
+- 设置界面所有开关（.card input[type=checkbox]，全局设置与每模式设置浮层共用同一选择器）在明主题由纯黑 #0f1115 改为该深灰；暗主题没有"黑"的部分，保持全白不变。
+- scripts/verify-round3.mjs：白天模式两条开关断言改为深灰；新增「结算提交按钮 = 令牌灰且对比度 ≥3.5:1」一条（令牌从元素自身读，因明主题定义在 :root、暗主题在 body.theme-dark）。README 同步开关与结算按钮的描述。
+- 验收：npm run check exit 0（40 文件/427 用例）；verify-round3 47/47。
+- ⚠ 若希望**暗主题**的开关也从全白改成这款灰，说一声即可（本轮按"黑色改成灰色"的字面口径只改了明主题）。

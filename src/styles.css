@@ -15,6 +15,11 @@ html, body, #app { height: 100%; }
   --tab-hover: #374151;
   --accent: #10b981;
   --accent-strong: #059669;
+  /* 「分段按钮选中态的深灰」：明主题取 .mode-segmented button.active 渐变顶色（rgba(55,65,81,0.82)）
+     的不透明等效。2026-09 起被两处复用：结算卡片的「提交成绩」按钮、设置界面里的开关
+     （开关原先用纯黑 #0f1115）。改动这一对值即可同时调整三处，不要再各自写死颜色。 */
+  --control-active-bg: rgb(55, 65, 81);
+  --control-active-bg-hover: rgb(75, 85, 99);
   --input-bg: rgba(255,255,255,0.92);
   --input-border: #d1d5db;
   --input-text: #111827;
@@ -73,6 +78,10 @@ body.theme-dark {
   --tab-hover: #1e293b;
   --accent: #34d399;
   --accent-strong: #10b981;
+  /* 暗主题的同名深灰：取暗主题分段选中态渐变顶色（rgba(71,85,105,0.7)）的不透明等效
+     （比明主题亮一档，否则在深色卡片上几乎看不见）。 */
+  --control-active-bg: rgb(71, 85, 105);
+  --control-active-bg-hover: rgb(100, 116, 139);
   --input-bg: rgba(15,23,42,0.84);
   --input-border: #475569;
   --input-text: #f8fafc;
@@ -152,6 +161,11 @@ button.primary {
   border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
 }
 button.primary:hover { background: var(--accent-strong); }
+/* 结算卡片的「提交成绩」：白字**灰**底（2026-09 用户口径，与分段按钮选中态同一个深灰）。
+   原先是 .primary 的白字绿底，实测对比度只有 1.92:1，低于验收脚本的 3.5:1 客观体检线。
+   只改这一个按钮：绿底是品牌主色，其余 .primary（发帖/保存/登录/继续…）保持绿色。 */
+#settlement-submit { background: var(--control-active-bg); }
+#settlement-submit:hover { background: var(--control-active-bg-hover); }
 .user-center-wrap {
   position: relative;
 }
@@ -1648,11 +1662,16 @@ body.theme-dark .leaderboard-row {
 
    颜色取 DSH 的 --dsw-alias-* 令牌，故明暗主题互为反相：
      暗主题：关闭 = 半透明轨道 + 左侧白点；打开 = 全白
-     明主题：关闭 = 浅灰轨道 + 左侧黑点；打开 = 全黑
-   （brand-primary 在暗主题是 #f9fafb、明主题是 #0f1115。）
+     明主题：关闭 = 浅灰轨道 + 左侧灰点；打开 = 全灰
+   （brand-primary 在暗主题是 #f9fafb。**明主题 2026-09 由纯黑 #0f1115 改为
+   --control-active-bg —— 即分段按钮选中态的深灰**，用户口径：开关不要纯黑；
+   暗主题没有"黑"的部分，保持原样。）
+
+   这一条规则覆盖**所有**设置界面里的开关：全局设置的 .card 与每模式设置浮层的 .card
+   共用同一个选择器（.card input[type="checkbox"]），所以「所有设置中的开关」是一处改动。
    ========================================================================= */
 :root {
-  --dsw-alias-brand-primary: #0f1115;
+  --dsw-alias-brand-primary: var(--control-active-bg);
   --dsw-alias-label-primary-foreground: #ffffff;
   --dsw-alias-border-l3: rgba(0, 0, 0, 0.12);
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
