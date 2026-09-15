@@ -735,3 +735,11 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 改动：index.html 把 #granularity-toggle 从 #mode-actions 头部移到末尾、#btn-reset 排其后，新增只在未开始可见的换行占位 #granularity-break / #reset-break；chromeSync.syncSegments() 按 granularityVisible 与 (isTestMode||isPuzzle)&&!testStarted 控制显隐。README/CONTEXT（新增术语「未开始（浏览态）」）/AI_HANDOFF 同步。
 - 验收：npm run check exit 0（40 文件/427 用例）；verify-round3 54/54（新增 7 条几何断言，量 getBoundingClientRect，实测 y=133/190/243/300 且 x 全为 16）、verify-round2 38/38、verify-puzzle 75/75、verify-naming 22/22 = 189/189。
 - ⚠ 顺手修掉 verify-naming 的一处假失败：「题面不是国名」原用 includes()，而巴西利亚/墨西哥城/巴拿马城等首都名包含国名，随机首题抽到巴西即假失败，已改全等。
+================================================================
+2026-09-15 00:00  按钮顺序再修订（粒度行回到范围行之上）+ 点击模式「国旗」档
+- 布局：未开始顺序改为 状态/题面行 → 世界/省级/市级 → 全世界/各大洲 → 次区域 → 重置（重置仍独占最后一行）；纯 index.html DOM 位移，chromeSync 规则未改，开始后布局逐像素不变。verify-round3 的 7 条几何断言按新顺序修订（实测 y=133/190/247/300，x 全为 16）。
+- 国旗档（仅点击模式）：世界档「国名/首都」加第三段「国旗」，题面给国旗图、点地图上对应国家；标签仍显示国名；alt 为空不泄露答案；缺资源回落国名题面。QuestionNaming.world 增 'flag'，click.ts 渲染 <img class="flag-question">，chromeSync 按模式隐藏该段，styles.css 新增 .flag-question img。
+- 数据管线 scripts/fetch-world-flags.mjs → public/data/flags/index.json + 194 个 SVG（合计 1.21MB）。源 flag-icons v7.5.0（MIT，钉死版本），a3→a2 取 Natural Earth v5.1.2 _chn；194 国 a2 全部可取到，例外表为空，取不到即硬失败。不用 emoji 国旗：Windows 的 Chrome/Edge 不渲染（会显示成「JP」）。
+- 验收：npm run check exit 0（41 文件/436 用例）；verify-round3 54/54、verify-naming 28/28（+6 国旗，含图片真的加载出来）、verify-round2 38/38、verify-puzzle 75/75 = 195/195。
+- ⚠ data/flags/index.json 是**硬依赖**：缺失时应用整体启动失败（与 world_names.json 同策略）。资源未生成时跑验收会出现「静态断言假通过、JS 断言全失败」的假象，根因是 boot 失败，别误判成布局改动坏了。
+- ⚠ 国旗档只在点击模式提供；若将来要支持输入模式「看国旗写国名」，只需放开 chromeSync 里对 #world-name-flag 的隐藏，并在 InputMode 的占位提示里加一档文案。

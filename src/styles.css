@@ -580,6 +580,24 @@ body.theme-dark .mode-segmented button.active {
 }
 .start-title { color: var(--input-text); font-size: 16px; font-weight: 700; }
 .click-question .start-title { font-size: 24px; }
+/* 国旗题面（点击模式「国旗」档）：题面卡片里放一张国旗图。
+   为什么不用 emoji 国旗：Windows 的 Chrome/Edge 不渲染国旗 emoji（会显示成「JP」两个字母），
+   而本项目的开发与运行时验收都在 Windows 上，故用仓库内冻结的 SVG。
+   高度固定、宽度随比例（含瑞士这类方形旗与尼泊尔这类非矩形旗），白底 + 细描边保证白色旗不被背景吃掉。 */
+.flag-question { padding: 12px 14px; }
+.flag-question img {
+  display: block;
+  height: 112px;
+  width: auto;
+  max-width: 224px;
+  border-radius: 6px;
+  border: 1px solid var(--input-border);
+  background: #fff;
+  box-shadow: var(--floating-shadow);
+  /* 旗帜是题目本身，不允许被选中/拖拽（拖图会把题面拖走） */
+  user-select: none;
+  -webkit-user-drag: none;
+}
 .start-subtitle { color: var(--muted); font-size: 12px; }
 .start-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .start-action {

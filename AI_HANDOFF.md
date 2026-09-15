@@ -1,5 +1,55 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：按钮顺序再修订（粒度行回到范围行之上）+ 点击模式「国旗」档
+
+### 1. 未开始按钮顺序（第二轮修订）
+
+上一轮把「世界/省级/市级」放在大洲/次区域行**下面**，用户看过之后要求改回**上面**（先选粒度、再选该粒度下的范围）。
+定稿顺序（只影响未开始态，开始后一字不变）：
+
+```
+顺序/随机/错题 · 国名/首都/国旗 · 中文/英文 …   ← 状态与题面口径行
+世界 / 省级 / 市级                              ← 粒度行（在更细的范围行之上）
+全世界 / 各大洲
+次区域（全亚洲 · 东亚 …）
+重置                                           ← 仍独占最后一行
+```
+
+实现是纯 `index.html` 的 DOM 位移：`#granularity-break` + `#granularity-toggle` 移到 `#continent-break` **之前**；
+`#reset-break` + `#btn-reset` 仍在末尾。chromeSync 的显隐规则与占位语义都没改（`#granularity-break` 跟粒度行显隐、
+`#reset-break` 只在 `(isTestMode || isPuzzle) && !testStarted` 显示），所以开始后的布局仍是逐像素不变。
+
+### 2. 点击模式「国旗」档（新功能）
+
+- **口径**：世界档那句「国名 / 首都」加第三段 **国旗**，**只在点击模式出现**（输入模式没有"看图点地图"这条路）；
+  题面在上方给一张国旗图，用户点地图上对应的国家；**地图标签仍显示国名**（语言开关照常生效）；题面 `alt=""`、
+  卡内无任何文字 —— 不能把答案写在题面上。缺该国国旗资源时**回落成国名题面**（宁可是文字题，也不要破图/空白）。
+- **数据**：`scripts/fetch-world-flags.mjs` → `public/data/flags/index.json`（`iso_a3 → 文件名`）+ 194 个 SVG（**原样复制**，
+  合计 1.21MB）。源：**flag-icons v7.5.0（MIT）** 的 `flags/4x3/<a2>.svg`，经 jsDelivr；a3→a2 映射取 Natural Earth
+  v5.1.2 `_chn`（与 `world_names.json` 同一份源与同一套 `-99` 判定）。实测 194 国的 a2 **全部**可从源取到，
+  故 `A2_OVERRIDES` 例外表目前为空；脚本对"取不到 a2"是**硬失败**（不许静默留空）。
+- **为什么不用 emoji 国旗**：Windows 的 Chrome/Edge 不渲染区域指示符对（🇯🇵 会显示成「JP」），而本项目的开发与
+  运行时验收都在 Windows 上 —— emoji 方案连验收都过不了。这是选 SVG 资源、并付出 1.21MB 体积的唯一理由。
+- **代码**：`QuestionNaming.world` 增 `'flag'`（`namingStore` 校验同步）；`worldDisplayName()` 把 flag 当国名（标签与答错提示
+  都用国名，旗帜在提示里也放不下）；新增 `worldFlagSrc()`；`click.ts` 的 `showQuestionHint` 分支渲染
+  `<img class="flag-question">`；`chromeSync` 按模式隐藏 `#world-name-flag`；`styles.css` 新增 `.flag-question img`
+  （高度固定 112px、宽度随比例 —— 含瑞士这类方形旗与尼泊尔这类非矩形旗；白底 + 描边，白旗才看得见）。
+- **数据是硬依赖**：`data.ts` 会加载 `data/flags/index.json`。**它缺失时整个应用启动失败**（不是"国旗档不可用"）——
+  与 `world_names.json` 同一策略：数据文件缺失要**响亮地失败**，不要静默降级。本轮实测踩过一次：
+  资源还没生成时跑 verify-round3，脚本里的静态 DOM 断言"假通过"、JS 驱动的断言全失败，根因就是 boot 失败。
+- **测试**：`worldFlagsData.test.ts`（键集合与 `countries.json` 双向一致、每个被引用文件存在/非空/确实是 SVG、
+  无孤儿文件、source 写明许可）；`quizNaming.test.ts` 增 4 例（题面是国旗且不含国名、alt 为空、标签显示国名、
+  缺资源回落、英文档标签用英文名）；`namingStore.test.ts` 增国旗档持久化。运行时 `verify-naming.mjs` 增 6 条
+  （含**「图片真的加载出来」**：量 `naturalWidth/naturalHeight` —— 只断言 `src` 正确是证明不了资源存在的）。
+
+### 验收
+
+- `npm run check` exit 0；vitest **41 文件 / 436 用例**（本轮 +9）。
+- 运行时：`verify-round3` **54/54**（布局 7 条几何断言按新顺序修订）、`verify-naming` **28/28**（+6 国旗）、
+  `verify-round2` 38/38、`verify-puzzle` 75/75 —— 合计 **195/195**。
+- 国旗管线重跑幂等（第二次全部命中缓存，`index.json` 逐字节相同）；报告：合计 1.21MB、中位 1KB、
+  最大 5 个 SRB 177KB / BOL 100KB / MEX 83KB / ESP 79KB / SLV 75KB。
+
 ## 本轮（2026-09）：未开始的按钮纵向布局 —— 重置恒在最下面
 
 用户口径（四轮澄清后定稿，只改**未开始**态，**开始后的布局一字不动**）：

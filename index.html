@@ -101,10 +101,12 @@
           <button id="click-order-random" type="button" class="active" data-order="random" role="radio" aria-checked="true">随机</button>
           <button id="click-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
         </div>
-        <!-- 世界档取名口径：国名（默认）/ 首都。仅世界粒度、全国范围、未开始测试时显示。 -->
-        <div id="world-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界档题面：按国名或首都">
+        <!-- 世界档取名口径：国名（默认）/ 首都 / 国旗。仅世界粒度、全国范围、未开始测试时显示。
+             「国旗」只在**点击模式**出现（题面给国旗图、点地图上对应的国家），由 chromeSync 按模式隐藏该段。 -->
+        <div id="world-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界档题面：按国名、首都或国旗">
           <button id="world-name-country" type="button" class="active" data-world-name="country" role="radio" aria-checked="true">国名</button>
           <button id="world-name-capital" type="button" data-world-name="capital" role="radio" aria-checked="false">首都</button>
+          <button id="world-name-flag" type="button" data-world-name="flag" role="radio" aria-checked="false">国旗</button>
         </div>
         <!-- 世界档内容语言：只换题面与地图标签的文字，UI 交互文案始终中文 -->
         <div id="world-lang-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界档题面与标签语言：中文或英文">
@@ -129,8 +131,19 @@
         </div>
         <button id="btn-skip" class="mode-action">跳过</button>
         <button id="btn-end" class="mode-action danger-hover">暂停</button>
-        <!-- 换行占位：把洲范围按钮推到下一行，同时保持其自身为内容宽度（不占满屏）。
-             顺序：顺序/题面行 →（换行）大洲 →（换行）次区域 →（换行）粒度 →（换行）重置。 -->
+        <!-- 未开始时的固定纵向顺序（2026-09 用户口径，两轮修订后定稿）：
+             顺序/题面行 →（换行）世界/省级/市级 →（换行）全世界/各大洲 →（换行）次区域 →（换行）重置。
+             粒度行在**更细的范围行（大洲/次区域）之上**：先选粒度，再选该粒度下的范围。
+             重置始终独占按钮区的**最后一行**。两个换行占位只在「有开始概念的模式未开始」时可见：
+             开始答题后它们收起，`跳过·暂停·重置` 回到同一行（开始后的布局一字不变）；
+             熟练度分析没有"开始"，其粒度行（#analysis-granularity-toggle）留在原位、与重置同行，不受影响。
+             为什么用占位元素而不是 flex-basis:100%：后者会把分段按钮条拉伸到屏宽。 -->
+        <div id="granularity-break" class="flex-break hidden" aria-hidden="true"></div>
+        <div id="granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="测试粒度">
+          <button id="granularity-world" type="button" data-granularity="world" role="radio" aria-checked="false">世界</button>
+          <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
+          <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
+        </div>
         <div id="continent-break" class="flex-break" aria-hidden="true"></div>
         <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
           <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>
@@ -145,17 +158,6 @@
              与 #continent-break 同一机制：独占一行、宽度取内容。 -->
         <div id="subregion-break" class="flex-break hidden" aria-hidden="true"></div>
         <div id="subregion-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="大洲内次区域范围"></div>
-        <!-- 未开始时的固定纵向顺序（2026-09 用户口径）：… → 大洲 → 次区域 → 世界/省级/市级 → 重置，
-             重置始终独占左上角按钮区的**最后一行**。两个换行占位只在「有开始概念的模式未开始」时可见：
-             开始答题后它们收起，`跳过·暂停·重置` 回到同一行（开始后的布局一字不变）；
-             熟练度分析没有"开始"，其粒度行（#analysis-granularity-toggle）留在原位、与重置同行，也不受影响。
-             为什么用占位元素而不是 flex-basis:100%：后者会把分段按钮条拉伸到屏宽。 -->
-        <div id="granularity-break" class="flex-break hidden" aria-hidden="true"></div>
-        <div id="granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="测试粒度">
-          <button id="granularity-world" type="button" data-granularity="world" role="radio" aria-checked="false">世界</button>
-          <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
-          <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
-        </div>
         <div id="reset-break" class="flex-break hidden" aria-hidden="true"></div>
         <button id="btn-reset" class="mode-action">重置</button>
       </div>

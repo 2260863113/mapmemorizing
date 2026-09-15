@@ -38,7 +38,7 @@ export async function loadData(): Promise<AppData> {
   const [
     meta, ultraTopo, proTopo, fineTopo, plusTopo, losslessTopo,
     provUltraTopo, provProTopo, provFineTopo, provPlusTopo, provRawTopo,
-    hkmacGeo, worldMeta, worldGeo, subMeta, areaMeta, namesMeta,
+    hkmacGeo, worldMeta, worldGeo, subMeta, areaMeta, namesMeta, flagsMeta,
   ] = await Promise.all([
     fetchJson<{ units: Unit[]; provinces: AppData['provinces'] }>('data/units.json'),
     fetchJson<Topology>('data/china_units_ultra.json'),
@@ -57,6 +57,7 @@ export async function loadData(): Promise<AppData> {
     fetchJson<{ subregions: AppData['subregions']; byIso: AppData['isoSubregion'] }>('data/subregions.json'),
     fetchJson<{ area: AppData['countryArea'] }>('data/world_area.json'),
     fetchJson<{ names: AppData['countryNames'] }>('data/world_names.json'),
+    fetchJson<{ flags: AppData['countryFlags'] }>('data/flags/index.json'),
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? { ...u, decorative: true } : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
@@ -89,6 +90,7 @@ export async function loadData(): Promise<AppData> {
     hkmacGeoJson: hkmacGeo, // 港澳放大框无压缩面（广东+香港+澳门）
     countries: worldMeta.countries,
     countryNames: namesMeta.names, // 英文名 / 首都名（与几何无关的独立表，见 CountryNames 的说明）
+    countryFlags: flagsMeta.flags, // iso → 国旗文件名（点击模式「国旗」档的题面用）
     // 世界地图：Natural Earth 50m（dp 50% + TopoJSON 量化），中位线段 0.179°（旧档 0.733°，4.1 倍精细）。
     // 旧档 data/world.geojson 与旧管线 scripts/fetch-world-data.mjs 保留在库中但不再加载（回滚路径）。
     // 展开后契约与旧档逐字一致：properties 为 { iso_a3, name, full_name, decorative }。

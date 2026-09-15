@@ -333,8 +333,9 @@ try {
   const switchOn = await ui();
   check('重新打开该开关后标签复现', switchOn.labels?.showAllLabels === true, switchOn.labels);
 
-  // ---------------- 未开始的按钮纵向布局（2026-09 用户口径）----------------
-  // 顺序：… → 大洲 → 次区域 → 世界/省级/市级 → 重置；重置独占最后一行、与大洲/粒度行左对齐。
+  // ---------------- 未开始的按钮纵向布局（2026-09 用户口径，两轮修订后定稿）----------------
+  // 顺序：… → 世界/省级/市级 → 全世界/各大洲 → 次区域 → 重置；粒度行在更细的范围行**之上**，
+  // 重置独占最后一行、与粒度/大洲行左对齐。
   const layout = async () => JSON.parse(await ev(`JSON.stringify((function(){
     function r(id){ var el = document.getElementById(id); if (!el) return null;
       var cs = getComputedStyle(el); var b = el.getBoundingClientRect();
@@ -353,12 +354,12 @@ try {
   await ev(`(() => { document.getElementById('continent-AS').click(); return true })()`);
   await sleep(1000);
   const L1 = await layout();
-  check('未开始·世界档：纵向顺序为 大洲 → 次区域 → 世界/省级/市级 → 重置（各行严格递降）',
+  check('未开始·世界档：纵向顺序为 世界/省级/市级 → 大洲 → 次区域 → 重置（各行严格递降）',
     !L1.continent.hidden && !L1.subregion.hidden && !L1.granularity.hidden && !L1.reset.hidden
-      && L1.continent.bottom <= L1.subregion.y && L1.subregion.bottom <= L1.granularity.y
-      && L1.granularity.bottom <= L1.reset.y,
+      && L1.granularity.bottom <= L1.continent.y && L1.continent.bottom <= L1.subregion.y
+      && L1.subregion.bottom <= L1.reset.y,
     L1);
-  check('未开始：重置独占最后一行，且与大洲/粒度行左对齐',
+  check('未开始：重置独占最后一行，且与粒度/大洲行左对齐',
     Math.abs(L1.reset.x - L1.granularity.x) < 2 && Math.abs(L1.granularity.x - L1.continent.x) < 2,
     { resetX: L1.reset.x, granularityX: L1.granularity.x, continentX: L1.continent.x });
 

@@ -39,18 +39,22 @@ export interface ModeCtx {
 export type ProgressSegment = 'pending' | 'green' | 'red';
 
 /**
- * 题面 / 地图标签的**取名口径**（2026-09 新增：世界档「国名 / 首都」+「中文 / 英文」，省级全国「省名 / 简称」）。
+ * 题面 / 地图标签的**取名口径**（2026-09 新增：世界档「国名 / 首都 / 国旗」+「中文 / 英文」，省级全国「省名 / 简称」）。
  *
- * - `world`：`country` 按国名出题（默认）/ `capital` 按首都名出题；
+ * - `world`：`country` 按国名出题（默认）/ `capital` 按首都名出题 / `flag` **题面给国旗图片**、点地图上对应的国家
+ *   （「国旗」这一栏**只在点击模式**出现，见 chromeSync 里对 `#world-name-flag` 的显隐）；
  * - `lang`：`zh` 中文（默认）/ `en` 英文 —— 只换**内容语言**（题面与地图标签），
  *   UI 交互文案（按钮、提示、说明）始终中文，故它不是应用级 i18n 开关；
  * - `province`：`full` 按省名（默认）/ `abbr` 按单字简称（沪）。
  *
  * 三档互相独立，且只影响**世界全国**与**省级全国**两档范围：地级（市级全国/单省）与无尽闯关
  * 沿用单位名，不受影响（用户口径：只有这两档需要）。
+ *
+ * ⚠ `flag` 档下的**地图标签仍显示国名**（标签里放不下旗帜，用户口径是「国旗档只换题面」）：
+ * `worldDisplayName()` 因此把 flag 当作国名处理，语言开关照常生效。
  */
 export interface QuestionNaming {
-  world: 'country' | 'capital';
+  world: 'country' | 'capital' | 'flag';
   lang: 'zh' | 'en';
   province: 'full' | 'abbr';
 }

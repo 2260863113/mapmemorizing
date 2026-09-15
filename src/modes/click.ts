@@ -7,6 +7,7 @@ import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel 
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 import { showStartCard } from '../ui/dom';
+import { escapeAttr } from '../ui/html';
 
 /**
  * 点击模式：根据顶部题目提示，在地图上点击对应的地图单位。
@@ -148,6 +149,17 @@ export class ClickMode extends MapQuizMode {
   protected onCorrect(_q: string) { this.ctx.toast(t('click.correctToast')); }
 
   private showQuestionHint(unit: Unit) {
+    // 「国旗」档（仅点击模式提供这一栏）：题面给一张国旗图，用户点地图上对应的国家。
+    // alt 必须为空 —— 写国名就等于把答案写在题面上；没有国旗资源时回落到国名题面。
+    if (this.isWorldNation() && this.naming.world === 'flag') {
+      const src = this.worldFlagSrc(unit.adcode);
+      if (src) {
+        this.ctx.setHint(
+          '<div class="start-panel click-question flag-question"><img src="' + escapeAttr(src) + '" alt="" draggable="false" /></div>',
+        );
+        return;
+      }
+    }
     // 省级全国测验：顶部显示省全名 或 单字简称；世界全国测验：显示 国名/首都名 的 中/英文
     // （点击模式不在地图上高亮目标）。文本一律由基类的 displayNameOf 统一给出，避免与标签口径分叉。
     this.ctx.setHint('<div class="start-panel click-question"><div class="start-title">' + this.displayNameOf(unit) + '</div></div>');

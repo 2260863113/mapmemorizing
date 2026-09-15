@@ -30,6 +30,12 @@ describe('namingStore', () => {
     expect(loadStoredNaming('click')).toEqual({ world: 'capital', lang: 'en', province: 'abbr' });
   });
 
+  it('国旗档也记得住（点击模式专有的一档）', () => {
+    stubStorage();
+    saveStoredNaming('click', { world: 'flag', lang: 'en', province: 'full' });
+    expect(loadStoredNaming('click')).toEqual({ world: 'flag', lang: 'en', province: 'full' });
+  });
+
   it('模式之间互不干扰（输入模式的口径不会串到点击模式）', () => {
     const store = stubStorage();
     saveStoredNaming('self', { world: 'capital', lang: 'zh', province: 'full' });

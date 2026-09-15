@@ -899,7 +899,12 @@ export abstract class MapQuizMode extends BaseMode {
     return unit.name; // 地级（市级全国 / 单省）不受取名口径影响
   }
 
-  /** 世界档显示名：国名 或 首都名，再按语言取中/英文。 */
+  /**
+   * 世界档显示名：国名 或 首都名，再按语言取中/英文。
+   *
+   * `flag` 档也走这里 → 返回**国名**：国旗档只换题面（标签里放不下旗帜，用户口径），
+   * 语言开关照常作用于标签与答错提示里的名字。
+   */
   protected worldDisplayName(iso: string): string {
     const names = this.ctx.data.countryNames[iso];
     if (this.naming.world === 'capital') {
@@ -908,6 +913,15 @@ export abstract class MapQuizMode extends BaseMode {
     }
     if (this.naming.lang === 'en') return names?.en || this.countryName(iso);
     return this.countryName(iso);
+  }
+
+  /**
+   * 某国国旗的资源路径（点击模式「国旗」档的题面用）；没有资源时返回 null，
+   * 调用方回落到国名题面 —— 宁可退化成文字题，也不要给一张破图/空白卡片。
+   */
+  protected worldFlagSrc(iso: string): string | null {
+    const file = this.ctx.data.countryFlags[iso];
+    return file ? `data/flags/${file}` : null;
   }
 
   /**

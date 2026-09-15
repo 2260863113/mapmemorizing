@@ -24,7 +24,7 @@ export function loadStoredNaming(modePrefix: string): QuestionNaming {
     const parsed = JSON.parse(raw) as Partial<QuestionNaming>;
     if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_NAMING };
     return {
-      world: parsed.world === 'capital' ? 'capital' : DEFAULT_NAMING.world,
+      world: parsed.world === 'capital' ? 'capital' : parsed.world === 'flag' ? 'flag' : DEFAULT_NAMING.world,
       lang: parsed.lang === 'en' ? 'en' : DEFAULT_NAMING.lang,
       province: parsed.province === 'abbr' ? 'abbr' : DEFAULT_NAMING.province,
     };

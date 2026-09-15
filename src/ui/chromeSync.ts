@@ -120,6 +120,9 @@ export class ChromeSync {
     $('world-name-toggle').classList.toggle('hidden', !worldVisible);
     $('world-lang-toggle').classList.toggle('hidden', !worldVisible);
     $('province-name-toggle').classList.toggle('hidden', !provinceVisible);
+    // 「国旗」段只在点击模式出现（2026-09 用户口径）：输入模式没有"看图点地图"这条路，
+    // 给了它一段按了也没用的按钮，只会让人以为坏了。整组按钮共用同一段 HTML，故只隐藏这一段按钮。
+    $('world-name-flag').classList.toggle('hidden', this.s.current()?.id !== 'click');
     const naming = this.s.current()?.getQuestionNaming?.() ?? null;
     if (!naming) return;
     if (worldVisible) {

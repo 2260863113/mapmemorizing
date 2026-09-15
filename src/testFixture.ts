@@ -32,6 +32,7 @@ export function makeAppData(over: Partial<AppData> = {}): AppData {
     hkmacGeoJson: null,
     countries: [],
     countryNames: {},
+    countryFlags: {},
     worldGeoJson: null,
     subregions: [],
     isoSubregion: {},

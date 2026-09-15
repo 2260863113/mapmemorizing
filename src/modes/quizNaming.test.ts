@@ -59,6 +59,7 @@ function makeCtx(over: Partial<AppData> = {}) {
       JPN: { en: 'Japan', capital: '东京', capitalEn: 'Tokyo' },
       CHN: { en: 'China', capital: '北京', capitalEn: 'Beijing' },
     },
+    countryFlags: { JPN: 'jp.svg', CHN: 'cn.svg' },
     provinces: PROVINCES,
     units: UNITS,
     allUnits: UNITS,
@@ -163,6 +164,53 @@ describe('点击模式 · 世界档「国名 / 首都」+「中文 / 英文」',
     askAnswered(mode, unit('JPN', '日本', 'JPN'));
     expect(hints.at(-1)).toContain('日本');
     expect(states.at(-1)?.worldLabel?.('JPN')?.text).toBe('日本');
+  });
+
+  it('国旗档：题面给国旗图片，且不含国名文本（alt 为空，不能把答案写在题面上）', () => {
+    const { ctx, hints, states } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    askAnswered(mode, unit('JPN', '日本', 'JPN'));
+    const card = hints.at(-1)!;
+    expect(card).toContain('data/flags/jp.svg');
+    expect(card).toContain('<img');
+    expect(card).toContain('alt=""');
+    expect(card).not.toContain('日本');
+    expect(card).not.toContain('东京');
+    // 地图标签仍显示国名（国旗档只换题面）
+    expect(states.at(-1)?.worldLabel?.('JPN')?.text).toBe('日本');
+  });
+
+  it('国旗档 + 英文：标签用英文国名，题面仍是国旗', () => {
+    const { ctx, hints, states } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag', lang: 'en' });
+    askAnswered(mode, unit('JPN', '日本', 'JPN'));
+    expect(hints.at(-1)).toContain('data/flags/jp.svg');
+    expect(states.at(-1)?.worldLabel?.('JPN')?.text).toBe('Japan');
+  });
+
+  it('缺国旗资源时回落到国名题面（不给空白卡片/破图）', () => {
+    const { ctx, hints } = makeCtx({ countryFlags: {} });
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    askAnswered(mode, unit('JPN', '日本', 'JPN'));
+    expect(hints.at(-1)).toContain('日本');
+    expect(hints.at(-1)).not.toContain('<img');
+  });
+
+  it('国旗档答错：提示里的正确答案是国名（不是「国旗」这类占位文字）', () => {
+    const { ctx, toasts } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    const d = mode.diagnostics();
+    d.question = 'JPN';
+    d.answer(false, true);
+    expect(toasts.at(-1)).toContain('日本');
   });
 
   it('地级档不受取名口径影响（沿用单位名）', () => {

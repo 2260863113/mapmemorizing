@@ -112,6 +112,11 @@ export interface AppData {
   countries: CountryMeta[]; // 世界答题国（194 国，见 docs/adr/0005）
   /** iso_a3 → 英文名 / 首都名（world_names.json；「国名 / 首都」与「中文 / 英文」分段按钮用）。 */
   countryNames: Record<string, CountryNames>;
+  /**
+   * iso_a3 → 国旗文件名（public/data/flags/index.json；点击模式「国旗」档的题面用）。
+   * 值是 `public/data/flags/` 下的文件名（如 `jp.svg`），前端拼成 `data/flags/<文件名>` 加载。
+   */
+  countryFlags: Record<string, string>;
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
   subregions: SubregionMeta[]; // 世界 23 个次区域（方位式粗分，见 docs/adr/0004）
   isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（194 条全覆盖）

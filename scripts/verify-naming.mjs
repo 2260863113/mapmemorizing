@@ -33,6 +33,8 @@ const PROVINCE_NAME = new Map(
   JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'units.json'), 'utf8')).provinces.map((p) => [p.adcode, p.name]),
 );
 const COUNTRY_NAME = new Map(COUNTRIES.map((c) => [c.iso, c.name]));
+/** iso → 国旗文件名（点击模式「国旗」档的题面用）。 */
+const FLAGS = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'flags', 'index.json'), 'utf8')).flags;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -234,6 +236,55 @@ try {
   await sleep(500);
   const nm5b = await naming();
   check('标签仍是去后缀省名（不是单字简称）', Array.isArray(nm5b.provinceLabels) && nm5b.provinceLabels.some((t) => t === short5), `标签=${JSON.stringify(nm5b.provinceLabels)} 期望含「${short5}」`);
+
+  // ---------------------------------------------------------------------------
+  console.log('\n=== 6. 点击模式 · 国旗档：题面给国旗、点地图上对应的国家 ===');
+  await load();
+  await clickSel('#mode-tabs button[data-mode="click"]');
+  await clickSel('#granularity-world');
+  await clickSel('#world-name-flag');
+  // 语言开关是按模式持久化的，前面几节可能把它留成了「英文」；这里显式切回中文，
+  // 让「标签=中文国名」这条断言不依赖前序状态。
+  await clickSel('#world-lang-zh');
+  await sleep(500);
+  const flagSeg = JSON.parse(await evaluate(`JSON.stringify({
+    visible: !document.getElementById('world-name-flag').classList.contains('hidden'),
+    active: document.getElementById('world-name-flag').classList.contains('active'),
+    label: document.getElementById('world-name-flag').textContent
+  })`));
+  check('点击模式·世界档出现「国旗」段并选中',
+    flagSeg.visible === true && flagSeg.active === true && flagSeg.label === '国旗', JSON.stringify(flagSeg));
+
+  await clickSel('#click-start');
+  await sleep(800);
+  const nm6 = await naming();
+  const iso6 = nm6.question;
+  const expectFile = FLAGS[iso6];
+  const img = JSON.parse(await evaluate(`JSON.stringify((function(){
+    var im = document.querySelector('#top-hint img');
+    if (!im) return null;
+    return { src: im.getAttribute('src'), alt: im.getAttribute('alt'), draggable: im.getAttribute('draggable'),
+             loaded: im.complete && im.naturalWidth > 0, w: im.naturalWidth, h: im.naturalHeight };
+  })())`));
+  check('题面是一张国旗图片，src 与数据一致', !!img && img.src === 'data/flags/' + expectFile, JSON.stringify({ img, expectFile }));
+  check('国旗图真的加载出来了（资源存在且被正确服务）', !!img && img.loaded === true && img.w > 0 && img.h > 0, JSON.stringify(img));
+  check('国旗题面不泄露答案：alt 为空、题面没有任何文字',
+    !!img && img.alt === '' && nm6.hint === '', JSON.stringify({ alt: img && img.alt, hint: nm6.hint }));
+  await answerCurrent();
+  await sleep(600);
+  const nm6b = await naming();
+  check('国旗档下地图标签显示国名（不是空白、也不是国旗）',
+    Array.isArray(nm6b.worldLabels) && nm6b.worldLabels.includes(COUNTRY_NAME.get(iso6)),
+    `标签=${JSON.stringify(nm6b.worldLabels)} 期望含「${COUNTRY_NAME.get(iso6)}」`);
+
+  await load();
+  await clickSel('#mode-tabs button[data-mode="self"]');
+  await clickSel('#granularity-world');
+  await sleep(600);
+  const selfFlagHidden = await evaluate(`document.getElementById('world-name-flag').classList.contains('hidden')`);
+  const selfNameVisible = await evaluate(`!document.getElementById('world-name-toggle').classList.contains('hidden')`);
+  check('输入模式不显示「国旗」段（该国名/首都两段仍在）', selfFlagHidden === true && selfNameVisible === true,
+    JSON.stringify({ flagHidden: selfFlagHidden, groupVisible: selfNameVisible }));
 
   const failed = results.filter((r) => !r.pass);
   console.log(`\n===== ${results.length - failed.length}/${results.length} 通过 =====`);
