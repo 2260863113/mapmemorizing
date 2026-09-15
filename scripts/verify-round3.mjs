@@ -333,6 +333,70 @@ try {
   const switchOn = await ui();
   check('重新打开该开关后标签复现', switchOn.labels?.showAllLabels === true, switchOn.labels);
 
+  // ---------------- 未开始的按钮纵向布局（2026-09 用户口径）----------------
+  // 顺序：… → 大洲 → 次区域 → 世界/省级/市级 → 重置；重置独占最后一行、与大洲/粒度行左对齐。
+  const layout = async () => JSON.parse(await ev(`JSON.stringify((function(){
+    function r(id){ var el = document.getElementById(id); if (!el) return null;
+      var cs = getComputedStyle(el); var b = el.getBoundingClientRect();
+      return { hidden: el.classList.contains('hidden') || cs.display === 'none' || b.width < 2,
+               x: Math.round(b.left), y: Math.round(b.top), bottom: Math.round(b.bottom) }; }
+    return { continent: r('continent-toggle'), subregion: r('subregion-toggle'),
+             granularity: r('granularity-toggle'), reset: r('btn-reset'),
+             skip: r('btn-skip'), end: r('btn-end'),
+             granularityBreak: r('granularity-break'), resetBreak: r('reset-break') };
+  })())`));
+
+  await ev(`(() => { document.querySelector('#mode-tabs button[data-mode="click"]').click(); return true })()`);
+  await sleep(700);
+  await ev(`(() => { document.getElementById('granularity-world').click(); return true })()`);
+  await sleep(700);
+  await ev(`(() => { document.getElementById('continent-AS').click(); return true })()`);
+  await sleep(1000);
+  const L1 = await layout();
+  check('未开始·世界档：纵向顺序为 大洲 → 次区域 → 世界/省级/市级 → 重置（各行严格递降）',
+    !L1.continent.hidden && !L1.subregion.hidden && !L1.granularity.hidden && !L1.reset.hidden
+      && L1.continent.bottom <= L1.subregion.y && L1.subregion.bottom <= L1.granularity.y
+      && L1.granularity.bottom <= L1.reset.y,
+    L1);
+  check('未开始：重置独占最后一行，且与大洲/粒度行左对齐',
+    Math.abs(L1.reset.x - L1.granularity.x) < 2 && Math.abs(L1.granularity.x - L1.continent.x) < 2,
+    { resetX: L1.reset.x, granularityX: L1.granularity.x, continentX: L1.continent.x });
+
+  await ev(`(() => { document.getElementById('granularity-city').click(); return true })()`);
+  await sleep(1000);
+  const L2 = await layout();
+  check('未开始·市级档（无下钻行）：粒度行仍在重置上面、两行都左对齐',
+    !L2.granularity.hidden && !L2.reset.hidden && L2.granularity.bottom <= L2.reset.y
+      && Math.abs(L2.granularity.x - L2.reset.x) < 2,
+    L2);
+  check('未开始·市级档：下钻行与其换行占位都收起（不留空行）',
+    L2.continent.hidden === true && L2.subregion.hidden === true, { continent: L2.continent, subregion: L2.subregion });
+
+  // 开始答题后：布局一字不变（跳过·暂停·重置 同一行），两个新占位收起
+  await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
+  await sleep(900);
+  await ev(`(() => { document.getElementById('click-start').click(); return true })()`);
+  await sleep(900);
+  const L3 = await layout();
+  check('开始后：跳过·暂停·重置 回到同一行、顺序不变（开始后的布局一字未改）',
+    L3.skip.hidden === false && L3.end.hidden === false && L3.reset.hidden === false
+      && L3.skip.y === L3.end.y && L3.end.y === L3.reset.y
+      && L3.skip.x < L3.end.x && L3.end.x < L3.reset.x,
+    L3);
+  check('开始后：两个换行占位收起', L3.granularityBreak.hidden === true && L3.resetBreak.hidden === true,
+    { granularityBreak: L3.granularityBreak, resetBreak: L3.resetBreak });
+
+  // 复位：重置回开始状态（二次确认）并收掉可能弹出的结算卡片，免得影响后续检查
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(250);
+  await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
+  await sleep(700);
+  await ev(`(() => { var c = document.getElementById('settlement-close'); if (c) c.click(); return true })()`);
+  await sleep(600);
+  const L4 = await layout();
+  check('重置回开始状态后：布局回到「粒度行 → 重置」两行',
+    L4.granularity.bottom <= L4.reset.y && Math.abs(L4.granularity.x - L4.reset.x) < 2, L4);
+
   // ---------------- 需求 4（2026-09）：游客点右上角直接进登录界面 ----------------
   await ev(`(() => { document.getElementById('user-center').click(); return true })()`);
   await sleep(500);

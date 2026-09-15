@@ -231,6 +231,15 @@ export class ChromeSync {
     if (granularityVisible && granularity) {
       this.syncSegmentedToggle('granularity-toggle', granularity);
     }
+    // 未开始时的按钮纵向顺序（2026-09 用户口径）：… → 大洲 → 次区域 → 世界/省级/市级 → 重置，
+    // 重置独占左上角按钮区的最后一行。两个换行占位只在「有开始概念的模式未开始」时可见：
+    //   · 开始答题后收起 → `跳过·暂停·重置` 回到同一行（开始后的布局一字不变）；
+    //   · 熟练度分析（free）没有"开始"，不在这条规则内（它的粒度行是另一个元素、与重置同行）；
+    //   · 留言板/管理端没有这些行，占位也跟着隐藏（免得留出一条空档）；
+    //   · 粒度行的占位只在粒度行本身可见时才要 —— 无尽未开始没有粒度行，两个占位同时可见会多出一个空行。
+    const notStartedTestLayout = (isTestMode || isPuzzle) && !testStarted;
+    $('granularity-break').classList.toggle('hidden', !granularityVisible);
+    $('reset-break').classList.toggle('hidden', !notStartedTestLayout);
     // 取名口径行（2026-09 新增）：世界档「国名/首都」+「中文/英文」，省级全国档「省名/简称」。
     this.syncNamingRows(isGranularityMode, testStarted, granularity, scope);
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）

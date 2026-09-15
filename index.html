@@ -92,11 +92,6 @@
 
     <main>
       <div id="mode-actions">
-        <div id="granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="测试粒度">
-          <button id="granularity-world" type="button" data-granularity="world" role="radio" aria-checked="false">世界</button>
-          <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
-          <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
-        </div>
         <div id="self-order-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="输入模式出题顺序">
           <button id="self-order-sequential" type="button" class="active" data-order="sequential" role="radio" aria-checked="true">顺序</button>
           <button id="self-order-random" type="button" data-order="random" role="radio" aria-checked="false">随机</button>
@@ -134,9 +129,8 @@
         </div>
         <button id="btn-skip" class="mode-action">跳过</button>
         <button id="btn-end" class="mode-action danger-hover">暂停</button>
-        <button id="btn-reset" class="mode-action">重置</button>
         <!-- 换行占位：把洲范围按钮推到下一行，同时保持其自身为内容宽度（不占满屏）。
-             放在末尾是为了让「世界/省级/市级」与「顺序/重置」留在同一行。 -->
+             顺序：顺序/题面行 →（换行）大洲 →（换行）次区域 →（换行）粒度 →（换行）重置。 -->
         <div id="continent-break" class="flex-break" aria-hidden="true"></div>
         <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
           <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>
@@ -151,6 +145,19 @@
              与 #continent-break 同一机制：独占一行、宽度取内容。 -->
         <div id="subregion-break" class="flex-break hidden" aria-hidden="true"></div>
         <div id="subregion-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="大洲内次区域范围"></div>
+        <!-- 未开始时的固定纵向顺序（2026-09 用户口径）：… → 大洲 → 次区域 → 世界/省级/市级 → 重置，
+             重置始终独占左上角按钮区的**最后一行**。两个换行占位只在「有开始概念的模式未开始」时可见：
+             开始答题后它们收起，`跳过·暂停·重置` 回到同一行（开始后的布局一字不变）；
+             熟练度分析没有"开始"，其粒度行（#analysis-granularity-toggle）留在原位、与重置同行，也不受影响。
+             为什么用占位元素而不是 flex-basis:100%：后者会把分段按钮条拉伸到屏宽。 -->
+        <div id="granularity-break" class="flex-break hidden" aria-hidden="true"></div>
+        <div id="granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="测试粒度">
+          <button id="granularity-world" type="button" data-granularity="world" role="radio" aria-checked="false">世界</button>
+          <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
+          <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
+        </div>
+        <div id="reset-break" class="flex-break hidden" aria-hidden="true"></div>
+        <button id="btn-reset" class="mode-action">重置</button>
       </div>
       <div id="search-row">
         <input id="search-input" type="text" placeholder="输入地名" autocomplete="off" spellcheck="false" />

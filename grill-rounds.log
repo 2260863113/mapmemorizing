@@ -729,3 +729,9 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - scripts/verify-round3.mjs：白天模式两条开关断言改为深灰；新增「结算提交按钮 = 令牌灰且对比度 ≥3.5:1」一条（令牌从元素自身读，因明主题定义在 :root、暗主题在 body.theme-dark）。README 同步开关与结算按钮的描述。
 - 验收：npm run check exit 0（40 文件/427 用例）；verify-round3 47/47。
 - ⚠ 若希望**暗主题**的开关也从全白改成这款灰，说一声即可（本轮按"黑色改成灰色"的字面口径只改了明主题）。
+================================================================
+2026-09-14 23:00  未开始的按钮纵向布局：重置恒在按钮区最下面
+- 口径（四问定稿）：未开始时按钮顺序为 状态/题面行 → 大洲 → 次区域 → 世界/省级/市级 → 重置（重置独占最后一行、与大洲/粒度行左对齐）；开始后布局一字不变（跳过·暂停·重置 同行）；熟练度分析不参与。
+- 改动：index.html 把 #granularity-toggle 从 #mode-actions 头部移到末尾、#btn-reset 排其后，新增只在未开始可见的换行占位 #granularity-break / #reset-break；chromeSync.syncSegments() 按 granularityVisible 与 (isTestMode||isPuzzle)&&!testStarted 控制显隐。README/CONTEXT（新增术语「未开始（浏览态）」）/AI_HANDOFF 同步。
+- 验收：npm run check exit 0（40 文件/427 用例）；verify-round3 54/54（新增 7 条几何断言，量 getBoundingClientRect，实测 y=133/190/243/300 且 x 全为 16）、verify-round2 38/38、verify-puzzle 75/75、verify-naming 22/22 = 189/189。
+- ⚠ 顺手修掉 verify-naming 的一处假失败：「题面不是国名」原用 includes()，而巴西利亚/墨西哥城/巴拿马城等首都名包含国名，随机首题抽到巴西即假失败，已改全等。

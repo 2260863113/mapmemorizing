@@ -163,8 +163,11 @@ try {
   const expectCountry = COUNTRY_NAME.get(iso);
   check('题目已开始（基线：有当前题）', typeof iso === 'string' && iso.length === 3, `iso=${iso}`);
   check('口径已落到模式状态（world=capital）', nm.naming?.world === 'capital', JSON.stringify(nm.naming));
-  check('题面显示首都名（与数据一致）', expectCapital ? nm.hint.includes(expectCapital) : false, `题面「${nm.hint}」应为「${expectCapital}」`);
-  check('题面**不是**国名（证明口径真的生效，而不是碰巧长一样）', expectCountry && expectCapital !== expectCountry ? !nm.hint.includes(expectCountry) : true, `国名=${expectCountry}`);
+  // ⚠ 题面文本用**全等**判断，不用 includes()：不少国家的首都名包含国名（巴西利亚/巴西、
+  //   墨西哥城/墨西哥、危地马拉城/危地马拉、巴拿马城/巴拿马…），子串判断会随机假失败
+  //   （2026-09 实测：随机首题抽到巴西时报「题面不是国名」失败）。
+  check('题面显示首都名（与数据一致）', expectCapital ? nm.hint === expectCapital : false, `题面「${nm.hint}」应为「${expectCapital}」`);
+  check('题面**不是**国名（证明口径真的生效，而不是碰巧长一样）', expectCountry && expectCapital !== expectCountry ? nm.hint !== expectCountry : true, `题面「${nm.hint}」国名=${expectCountry}`);
   check('范围仍是世界全国（口径不改变范围）', q.scopeProvince === '__world_nation__', String(q.scopeProvince));
 
   await answerCurrent();
@@ -187,8 +190,8 @@ try {
   const iso3 = nm3.question;
   const expectEn = NAMES[iso3]?.en;
   const zhName = COUNTRY_NAME.get(iso3);
-  check('题面显示英文国名（与数据一致）', expectEn ? nm3.hint.includes(expectEn) : false, `题面「${nm3.hint}」应为「${expectEn}」`);
-  check('题面**不是**中文国名', zhName && zhName !== expectEn ? !nm3.hint.includes(zhName) : true, `中文名=${zhName}`);
+  check('题面显示英文国名（与数据一致）', expectEn ? nm3.hint === expectEn : false, `题面「${nm3.hint}」应为「${expectEn}」`);
+  check('题面**不是**中文国名', zhName && zhName !== expectEn ? nm3.hint !== zhName : true, `中文名=${zhName}`);
   await answerCurrent();
   await sleep(500);
   const nm3b = await naming();
@@ -207,8 +210,8 @@ try {
   const adcode = nm4.question;
   const expectAbbr = ABBR[adcode];
   const fullName = PROVINCE_NAME.get(adcode);
-  check('题面显示单字简称（与简称表一致）', expectAbbr ? nm4.hint.includes(expectAbbr) : false, `题面「${nm4.hint}」应为「${expectAbbr}」`);
-  check('题面**不是**省全名', fullName ? !nm4.hint.includes(fullName) : false, `省名=${fullName}`);
+  check('题面显示单字简称（与简称表一致）', expectAbbr ? nm4.hint === expectAbbr : false, `题面「${nm4.hint}」应为「${expectAbbr}」`);
+  check('题面**不是**省全名', fullName ? nm4.hint !== fullName : false, `题面「${nm4.hint}」省名=${fullName}`);
   await answerCurrent();
   await sleep(500);
   const nm4b = await naming();
@@ -226,7 +229,7 @@ try {
   const nm5 = await naming();
   const full5 = PROVINCE_NAME.get(nm5.question);
   const short5 = full5 ? full5.replace(/(维吾尔自治区|壮族自治区|回族自治区|特别行政区|自治区|省|市)$/g, '') : '';
-  check('题面仍是省全名', full5 ? nm5.hint.includes(full5) : false, `题面「${nm5.hint}」`);
+  check('题面仍是省全名', full5 ? nm5.hint === full5 : false, `题面「${nm5.hint}」`);
   await answerCurrent();
   await sleep(500);
   const nm5b = await naming();
