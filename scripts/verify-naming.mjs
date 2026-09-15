@@ -237,7 +237,7 @@ try {
   await sleep(600);
   const nm5 = await naming();
   const full5 = PROVINCE_NAME.get(nm5.question);
-  const short5 = full5 ? full5.replace(/(维吾尔自治区|壮族自治区|回族自治区|特别行政区|自治区|省|市)$/g, '') : '';
+  const short5 = full5 ? shortOf(full5) : '';
   check('题面仍是省全名', full5 ? nm5.hint === full5 : false, `题面「${nm5.hint}」`);
   await answerCurrent();
   await sleep(500);
