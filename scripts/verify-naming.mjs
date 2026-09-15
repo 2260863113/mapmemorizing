@@ -38,8 +38,23 @@ const COUNTRY_NAME = new Map(COUNTRIES.map((c) => [c.iso, c.name]));
 const FLAGS = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'flags', 'index.json'), 'utf8')).flags;
 /** iso → 国旗**缩略图**文件名（未开始的浏览标签画的就是这张小图）。 */
 const THUMBS = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'flags', 'thumbs.json'), 'utf8')).thumbs;
-/** 某省 → 去后缀省名（省名档的地图标签口径；与实现同一套后缀规则的最简版本）。 */
-const shortOf = (full) => full.replace(/(维吾尔自治区|壮族自治区|回族自治区|特别行政区|自治区|省|市)$/g, '');
+/** 某省 → 去后缀省名（省名档的地图标签口径）。**规则来自 `src/normalize-rules.json`**（与实现同一份数据）：
+ * 脚本不再自己抄一份后缀表 —— 抄的那份在规则变化后会"按旧规则通过"，是最难发现的一类假验收。 */
+const PROVINCE_SUFFIXES = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'normalize-rules.json'), 'utf8')).provinceSuffixes;
+const shortOf = (full) => {
+  let s = String(full).trim();
+  let prev = '';
+  while (s !== prev) {
+    prev = s;
+    for (const suf of PROVINCE_SUFFIXES) {
+      if (s.endsWith(suf)) {
+        s = s.slice(0, -suf.length);
+        break;
+      }
+    }
+  }
+  return s;
+};
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];

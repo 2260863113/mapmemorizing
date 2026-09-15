@@ -1,4 +1,5 @@
 import { LeaderboardStore, type LeaderboardEntry, type LeaderboardMode } from '../leaderboardStore';
+import { modeTitle } from '../modes/capabilities';
 import { formatElapsedCentiseconds } from './format';
 import { normalize, normalizeProvince } from '../matcher';
 import { avatarHtml } from './avatar';
@@ -91,9 +92,10 @@ function formatCoins(n: number) {
   return Math.round(n).toLocaleString('zh-CN');
 }
 
+/**
+ * 排行榜里的模式名 = 模式名本身（`mode.*.title`）—— 从前这里另有一份
+ * `leaderboard.mode.*`，四段文字与模式名逐字相同却各存一处（本轮删掉，见 AI_HANDOFF）。
+ */
 function modeLabel(mode: LeaderboardMode) {
-  if (mode === 'self') return t('leaderboard.mode.self');
-  if (mode === 'click') return t('leaderboard.mode.click');
-  if (mode === 'puzzle') return t('leaderboard.mode.puzzle');
-  return t('leaderboard.mode.endless');
+  return modeTitle(mode);
 }

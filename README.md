@@ -95,8 +95,7 @@ npm run build
 node scripts/verify-round2.mjs     # 38 项：世界跟随缩放、答错跟随、顺序出题、侧栏收起等
 node scripts/verify-round3.mjs     # 54 项：主题按钮、设置面板/开关样式、未开始的浏览标签（清空/复现）与按钮纵向布局、游客登录入口、发帖草稿、标签默认显示
 node scripts/verify-puzzle.mjs     # 75 项：拼图两阶段 × 三粒度的选范围/下钻/空白返回/开始清空/1x 与地图一致/组面积层级/拖拽/磁吸方向/分档容差/难度提示/暂停/获胜/重置/拼图排行榜与提交门槛（真实鼠标与点击事件）
-node scripts/verify-naming.mjs     # 47 项：世界档「国名/首都/国旗」+「中文/英文」、省级全国「省名/省会/简称」的题面与画布标签、未开始的浏览标签按口径显示、国旗只预取「当前 + 接下来两道」
-node scripts/shot-follow-clamp.mjs # 跟随钳制的 9 张边界样例截图
+node scripts/verify-naming.mjs     # 47 项：世界档「国名/首都/国旗」+「中文/英文」、省级全国「省名/省会/简称」的题面与画布标签、未开始的浏览标签按口径显示、国旗只预取「当前 + 接下来两道」node scripts/shot-follow-clamp.mjs # 跟随钳制的 9 张边界样例截图
 node scripts/shot-round2.mjs       # 出验收截图到 docs/shots/
 ```
 
@@ -119,13 +118,27 @@ src/
   matcher.ts             # 地名规范化 + 模糊匹配 + 消歧
   subregions.ts          # 次区域查询（属于哪个次区域 / 某洲有哪些次区域 / 是否提供下钻）
   scopeQuery.ts          # URL 范围参数解析（SEO 落地页深链）
-  map/renderer.ts        # ECharts 渲染：着色/标签/下钻/高亮动画
+  map/renderer.ts        # ECharts 渲染的**状态与编排**（option 构造在 series.ts、取景换算在 camera.ts）
+  map/camera.ts          # 取景纯换算：视图表 / 视口↔bbox / 跟随倍率 / 缓动（无 this 依赖，可单测）
+  map/series.ts          # ECharts option 三块大件的构造（geo / tooltip / 各类 series）
   store.ts               # 答题统计、旧记忆兼容与设置（localStorage）
   modes/                 # 输入 / 挑战 / 点击 / 自由 / 熟练度分析
+  modes/capabilities.ts  # **模式目录**：每个模式一行（名字/帮助/排行榜/粒度行/顺序行/搜索框/结算卡片…）
+  modes/naming.ts        # **取名口径注册表**：国名/首都/国旗、中/英文、省名/省会/简称（段按钮+文本+判题+占位）
+  modes/flagPreload.ts   # 国旗预取队列（当前题 + 接下来两道）
   ui/                    # 搜索框、倒计时、统计面板、设置面板
+  ui/namingControls.ts   # 按口径注册表生成三组段按钮（index.html 只留空容器）
   probe/                 # 运行时验收探针（?probe=1）；私有状态经「诊断视图」读取，无反射强转（ADR 0007）
   main.ts                # 装配入口
 ```
+
+### 要加东西时改哪里（两张表说话）
+
+| 想做的事 | 只改这一处 | 连带（由测试/编译器提醒） |
+|---|---|---|
+| 加一档取名口径（如「按国徽出题」） | `src/modes/naming.ts` 加一行（段按钮文字、题面/标签文本、判题、占位提示） | `namingStore.ts` 的合法值列表；`naming.test.ts` 会自动覆盖新档 |
+| 加一个模式 | `src/modes/capabilities.ts` 的 `MODE_SPECS` 加一行（`Mode` 类型加一个 id） | `messages.json` 的 `mode.<id>.title`（缺键 tsc 报错）；`capabilities.test.ts` 断言 tab 文字与服务端白名单一致 |
+| 改「跳过/暂停/重置」显隐 | `testButtonsVisible()` 一处 | 逐模式真值表在 `capabilities.test.ts`，改规则能立刻看到波及哪些模式 |
 
 ## SEO
 

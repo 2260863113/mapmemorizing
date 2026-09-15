@@ -2,6 +2,7 @@ import type { Continent, Mode, SubregionId, UnitColor } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t, type MessagesKey } from '../i18n';
+import { modeTitle } from './capabilities';
 import { canDrillProvince, type Granularity } from '../province';
 import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
 import { CONTINENTS } from '../types';
@@ -13,7 +14,7 @@ const CONTINENT_NAMES: Record<string, string> = Object.fromEntries(CONTINENTS.ma
 /** 熟练度分析：按累计答题分数只读着色（地级市/省名/国家名熟练度），不响应输入。 */
 export class AnalysisMode extends BaseMode {
   id: Mode = 'free';
-  title = t('mode.free.title');
+  title = modeTitle('free');
   /** 分析粒度：'city'（地级市，默认且现状）| 'province'（省级，省名熟练度分析）| 'world'（世界，国家名熟练度分析）。 */
   private granularity: Granularity = this.loadGranularity();
   /** 隐藏地图标签：三档分析共用一个开关（左下角「设置」里的「隐藏地图标签」）。 */
@@ -31,7 +32,7 @@ export class AnalysisMode extends BaseMode {
   /** 左下角「设置」（同其他模式）：隐藏地图标签。 */
   getModeSettings(): ModeSettingsPanel | null {
     return {
-      title: t('mode.free.title'),
+      title: modeTitle('free'),
       toggles: [{ key: 'hide-labels', label: t('settings.hideMapLabels'), value: this.hideLabels }],
       onChange: (key, value) => {
         if (key !== 'hide-labels') return;

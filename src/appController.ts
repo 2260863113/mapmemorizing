@@ -3,7 +3,18 @@ import { Matcher } from './matcher';
 import { MapRenderer } from './map/renderer';
 import { AuthStore } from './authStore';
 import { LeaderboardStore } from './leaderboardStore';
-import { isLeaderboardMode } from './modes/capabilities';
+import {
+  ALL_MODES,
+  helpKeysOf,
+  isAnalysisMode,
+  isLeaderboardMode,
+  isNonMapMode,
+  isTwoPhaseMode,
+  modeTitle,
+  usesSettlementCard,
+} from './modes/capabilities';
+import { NAMING_GROUPS } from './modes/naming';
+import { renderNamingGroups } from './ui/namingControls';
 import { MemoryStore, loadSettings, saveSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { AuthPanel } from './ui/authPanel';
@@ -388,7 +399,9 @@ export class AppController {
     void this.refreshSidePanel();
     // 从留言板/管理员切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
     // （拼图模式用 #puzzle 自己的画布，不需要动隐藏中的 ECharts 画布）
-    if (mode !== 'board' && mode !== 'admin' && mode !== 'puzzle') this.renderer.resize();
+    // 从留言板/管理员切回地图模式时，地图容器由隐藏转显示，需重算画布尺寸
+    // （拼图模式用 #puzzle 自己的画布，不需要动隐藏中的 ECharts 画布）
+    if (!isNonMapMode(mode) && !isTwoPhaseMode(mode)) this.renderer.resize();
   }
 
   // ==================== 视图 chrome 同步（薄委托到 ChromeSync） ====================
@@ -495,15 +508,12 @@ export class AppController {
   /**
    * 当前模式的说明文案；返回 `null` 表示该模式没有说明（留言板/管理端不是地图模式，
    * 说明按钮由 chromeSync 在这两个模式下隐藏 —— 以前它们会回落到「自由模式说明」，是错的）。
+   *
+   * 文案键由模式目录的 `help` 字段拼出：**表里声明了 help 却没写文案会在 tsc 阶段报错**。
    */
   private currentModeHelp(): { title: string; body: string } | null {
-    const mode = this.current?.id;
-    if (mode === 'self') return { title: t('help.self.title'), body: t('help.self.body') };
-    if (mode === 'endless') return { title: t('help.endless.title'), body: t('help.endless.body') };
-    if (mode === 'free') return { title: t('help.free.title'), body: t('help.free.body') };
-    if (mode === 'puzzle') return { title: t('help.puzzle.title'), body: t('help.puzzle.body') };
-    if (mode === 'click') return { title: t('help.click.title'), body: t('help.click.body') };
-    return null;
+    const keys = helpKeysOf(this.current?.id);
+    return keys ? { title: t(keys.title), body: t(keys.body) } : null;
   }
 
   // ==================== 成绩提交 / 侧栏刷新 ====================
@@ -558,17 +568,18 @@ export class AppController {
    */
   private showSettlementCard() {
     const mode = this.current?.id;
-    if (mode !== 'self' && mode !== 'click' && mode !== 'puzzle') return;
+    // 重置会弹结算卡片的模式（输入/点击的全国范围、拼图的两个可上榜范围）：模式表 settlementCard
+    if (!usesSettlementCard(mode)) return;
     const active = this.current as ModeController;
     active.pause();
-    // 记「已结束」：结算卡片既已弹出，未开始的浏览标签就该复现（口径见 browseLabels.ts）
+    // 记「已结束」：结算卡片既已弹出，未开始的标签就该复现（口径见 browseLabels.ts）
     active.onSettlementShown?.();
     const result = active.collectResult() ?? null;
     if (!result) {
       this.doReset();
       return;
     }
-    const isPuzzle = mode === 'puzzle';
+    const isPuzzle = isTwoPhaseMode(mode);
     showSettlement(
       `<div style="text-align:center;line-height:1.8;">${t('main.settlementTitle')}<div class="sum-stats">${
         isPuzzle
@@ -623,6 +634,8 @@ export class AppController {
    * 现在按域拆成下面的方法，本函数只做分发 —— 一眼能看出应用一共接了哪些线。
    */
   private wireDom() {
+    // 口径分段按钮由注册表生成（HTML 里只留空容器）——必须在接线之前，否则组里没有按钮可接
+    this.renderNamingControls();
     this.wireOverlays();
     this.wireModeNavigation();
     this.wireSidePanelToggle();
@@ -632,6 +645,23 @@ export class AppController {
     this.wireTestControls();
     this.wireStartActionLock();
     this.wireSearch();
+  }
+
+  /**
+   * 生成三组取名口径分段按钮，并把模式名写进 tab / 侧栏按钮。
+   *
+   * 两者都是「文案的单一方面」问题：口径段的值与文字来自 `src/modes/naming.ts`，
+   * 模式名来自 `src/modes/capabilities.ts` 的模式表 —— `index.html` 里那点中文只是首屏兜底，
+   * 由 `capabilities.test.ts` / `naming.test.ts` 断言与注册表逐字一致（从前这里漂过：
+   * 输入模式的设置浮层标题写着「自测模式」，而 tab 与开始卡片写着「输入模式」）。
+   */
+  private renderNamingControls() {
+    renderNamingGroups();
+    for (const mode of ALL_MODES) {
+      const tab = document.querySelector<HTMLButtonElement>(`#mode-tabs button[data-mode="${mode}"]`);
+      if (tab) tab.textContent = modeTitle(mode);
+    }
+    $('btn-free').textContent = modeTitle('free');
   }
 
   /** 两个浮层：暂停遮罩（点击恢复）与帮助面板。 */
@@ -762,21 +792,18 @@ export class AppController {
       this.afterScopeChange();
     });
 
-    // 取名口径（2026-09 新增）：世界档「国名/首都」与「中文/英文」、省级全国档「省名/简称」。
+    // 取名口径（2026-09）：三组分段按钮**全部由口径注册表驱动**（值、文字、只在哪些模式出现
+    // 都在 `src/modes/naming.ts` 里声明），故接线也只剩这一处循环 —— 加一档不用改这里。
     // 只改题面与地图标签的文字，**不动范围**，故不走 afterScopeChange（那会白刷进度条与侧栏）；
     // 模式自己负责重绘（setQuestionNaming 内部 refresh），这里只要把分段高亮同步过来。
-    this.wireSegmented('world-name-toggle', (btn) => {
-      this.namingTarget()?.setQuestionNaming?.({ world: btn.dataset.worldName as QuestionNaming['world'] });
-      this.syncModeChrome();
-    });
-    this.wireSegmented('world-lang-toggle', (btn) => {
-      this.namingTarget()?.setQuestionNaming?.({ lang: btn.dataset.worldLang as QuestionNaming['lang'] });
-      this.syncModeChrome();
-    });
-    this.wireSegmented('province-name-toggle', (btn) => {
-      this.namingTarget()?.setQuestionNaming?.({ province: btn.dataset.provinceName as QuestionNaming['province'] });
-      this.syncModeChrome();
-    });
+    for (const group of NAMING_GROUPS) {
+      this.wireSegmented(group.toggleId, (btn) => {
+        const value = btn.dataset.namingValue;
+        if (!value) return;
+        this.namingTarget()?.setQuestionNaming?.({ [group.field]: value } as Partial<QuestionNaming>);
+        this.syncModeChrome();
+      });
+    }
   }
 
   /** 支持取名口径切换的当前模式（输入/点击）；其它模式返回 null。 */
@@ -832,20 +859,21 @@ export class AppController {
   private onResetClicked() {
     if (this.current?.isPaused()) this.hidePauseOverlay();
 
-    if (this.current?.id === 'free') {
+    if (isAnalysisMode(this.current?.id)) {
       this.resetMastery();
       return;
     }
     const mode = this.current?.id;
     const scope = this.current?.getScopeProvince();
     const isNationScope = isNationLikeScope(scope); // 含 null（市级全国）、省级/世界全国与大洲范围
-    if ((mode === 'self' || mode === 'click') && isNationScope && this.current?.isStarted()) {
+    // 输入/点击模式：全国范围进行中按「重置」触发结算卡片（拼图另有一套"可上榜范围"的判据）
+    if (usesSettlementCard(mode) && !isTwoPhaseMode(mode) && isNationScope && this.current?.isStarted()) {
       this.showSettlementCard();
       return;
     }
     // 拼图模式：只有可提交的两个范围（世界全国 / 市级全国）进行中才弹结算卡片，
     // 其余范围（省级全国、大洲、次区域、下钻某省）直接重置（用户口径）
-    if (mode === 'puzzle' && this.puzzleMode.isRankedScope() && this.current?.isStarted()) {
+    if (isTwoPhaseMode(mode) && this.puzzleMode.isRankedScope() && this.current?.isStarted()) {
       this.showSettlementCard();
       return;
     }

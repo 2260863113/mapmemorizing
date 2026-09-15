@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ClickMode } from './click';
 import { InputMode } from './input';
-import type { ModeCtx } from './types';
 import type { AppData, CountryMeta, Province, RenderState, Unit } from '../types';
-import { makeAppData } from '../testFixture';
-import { Matcher } from '../matcher';
+import { makeTestCtx } from '../testCtx';
 import { resetFlagPreloadForTest } from './flagPreload';
 
 /**
@@ -89,69 +87,20 @@ const LOOKAHEAD_DATA: Partial<AppData> = {
 };
 
 function makeCtx(over: Partial<AppData> = {}) {
-  const states: RenderState[] = [];
-  const hints: string[] = [];
-  const toasts: string[] = [];
-  const placeholders: string[] = [];
-  const renderer = {
-    setWorldMode: () => {},
-    setProvinceMode: () => {},
-    render: (state: RenderState) => {
-      states.push(state);
+  return makeTestCtx({
+    data: {
+      countries: COUNTRIES,
+      countryNames: {
+        JPN: { en: 'Japan', capital: '东京', capitalEn: 'Tokyo' },
+        CHN: { en: 'China', capital: '北京', capitalEn: 'Beijing' },
+      },
+      countryFlags: { JPN: 'jp.svg', CHN: 'cn.svg' },
+      provinces: PROVINCES,
+      units: UNITS,
+      allUnits: UNITS,
+      ...over,
     },
-    drillToProvince: () => {},
-    backToNation: () => {},
-    currentProvince: () => null,
-    flash: () => {},
-    focusUnit: () => {},
-    focusWorldCountry: () => {},
-    panUnit: () => {},
-    panWorldCountry: () => {},
-  };
-  const practice = { correctCount: 0, wrongCount: 0, score: 0 };
-  const data = makeAppData({
-    countries: COUNTRIES,
-    countryNames: {
-      JPN: { en: 'Japan', capital: '东京', capitalEn: 'Tokyo' },
-      CHN: { en: 'China', capital: '北京', capitalEn: 'Beijing' },
-    },
-    countryFlags: { JPN: 'jp.svg', CHN: 'cn.svg' },
-    provinces: PROVINCES,
-    units: UNITS,
-    allUnits: UNITS,
-    ...over,
   });
-  const ctx = {
-    data,
-    renderer,
-    matcher: new Matcher(data),
-    store: {
-      getPractice: () => practice,
-      getProvincePractice: () => practice,
-      getWorldPractice: () => practice,
-      recordAnswer: () => {},
-      recordProvinceAnswer: () => {},
-      recordWorldAnswer: () => {},
-    },
-    search: {
-      setPlaceholder: (v: string) => placeholders.push(v),
-      setRequireEnter: () => {},
-      clear: () => {},
-      focus: () => {},
-    },
-    stats: {},
-    settings: { darkMode: false, cityBoundaryTone: 'light', provinceBoundaryTone: 'dark', worldBoundaryTone: 'mid', ignoreTinyCountries: false, showBrowseLabels: true },
-    byAdcode: new Map(UNITS.map((u) => [u.adcode, u])),
-    toast: (m: string) => toasts.push(m),
-    setHint: (html: string) => hints.push(html),
-    showTimer: () => {},
-    showStopwatch: () => {},
-    showSummary: () => {},
-    hideSummary: () => {},
-    updateProgress: () => {},
-    randomUnit: (pool: Unit[]) => pool[0],
-  } as unknown as ModeCtx;
-  return { ctx, states, hints, toasts, placeholders };
 }
 
 /** 只落粒度、不走 enter（避免开始卡片的 DOM 依赖）。 */
@@ -432,13 +381,15 @@ describe('未开始的浏览标签 · 按取名口径显示', () => {
     expect(jp).toEqual({ image: 'data/flags/thumbs/jp.webp' });
   });
 
-  it('世界档 + 国旗但缺缩略图数据：回落国名文本（不画破图）', () => {
+  it('世界档 + 国旗但缺缩略图数据：回落国名文本（不画破图、也不留空白）', () => {
     const { ctx, states } = makeCtx(); // 夹具没给 countryFlagThumbs
     const mode = new ClickMode(ctx);
     mode.applyScopeQuery(scopeQuery('world'));
     mode.setQuestionNaming({ world: 'flag' });
     browse(mode);
-    expect(contentOf(states, 'JPN')).toBeNull(); // null → 渲染层用默认国名
+    // 口径注册表直接给出国名文本（渲染结果与旧版一致：旧版返回 null、由渲染层回落国名；
+    // 现在"国旗档的文字口径 = 国名"写在表里，不依赖渲染层的兜底）
+    expect(contentOf(states, 'JPN')).toEqual({ text: '日本' });
   });
 
   it('输入模式同样按口径显示（用户口径点名了点击与输入两个模式）', () => {

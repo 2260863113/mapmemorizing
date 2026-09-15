@@ -763,3 +763,16 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 验收：npm run check exit 0（43 文件/**475** 用例；本轮 +25：provinceCapital 7、quizNaming +14、labels +4、worldFlagsData +4、browseLabels +1）；verify-naming **47/47**（30→47）、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = **214/214**。
 - ⚠ quizNaming.test.ts 现在还要 stub localStorage 与 window（start() 会碰秒表与进度记忆），并 resetFlagPreloadForTest() 复位模块级 done/代次。
 - ⚠ 留给下次：若仍觉得「换题一顿」，该看的是每次答对后的 ~120ms 地图重绘（国旗侧已无可优化：每换一题只 1 个 1KB 请求）；国旗档已作答标签写国名是刻意的，要改成画旗得先回答"绿/红怎么画在旗上"。
+================================================================
+2026-09-15 05:00  P0/P1 重构：取名口径注册表 + 模式目录 + 渲染器拆分（行为零变化）
+- 起因：一次"哪里亟待重构"自评列出六项，本轮一次做完（三处横切重复：加一档口径要改 11 个文件、模式事实散成 32 处 mode === 'x'、模式名有四份重复且已漂移）。
+- ① 取名口径注册表 src/modes/naming.ts：一张表声明每档的段按钮文字/适用模式/题面名/标签名/题面图/标签缩略图/输入判题/占位提示。段按钮改由 ui/namingControls.ts 生成（index.html 只留空容器），chromeSync 按表显隐、appController 接线从 3 段变 1 循环、InputMode 只"取当前档交给它"、MapQuizMode 五个文本方法退化成转发。加一档 = 加一行。
+- ② 模式目录 src/modes/capabilities.ts：MODE_SPECS 每模式一行（名字/帮助/计时测验/排行榜/粒度行/顺序行+默认顺序/搜索框/结算卡片/非地图/两阶段/分析），LeaderboardMode 等类型从表推导；satisfies Record<Mode, ModeSpec> 让"新增模式忘了加 spec"在 tsc 阶段报错；help 键由模式名拼出，"说有帮助却没写文案"同样 tsc 报错（实测拦下 board/admin）。跳过/暂停/重置 收敛成 testButtonsVisible() 一个纯函数 + 逐模式真值表。
+- ② 模式名唯一来源：删掉 self/click/puzzle/endless.startTitle 与 leaderboard.mode.* 共 8 个重复键，tab 文字由 JS 从表写入，capabilities.test.ts 断言 tab 兜底文字与 modeTitle 逐字一致。**修掉一处长期漂移**：mode.self.title 原为「自测模式」，而 tab/开始卡片/帮助都是「输入模式」→ 输入模式的设置浮层标题一直显示「自测模式」。
+- ③ MapRenderer 拆分：1,615 → 1,290 行，拆出 map/camera.ts（306 行，取景纯换算）与 map/series.ts（275 行，option 构造）。故意没搬 wireChart*（牵出 10 处实例状态）、buildSeriesOption（数组顺序=渲染层序）、animateViewTo/focus*/pan*（持 ECharts 实例与 rAF）、标签状态机。⚠ tooltip formatter 与标签 renderItem 必须传闭包而非值，否则首帧口径不一致/缩放中字号卡住。
+- ④ 测试夹具 src/testCtx.ts：两份各 65 行的假 ModeCtx 合并成一个 makeTestCtx({data, showBrowseLabels, randomUnit})。
+- ⑤ 验收脚本不再自带规则副本：verify-naming 的"去后缀省名"改读 src/normalize-rules.json 的 provinceSuffixes（原先抄了一份正则且是死代码）。
+- ⚠ 踩坑：按钮改成 JS 生成后，验收脚本按 id 点击的 #world-name-capital 等 id 没了 → 脚本报 null.classList。修法：生成规则复刻原 id（容器 id 去 -toggle + 取值），并加不变量把"生成的 id"与"脚本里的选择器"钉在一起。
+- ⚠ 测试抓到的真坏味道：省级三档曾共用 labelName(id,data,naming) 并按 naming.province 分支 → "full 档的函数"配 abbr 口径会算出简称（拿错档也不报错）；改成每档只认自己那一档的取值 + 不变量（同一档在多种组合下文本必须一致）。另一处：testButtonsVisible 第一版把"无尽闯关有没有重置"写反了，是单测把原语义纠正回来（已逐模式钉住）。
+- 验收：npm run check exit 0（44 文件/514 用例；本轮 +39）；运行时 verify-naming 47/47、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = 214/214（后三个同时是渲染器拆分的回归闸门）。
+- ⚠ 留给下次（P2）：appController 748 行（要拆就跟模式目录一起动）；ModeController 12/37 可选方法（再加 2 个模式就该换判别联合/能力位）；留言板/管理端的 #mode-actions 容器会显示但里面没有按钮（既有小怪癖）。

@@ -1,7 +1,6 @@
 import type { Mode, Unit } from '../types';
 import type { ModeCtx, OrderMode } from './types';
 import { t } from '../i18n';
-import { normalizeProvince } from '../matcher';
 import { formatElapsedSeconds } from '../ui/format';
 import { pickWrongNext } from './wrongOrder';
 import {
@@ -14,7 +13,9 @@ import {
   saveSelfRequireEnter,
   type ModeSettingsPanel,
 } from '../modeSettings';
-import { canDrillProvince, drillTargetOfUnit, isProvinceAbbrInput, isProvinceCapitalInput } from '../province';
+import { canDrillProvince, drillTargetOfUnit } from '../province';
+import { modeTitle } from './capabilities';
+import { activeChoiceOf } from './naming';
 import { MapQuizMode } from './mapQuizMode';
 import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
@@ -30,7 +31,7 @@ import { showStartCard } from '../ui/dom';
  */
 export class InputMode extends MapQuizMode {
   readonly id: Mode = 'self';
-  readonly title = t('mode.self.title');
+  readonly title = modeTitle('self');
   private lastGreen: string | null = null;
   private activeProvince: string | null = null;
   /** BFS 前沿队列（顺序模式）：队首是下一题，队尾是刚发现的邻居。 */
@@ -74,7 +75,7 @@ export class InputMode extends MapQuizMode {
 
   getModeSettings(): ModeSettingsPanel | null {
     return {
-      title: t('mode.self.title'),
+      title: modeTitle('self'),
       toggles: [
         { key: 'require-enter', label: t('settings.requireEnter'), value: this.requireEnter },
         { key: 'error-rollback', label: t('settings.errorRollback'), value: this.errorRollback },
@@ -109,30 +110,25 @@ export class InputMode extends MapQuizMode {
   }
 
   /**
-   * 输入匹配：省级全国 → 精确省名匹配（省会档只认省会名、简称档只认简称）；世界全国 → 国家名匹配
-   * （国名档走 `bestMatch`，首都档走「是不是这一题的首都名」，见 `WorldMatcher.acceptsCapital`
-   * 的同形异国说明）；市级 → 地级单位匹配。
+   * 输入匹配：省级全国 → 省名/省会/简称各自的判据；世界全国 → 国名/首都各自的判据；
+   * 市级 → 地级单位匹配。
+   *
+   * 三种档的判据**不在这个类里**：它们跟着"考什么"一起声明在口径注册表
+   * （`src/modes/naming.ts` 的 `judge`），这里只做"取当前档 → 交给它判 → 没有就走地级匹配"。
+   * 加一档口径因此不用碰输入模式。
    */
   private matchInput(v: string): string | null {
-    if (this.isProvinceNation()) {
-      // 简称档：只认单字简称（含 蜀/黔/滇/秦/陇 等别名），不认省名 —— 见 province.isProvinceAbbrInput
-      if (this.naming.province === 'abbr') {
-        return this.provincePool.find((p) => isProvinceAbbrInput(this.ctx.data, p.adcode, v))?.adcode ?? null;
+    const field = this.isProvinceNation() ? 'province' : this.isWorldNation() ? 'world' : null;
+    if (field) {
+      const choice = activeChoiceOf(field, this.naming);
+      if (choice.judge) {
+        return choice.judge(v, {
+          data: this.ctx.data,
+          pool: this.activePool(),
+          question: this.question,
+          worldMatcher: this.worldMatcher,
+        });
       }
-      // 省会档：只认省会名（石家庄 / 石家庄市），**不认省名与简称** —— 见 province.isProvinceCapitalInput
-      if (this.naming.province === 'capital') {
-        return this.provincePool.find((p) => isProvinceCapitalInput(this.ctx.data, p.adcode, v))?.adcode ?? null;
-      }
-      const ni = normalizeProvince(v);
-      if (!ni) return null;
-      for (const p of this.provincePool) {
-        if (normalizeProvince(p.name) === ni || normalizeProvince(p.shortName) === ni) return p.adcode;
-      }
-      return null;
-    }
-    if (this.isWorldNation()) {
-      if (this.naming.world === 'capital') return this.worldMatcher.acceptsCapital(this.question ?? '', v) ? this.question : null;
-      return this.worldMatcher.bestMatch(v);
     }
     return this.ctx.matcher.bestUnit(v)?.adcode ?? null;
   }
@@ -188,7 +184,7 @@ export class InputMode extends MapQuizMode {
   showStartHint() {
     showStartCard({
       id: 'self-start',
-      title: t('self.startTitle'),
+      title: modeTitle('self'),
       subtitle: t('common.scopePrefix', { scope: this.scopeLabel() }),
       onStart: () => this.start(false),
     });
@@ -223,19 +219,13 @@ export class InputMode extends MapQuizMode {
 
   /**
    * 按当前粒度与取名口径给出占位提示（口径变了提示要跟着变，否则用户不知道该输入什么）。
-   * 世界档四种组合、省级档三种；地级沿用历史提示。
+   * 文案键来自口径注册表（每一档自己声明），故加一档不用改这里；地级沿用历史提示。
    */
   private placeholderForNaming(): string {
-    if (this.isProvinceNation()) {
-      if (this.naming.province === 'abbr') return t('self.abbrPlaceholder');
-      if (this.naming.province === 'capital') return t('self.provinceCapitalPlaceholder');
-      return t('self.provincePlaceholder');
-    }
-    if (this.isWorldNation()) {
-      const capital = this.naming.world === 'capital';
-      const en = this.naming.lang === 'en';
-      if (capital) return en ? t('self.capitalEnPlaceholder') : t('self.capitalPlaceholder');
-      return en ? t('self.worldEnPlaceholder') : t('self.worldPlaceholder');
+    const field = this.isProvinceNation() ? 'province' : this.isWorldNation() ? 'world' : null;
+    if (field) {
+      const key = activeChoiceOf(field, this.naming).placeholderKey?.(this.naming);
+      if (key) return t(key);
     }
     return t('self.placeholder');
   }

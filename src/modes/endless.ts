@@ -6,6 +6,7 @@ import { $, endlessFood, endlessItems, endlessStatus, endlessToken, flashTimerPe
 import { formatElapsedSeconds } from '../ui/format';
 import { clamp } from '../math';
 import { t } from '../i18n';
+import { modeTitle } from './capabilities';
 import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, loadEndlessHidePriceBg, loadEndlessHidePrices, saveEndlessAutoFollow, saveEndlessHidePriceBg, saveEndlessHidePrices, type ModeSettingsPanel } from '../modeSettings';
 import { fbm, makePermutation } from './endlessNoise';
 import { browseLabelState } from './browseLabels';
@@ -41,7 +42,7 @@ import {
  */
 export class EndlessMode extends BaseMode {
   id: Mode = 'endless';
-  title = t('mode.endless.title');
+  title = modeTitle('endless');
   private coins = new Map<string, number>(); // 当前金币数（0 = 本关已收集，下一关恢复）
   private collectedThisLevel = new Set<string>(); // 本关已收集（用于显示地名）
   private level = 1;
@@ -85,7 +86,7 @@ export class EndlessMode extends BaseMode {
 
   getModeSettings(): ModeSettingsPanel | null {
     return {
-      title: t('mode.endless.title'),
+      title: modeTitle('endless'),
       toggles: [
         { key: 'require-enter', label: t('settings.requireEnter'), value: true, fixed: true }, // 无尽固定按下 Enter 确认
         { key: 'hide-prices', label: t('settings.hidePrices'), value: this.hidePrices },
@@ -325,7 +326,7 @@ export class EndlessMode extends BaseMode {
   private showStartHint() {
     showStartCard({
       id: 'endless-start',
-      title: t('endless.startTitle'),
+      title: modeTitle('endless'),
       subtitle: t('endless.startScope'),
       onStart: () => this.start(),
     });

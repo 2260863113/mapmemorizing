@@ -1,12 +1,12 @@
 import type { Mode } from '../types';
 import { BaseMode } from './baseMode';
 import type { AdminPanel, AdminView } from '../ui/adminPanel';
-import { t } from '../i18n';
+import { modeTitle } from './capabilities';
 
 /** 管理员模式：主区切换为管理面板（用户管理/日志记录/公告管理）。 */
 export class AdminMode extends BaseMode {
   id: Mode = 'admin';
-  title = t('mode.admin.title');
+  title = modeTitle('admin');
 
   private view: AdminView = 'users';
 

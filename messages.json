@@ -18,7 +18,7 @@
 
   "mode.free.title": "熟练度分析",
   "mode.puzzle.title": "拼图模式",
-  "mode.self.title": "自测模式",
+  "mode.self.title": "输入模式",
   "mode.endless.title": "无尽闯关",
   "mode.click.title": "点击模式",
   "mode.admin.title": "管理",
@@ -39,7 +39,6 @@
   "map.tooltip.statusLine": "<br/>状态：{status}",
   "map.tooltip.coinCollected": "0￥（已收集）",
 
-  "self.startTitle": "输入模式",
   "self.placeholder": "地名",
   "self.placeholderFull": "输入地名",
   "self.provincePlaceholder": "输入省名",
@@ -56,7 +55,6 @@
   "self.abbrPlaceholder": "输入省简称",
   "self.provinceCapitalPlaceholder": "输入省会名",
 
-  "click.startTitle": "点击模式",
   "click.startSubtitle": "范围：{scope}，请按提示点击地图",
   "click.correctToast": "回答正确",
   "click.correctAnswer": "正确答案：{name}",
@@ -66,7 +64,6 @@
   "click.summaryWorld": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个国家",
 
 
-  "endless.startTitle": "无尽闯关",
   "endless.startScope": "范围：全国",
   "endless.shieldBlocked": "盾牌：抵挡一次罚时",
   "endless.matchFail": "匹配失败：惩罚时5秒",
@@ -211,10 +208,6 @@
   "leaderboard.title": "{mode} {scope}排行榜",
   "leaderboard.empty": "暂无成绩",
   "leaderboard.loadFailed": "排行榜加载失败",
-  "leaderboard.mode.self": "输入模式",
-  "leaderboard.mode.click": "点击模式",
-  "leaderboard.mode.puzzle": "拼图模式",
-  "leaderboard.mode.endless": "无尽闯关",
   "leaderboard.endlessMeta": "{coins}￥ · 第{level}关",
   "leaderboard.nationMeta": "{correct} 个 · {time}",
   "leaderboard.puzzleMeta": "已拼 {placed}/{total} ｜ {time}",
@@ -340,7 +333,6 @@
   "help.click.title": "点击模式说明",
   "help.click.body": "按照顶部提示点击对应地图单位。答对变绿，答错时正确答案变红；本模式不使用自动跟随。顶部「世界/省级/市级」可切换练习粒度：世界粒度在全球 195 个国家和地区中练习（点击国家，只计入国家熟练度）；省级粒度在全国 34 个省级单元中练习，只计入省级熟练度；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。世界粒度还可用「国名/首都/国旗」切换顶部提示考的是国名、首都名还是**国旗图片**（选国旗时，顶部给一张国旗、你点地图上对应的国家；地图标签仍显示国名，不会把答案写在题面上），用「中文/英文」切换提示与地图标签的语言（已作答国家的地图标签也跟着变，界面文案仍是中文）；省级全国可用「省名/简称」按单字简称（如沪）出题，地图标签同样显示简称。「国旗」这一栏只在点击模式出现。这三组按钮只在对应的全国视图、且未开始答题时可切换，开始后整组收起。**未开始时**地图上显示全部地名（可在导航栏「设置」里关掉），点「开始」后收起，结束后恢复。",
 
-  "puzzle.startTitle": "拼图模式",
   "puzzle.startSubtitle": "把{scope}拼成一幅完整的地图",
   "puzzle.scopeProvinceNation": "全国 34 个省级单位",
   "puzzle.scopeCityNation": "全国 {count} 个地级单位",

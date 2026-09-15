@@ -1,5 +1,92 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：P0/P1 重构（口径注册表 + 模式目录 + 渲染器拆分）
+
+来自一次"哪里亟待重构"的自评，六项一次做完。**行为零变化**（514 单测、214 个运行时断言全绿）。
+
+### 1. 取名口径注册表 `src/modes/naming.ts`（P0）
+
+问题：加一档「省会」要改 11 个文件（`types`/`modes/types`/`namingStore`/`province`+json/`mapQuizMode`/
+`click`/`input`/`index.html`/`chromeSync`/`messages.json` + 探针与验收脚本），漏一处就是界面自相矛盾。
+
+现在：一张表三组，每档自己声明**段按钮文字 / 只在哪些模式提供 / 题面名 / 标签名 / 题面图 / 标签缩略图 /
+输入判题 / 占位提示**。消费方全部改成"问表"：
+- `ui/namingControls.ts` 按表**生成**三组段按钮（`index.html` 只留空容器）——顺带干掉了 `#world-name-flag`
+  在 `chromeSync` 里那段按模式显隐的硬编码（现在是表里的 `modes: ['click']`）；
+- `chromeSync.syncNamingRows` 按表遍历显隐与高亮；`appController` 的接线从 3 段变成 1 个循环；
+- `InputMode.matchInput` / `placeholderForNaming` 只剩"取当前档 → 交给它"；
+- `MapQuizMode` 的 `displayNameOf` / `worldNameOf` / `provinceLabelTextOf` / `worldFlagSrc` /
+  `browseLabelContentOf` 全部退化成薄转发（`provinceQuestionNameOf` 已删除）。
+
+⚠ **踩到的坑（值得记住）**：验收脚本按 **id** 点击按钮（`#world-name-capital`…），而按钮改成 JS 生成后
+id 就没了 → 脚本报 `Cannot read properties of null`。修法是让生成规则**复刻**原 id：
+`容器 id 去掉 -toggle` + `-` + 取值。`naming.test.ts` 现在有一条不变量把"生成的 id"与"验收脚本里的选择器"钉在一起。
+
+⚠ **测试抓到的一个真坏味道**：省级三档最初共用一个 `labelName(id, data, naming)`，内部按 `naming.province`
+分支 —— 于是"full 档的函数"配 abbr 的口径会算出简称（拿错档也不报错）。改成每档闭包只认**自己那一档的取值**，
+并加不变量：同一档在多种口径组合下产出的文本必须一致。
+
+### 2. 模式目录 `src/modes/capabilities.ts`（P0+P1）
+
+问题：模式事实散成 30 余处 `mode === 'x'`（`chromeSync` + `appController` 里 32 处），加模式要逐处补；
+模式名有**四份重复**（tab 静态 HTML、`mode.*.title`、`startTitle`、`leaderboard.mode.*`），
+而且**已经漂移**：`mode.self.title` 写着「自测模式」，而 tab / 开始卡片 / 帮助都是「输入模式」→
+**输入模式的设置浮层标题长期显示「自测模式」**。
+
+现在：`MODE_SPECS` 每个模式一行（名字/帮助/计时测验/排行榜/粒度行/顺序行+默认顺序/搜索框/结算卡片/
+非地图/两阶段/熟练度分析），派生谓词与类型**从表推导**：
+- `LeaderboardMode` 由 `{ [K in Mode]: MODE_SPECS[K] extends { leaderboard: true } ? K : never }[Mode]` 推出，
+  不再另写一份字面量联合；
+- `MODE_SPECS` 写 `satisfies Record<Mode, ModeSpec>` → **新增 Mode 忘了加 spec 会 tsc 报错**；
+- `help.<mode>.title` 这类键由模式名拼出，**表里说"有帮助"却没写文案也会 tsc 报错**（实测：
+  第一版把 board/admin 也标了 `help: true`，tsc 直接指出 `"help.board.title"` 不是合法键）；
+- `testButtonsVisible(mode, {started, board})` 把「跳过/暂停/重置」收敛成**一个纯函数**，逐模式真值表进单测。
+  ⚠ 第一版把它写错了（以为无尽闯关没有重置），是**测试**把原语义纠正回来的 —— 语义清单见函数注释；
+- 模式名统一走 `modeTitle(mode)`：删掉 `self/click/puzzle/endless.startTitle` 与 `leaderboard.mode.*` 共 8 个
+  重复键，tab 文字由 JS 从表写入，`capabilities.test.ts` 断言 tab 兜底文字与 `modeTitle` 逐字一致。
+
+### 3. `MapRenderer` 拆分（P0）
+
+1,615 → **1,290 行**，拆出两个**可单测的纯函数模块**：
+- `map/camera.ts`（306 行）：视图表（`DEFAULT_VIEWS`/`CONTINENT_VIEWS`/`SUBREGION_VIEWS`）、
+  `viewFromBox`/`framingExtent`/`followZoomFor`/`defaultViewFor`/`provinceCamera`/`easeInOutCubic`；
+- `map/series.ts`（275 行）：`buildGeoOption`/`buildTooltipOption`/`eventSeries`/`provinceLinesSeries`/
+  `provinceLikeLabelSeries`/`cityLabelSeries`。
+
+**故意没搬**（理由写在新模块注释里）：`wireChart*`（牵出约 10 处实例状态）、`buildSeriesOption`（数组顺序 =
+渲染层序，且 `buildLineData()` 写 `lineBoxes` 的副作用在这一层可见）、`animateViewTo`/`focus*`/`pan*`/`flash`
+（持有 ECharts 实例与 rAF）、标签状态机、以及十几个 1–3 行薄封装。
+⚠ 搬 tooltip formatter 与标签 `renderItem` 时**必须传闭包而不是值**（`worldMode: () => this.worldMode`、
+`scaleOf: () => labelScale(this.zoom)`）：ECharts 会在缩放/拖动期间反复调用它们，取快照会让首帧口径不一致、
+缩放中字号卡住。
+
+### 4. 测试夹具 `src/testCtx.ts`（P1）
+
+`quizNaming.test.ts` 与 `browseLabels.test.ts` 各写了一份约 65 行的假 `ModeCtx`（含 `as unknown as ModeCtx`），
+现已合并成一个 `makeTestCtx({data, showBrowseLabels, randomUnit})`（与 `testFixture.makeAppData` 同一手法）。
+
+### 5. 验收脚本不再自带规则副本（P1）
+
+`verify-naming.mjs` 的"去后缀省名"原先自己抄了一份后缀正则（且是死代码），改为读
+`src/normalize-rules.json` 的 `provinceSuffixes` —— **规则类**事实从此只有一份；真值表类数据本来就已经从
+`src/*.json` 读。抄一份的后果是：规则改了，验收会按旧规则"通过"。
+
+### 验证
+
+- `npm run check` exit 0（44 文件 / **514** 用例；本轮 +38：`naming.test.ts` 17、`capabilities.test.ts` 6→28）；
+- 运行时 **214/214**：`verify-naming` 47/47、`verify-round3` 54/54、`verify-round2` 38/38、`verify-puzzle` 75/75
+  —— 后三个同时是渲染器拆分的回归闸门（round2 覆盖跟随/取景，puzzle 覆盖画布与两阶段，round3 覆盖标签与按钮排版）；
+- 删掉 8 个重复文案键后，tsc 把 5 个仍在引用它们的文件逐个点了出来（`click`/`endless`/`puzzle`/`leaderboardPanel`），
+  这是"键即契约"的好处。
+
+### 留给下次（P2，本轮刻意没动）
+
+- `appController.ts` 748 行（DOM 接线 + 编排 + 榜单/留言板/Auth 胶水）：若还要拆，建议**跟模式目录一起动**
+  （它的 32 处模式分支已消掉大半）；
+- `ModeController` 12/37 个可选方法：目前还可读，再加 2 个模式就该换判别联合或能力位，而不是继续加 `?()`；
+- 一个既有小怪癖（非本轮引入）：留言板/管理端的 `#mode-actions` 容器会显示但里面一个按钮都没有
+  （`testButtonsVisible` 对非地图模式返回全 false，而容器的显隐条件是"非地图模式也显示"）。
+
 ## 本轮（2026-09）：标签按口径显示 + 省级「省会」档 + 国旗小图与"只缓存接下来两个"
 
 用户三句话，三件事（都做完并验收）：

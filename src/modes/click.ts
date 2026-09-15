@@ -6,6 +6,7 @@ import { pickWrongNext, type WrongOrderState } from './wrongOrder';
 import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
+import { modeTitle } from './capabilities';
 import { showStartCard } from '../ui/dom';
 import { escapeAttr } from '../ui/html';
 
@@ -24,7 +25,7 @@ const FLAG_LOOKAHEAD = 2;
 
 export class ClickMode extends MapQuizMode {
   readonly id: Mode = 'click';
-  readonly title = t('mode.click.title');
+  readonly title = modeTitle('click');
 
   constructor(ctx: ModeCtx) {
     super(ctx);
@@ -58,7 +59,7 @@ export class ClickMode extends MapQuizMode {
 
   getModeSettings(): ModeSettingsPanel | null {
     return {
-      title: t('mode.click.title'),
+      title: modeTitle('click'),
       toggles: [{ key: 'error-rollback', label: t('settings.errorRollback'), value: this.errorRollback }],
       onChange: (key, value) => {
         if (key === 'error-rollback') {
@@ -206,7 +207,7 @@ export class ClickMode extends MapQuizMode {
   showStartHint() {
     showStartCard({
       id: 'click-start',
-      title: t('click.startTitle'),
+      title: modeTitle('click'),
       subtitle: t('click.startSubtitle', { scope: this.scopeLabel() }),
       onStart: () => this.start(false),
     });
@@ -239,9 +240,10 @@ export class ClickMode extends MapQuizMode {
   protected onCorrect(_q: string) { this.ctx.toast(t('click.correctToast')); }
 
   private showQuestionHint(unit: Unit) {
-    // 「国旗」档（仅点击模式提供这一栏）：题面给一张国旗图，用户点地图上对应的国家。
+    // 题面用图片的那一档（世界档「国旗」）：给一张国旗图，用户点地图上对应的国家。
     // alt 必须为空 —— 写国名就等于把答案写在题面上；没有国旗资源时回落到国名题面。
-    if (this.isWorldNation() && this.naming.world === 'flag') {
+    // 「哪一档的题面是图片」由口径注册表说话（`questionImage`），这里不认识"国旗"这个词。
+    if (this.isWorldNation()) {
       const src = this.worldFlagSrc(unit.adcode);
       if (src) {
         this.ctx.setHint(
@@ -250,7 +252,7 @@ export class ClickMode extends MapQuizMode {
         return;
       }
     }
-    // 省级全国测验：顶部显示省全名 或 单字简称；世界全国测验：显示 国名/首都名 的 中/英文
+    // 省级全国测验：顶部显示省全名 / 省会名 / 单字简称；世界全国测验：显示 国名/首都名 的 中/英文
     // （点击模式不在地图上高亮目标）。文本一律由基类的 displayNameOf 统一给出，避免与标签口径分叉。
     this.ctx.setHint('<div class="start-panel click-question"><div class="start-title">' + this.displayNameOf(unit) + '</div></div>');
   }

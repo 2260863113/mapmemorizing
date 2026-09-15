@@ -1,7 +1,21 @@
 import { $, showTimer, showStopwatch } from './dom';
 import { t } from '../i18n';
 import { isNationLikeScope, isWorldScope, PROVINCE_NATION_SCOPE, type Granularity } from '../province';
-import { hasGranularityToggle, isLeaderboardMode, isTimedTestMode } from '../modes/capabilities';
+import {
+  defaultOrderOf,
+  hasGranularityToggle,
+  isAnalysisMode,
+  isLeaderboardMode,
+  isNonMapMode,
+  isTimedTestMode,
+  isTwoPhaseMode,
+  ORDER_TOGGLE_IDS,
+  orderToggleIdOf,
+  showsSearchBox,
+  testButtonsVisible,
+  ALL_MODES,
+} from '../modes/capabilities';
+import { NAMING_GROUPS, choiceAvailableIn } from '../modes/naming';
 import type { ModeController, OrderMode } from '../modes/types';
 import type { SidePanelController } from './sidePanelController';
 import { CONTINENTS, type AppData, type Continent, type SubregionMeta } from '../types';
@@ -42,11 +56,12 @@ export class ChromeSync {
   syncModeChrome() {
     const current = this.s.current();
     const mode = current?.id;
-    const isNonMap = mode === 'board' || mode === 'admin';
-    const isPuzzle = mode === 'puzzle';
+    // 模式事实一律走模式表（`src/modes/capabilities.ts`）：这里不再出现 `mode === 'xx'` 的枚举
+    const isNonMap = isNonMapMode(mode);
+    const isPuzzle = isTwoPhaseMode(mode);
     // 拼图两阶段：选范围（地图可见、可下钻）→ 拼图盘面（地图隐藏、只留画布）
     const puzzleBoard = isPuzzle && current?.puzzlePhase?.() === 'board';
-    const isAnalysis = mode === 'free';
+    const isAnalysis = isAnalysisMode(mode);
     const isTest = isTimedTestMode(mode);
     const showLeaderboard = isLeaderboardMode(mode);
     if (!isTest) {
@@ -58,12 +73,16 @@ export class ChromeSync {
     // 左下说明/缩放按钮上移避免被放大框遮挡
     const puzzleScopePhase = isPuzzle && !puzzleBoard;
     const provinceNationInset =
-      (mode === 'click' || mode === 'self' || puzzleScopePhase) && (current?.isProvinceNation?.() ?? false);
+      // 「有粒度行的计时测验」= 输入/点击模式（这两者正是唯一会进入省级全国的测验）
+      (hasGranularityToggle(mode) || puzzleScopePhase) && (current?.isProvinceNation?.() ?? false);
     $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
     $('map').classList.toggle('hidden', isNonMap || puzzleBoard);
     $('puzzle').classList.toggle('hidden', !puzzleBoard);
-    $('board').classList.toggle('hidden', mode !== 'board');
-    $('admin').classList.toggle('hidden', mode !== 'admin');
+    // 非地图模式各自的整块界面（留言板 / 管理端）：元素 id 与模式 id 同名，故按模式表遍历
+    for (const m of ALL_MODES) {
+      if (!isNonMapMode(m)) continue;
+      $(m).classList.toggle('hidden', mode !== m);
+    }
     $('mode-info').classList.toggle('hidden', isNonMap);
     // 说明按钮：留言板/管理端没有模式说明（AppController.currentModeHelp 对它们返回 null）
     $('btn-help').classList.toggle('hidden', isNonMap);
@@ -72,9 +91,10 @@ export class ChromeSync {
     $('puzzle-status').classList.toggle('hidden', !puzzleBoard);
     // 每模式设置按钮：该模式提供设置面板时显示
     $('btn-mode-settings').classList.toggle('hidden', !current?.getModeSettings());
-    $('endless-items').classList.toggle('hidden', mode !== 'endless');
-    $('endless-token').classList.toggle('hidden', mode !== 'endless');
-    $('endless-food').classList.toggle('hidden', mode !== 'endless');
+    // 无尽闯关专属的三块行（道具/令符/美食）：不是地图模式通例，故留在这条显式清单里
+    for (const id of ['endless-items', 'endless-token', 'endless-food']) {
+      $(id).classList.toggle('hidden', mode !== 'endless');
+    }
     if (mode !== 'endless') {
       $('endless-shop').classList.add('hidden');
     }
@@ -102,8 +122,10 @@ export class ChromeSync {
   }
 
   /**
-   * 取名口径行的显隐与高亮：世界档「国名 / 首都」+「中文 / 英文」（两者一起显隐），
-   * 省级全国档「省名 / 简称」。
+   * 取名口径行的显隐与高亮：世界档「国名 / 首都 / 国旗」+「中文 / 英文」，省级全国档「省名 / 省会 / 简称」。
+   *
+   * 三组行、每行有几档、某一档只在哪些模式出现 —— **全部来自口径注册表**（`src/modes/naming.ts`），
+   * 这里只负责「按当前模式 + 粒度 + 是否已开始」把它们显示/收起/高亮。
    *
    * 只在**对应的全国视图**且未开始测试时显示 —— 与粒度/大洲/次区域行同一口径：出题范围与
    * 题面口径都不允许中途改（改了当前题的题面与答案就对不上了；模式层也有同样的守卫）。
@@ -115,21 +137,29 @@ export class ChromeSync {
     granularity: Granularity | null,
     scope: string | null | undefined,
   ) {
-    const worldVisible = isGranularityMode && !testStarted && granularity === 'world' && isWorldScope(scope);
-    const provinceVisible = isGranularityMode && !testStarted && granularity === 'province' && scope === PROVINCE_NATION_SCOPE;
-    $('world-name-toggle').classList.toggle('hidden', !worldVisible);
-    $('world-lang-toggle').classList.toggle('hidden', !worldVisible);
-    $('province-name-toggle').classList.toggle('hidden', !provinceVisible);
-    // 「国旗」段只在点击模式出现（2026-09 用户口径）：输入模式没有"看图点地图"这条路，
-    // 给了它一段按了也没用的按钮，只会让人以为坏了。整组按钮共用同一段 HTML，故只隐藏这一段按钮。
-    $('world-name-flag').classList.toggle('hidden', this.s.current()?.id !== 'click');
+    const mode = this.s.current()?.id;
     const naming = this.s.current()?.getQuestionNaming?.() ?? null;
-    if (!naming) return;
-    if (worldVisible) {
-      this.syncSegmentedToggle('world-name-toggle', naming.world);
-      this.syncSegmentedToggle('world-lang-toggle', naming.lang);
+    // 当前视图落在哪一档粒度上（世界全国 / 省级全国；其余一律不显示口径行）
+    const onGranularity = isGranularityMode && !testStarted
+      ? granularity === 'world' && isWorldScope(scope)
+        ? 'world'
+        : granularity === 'province' && scope === PROVINCE_NATION_SCOPE
+          ? 'province'
+          : null
+      : null;
+    for (const group of NAMING_GROUPS) {
+      const rowVisible = onGranularity === group.granularity;
+      $(group.toggleId).classList.toggle('hidden', !rowVisible);
+      // 段按钮级的模式限制（如「国旗」只在点击模式：输入模式没有"看图点地图"这条路，
+      // 给了它一段按了也没用的按钮只会让人以为坏了）。整组共用一行，故只隐藏那一段按钮。
+      for (const choice of group.choices) {
+        const btn = document.querySelector<HTMLButtonElement>(
+          `#${group.toggleId} button[data-naming-value="${choice.value}"]`,
+        );
+        btn?.classList.toggle('hidden', !choiceAvailableIn(choice, mode));
+      }
+      if (rowVisible && naming) this.syncSegmentedToggle(group.toggleId, naming[group.field]);
     }
-    if (provinceVisible) this.syncSegmentedToggle('province-name-toggle', naming.province);
   }
 
   syncViewChrome() {
@@ -149,9 +179,8 @@ export class ChromeSync {
         btn.dataset.puzzleDifficulty ??
         btn.dataset.subregion ??
         btn.dataset.continent ??
-        btn.dataset.worldName ??
-        btn.dataset.worldLang ??
-        btn.dataset.provinceName ??
+        // 取名口径三组由注册表生成，值统一挂 `data-naming-value`（不再每个字段一个 dataset 名）
+        btn.dataset.namingValue ??
         btn.dataset.mode;
       const active = value === current;
       btn.classList.toggle('active', active);
@@ -195,7 +224,8 @@ export class ChromeSync {
     const el = $('mode-progress');
     const current = this.s.current();
     const progress = current?.getProgress() ?? null;
-    if (!progress || (current?.id !== 'self' && current?.id !== 'click')) {
+    // 进度条只有带粒度的测验模式有（模式表：granularity）
+    if (!progress || !hasGranularityToggle(current?.id)) {
       el.classList.add('hidden');
       el.innerHTML = '';
       return;
@@ -210,20 +240,19 @@ export class ChromeSync {
   syncSegments() {
     const current = this.s.current();
     const mode = current?.id;
-    const isPuzzle = mode === 'puzzle';
+    const isPuzzle = isTwoPhaseMode(mode);
     const testStarted = !!current?.isStarted();
     const scope = current?.getScopeProvince();
     const scopeIsNation = isNationLikeScope(scope);
     const isGranularityMode = hasGranularityToggle(mode);
-    const isTestMode = isTimedTestMode(mode);
-    // 跳过/暂停/重置显隐：click/self 未开始只留「重置」，开始后显示 跳过·暂停·重置（顺序：跳过→暂停→重置）
-    // 拼图模式：没有跳过；开始前只留「重置」，开始后给出「暂停」与「重置」
-    $('btn-skip').classList.toggle('hidden', !isTestMode || mode === 'endless' || (isGranularityMode && !testStarted));
-    $('btn-end').classList.toggle('hidden', isPuzzle ? !testStarted : !isTestMode || (isGranularityMode && !testStarted));
-    $('btn-reset').classList.toggle('hidden', isPuzzle ? false : isGranularityMode ? false : !isTestMode && mode !== 'free');
-    // 搜索输入框：输入/自测仅测试开始时显示；无尽闯关输入框常驻
-    const searchVisible = mode === 'endless' || (mode === 'self' && testStarted);
-    $('search-row').classList.toggle('hidden', !searchVisible);
+    // 跳过/暂停/重置显隐：三条规则都是**模式事实**（拼图没跳过、无尽没有重置、熟练度分析没有"开始"），
+    // 故由 `testButtonsVisible` 唯一实现并逐模式断言（原先散在这里的三个嵌套三元表达式）。
+    const buttons = testButtonsVisible(mode, { started: testStarted, board: current?.puzzlePhase?.() === 'board' });
+    $('btn-skip').classList.toggle('hidden', !buttons.skip);
+    $('btn-end').classList.toggle('hidden', !buttons.pause);
+    $('btn-reset').classList.toggle('hidden', !buttons.reset);
+    // 搜索输入框：输入模式仅测试开始时显示；无尽闯关常驻（模式表 search 字段）
+    $('search-row').classList.toggle('hidden', !showsSearchBox(mode, testStarted));
     // 「世界/省级/市级」：点击/输入模式（全国范围且未开始测试时）
     // 与拼图模式（**仅在选范围阶段**——开始后地图与粒度行一起收起，防止中途换范围）
     const showsGranularity = isGranularityMode || isPuzzle;
@@ -240,15 +269,14 @@ export class ChromeSync {
     //   · 熟练度分析（free）没有"开始"，不在这条规则内（它的粒度行是另一个元素、与重置同行）；
     //   · 留言板/管理端没有这些行，占位也跟着隐藏（免得留出一条空档）；
     //   · 粒度行的占位只在粒度行本身可见时才要 —— 无尽未开始没有粒度行，两个占位同时可见会多出一个空行。
-    const notStartedTestLayout = (isTestMode || isPuzzle) && !testStarted;
+    const notStartedTestLayout = (isTimedTestMode(mode) || isPuzzle) && !testStarted;
     $('granularity-break').classList.toggle('hidden', !granularityVisible);
     $('reset-break').classList.toggle('hidden', !notStartedTestLayout);
     // 取名口径行（2026-09 新增）：世界档「国名/首都」+「中文/英文」，省级全国档「省名/简称」。
     this.syncNamingRows(isGranularityMode, testStarted, granularity, scope);
     // 「全世界/…大洲」：仅世界粒度、全国范围、未开始测试时显示（选中某洲后出题范围缩到该洲）
-    // 熟练度分析（free）世界档无「开始测试」概念，故单独放行（Q21）。
-    // 拼图模式的世界档同样用它选范围。
-    const isAnalysisWorld = mode === 'free' && (current?.getGranularity?.() ?? 'city') === 'world';
+    // 熟练度分析的世界档无「开始测试」概念，故单独放行（Q21）。拼图模式的世界档同样用它选范围。
+    const isAnalysisWorld = isAnalysisMode(mode) && (current?.getGranularity?.() ?? 'city') === 'world';
     const isWorldGranularity =
       isAnalysisWorld || (granularityVisible && (current?.getGranularity?.() ?? 'province') === 'world');
     $('continent-toggle').classList.toggle('hidden', !isWorldGranularity);
@@ -271,15 +299,19 @@ export class ChromeSync {
       this.renderSubregionButtons(worldScope.continent, subregionsOf(this.s.data, worldScope.continent));
       this.syncSegmentedToggle('subregion-toggle', worldScope.subregion ?? '');
     }
-    // 「顺序/随机/错题」：click/self 未开始测试时显示（测试中整组隐藏）
-    $('self-order-toggle').classList.toggle('hidden', mode !== 'self' || testStarted);
-    $('click-order-toggle').classList.toggle('hidden', mode !== 'click' || testStarted);
-    // 熟练度分析：世界/省级/地级切换（自由模式常显）
-    $('analysis-granularity-toggle').classList.toggle('hidden', mode !== 'free');
-    if (mode === 'free') {
+    // 「顺序/随机/错题」：有该行的模式（表里的 orderToggleId）在未开始测试时显示，测试中整组收起。
+    // 行的集合由模式表推导 —— 将来某个模式再加一组顺序行，只改表，这里不用动。
+    const orderId = orderToggleIdOf(mode);
+    for (const id of ORDER_TOGGLE_IDS) {
+      $(id).classList.toggle('hidden', id !== orderId || testStarted);
+    }
+    if (orderId) {
+      this.syncSegmentedToggle(orderId, (current?.getOrderMode?.() ?? defaultOrderOf(mode) ?? 'random') as OrderMode);
+    }
+    // 熟练度分析：世界/省级/地级切换（分析模式常显，与「开始」无关）
+    $('analysis-granularity-toggle').classList.toggle('hidden', !isAnalysisMode(mode));
+    if (isAnalysisMode(mode)) {
       this.syncSegmentedToggle('analysis-granularity-toggle', (current?.getGranularity?.() ?? 'city') as Granularity);
     }
-    this.syncSegmentedToggle('self-order-toggle', (current?.getOrderMode?.() ?? 'sequential') as OrderMode);
-    this.syncSegmentedToggle('click-order-toggle', (current?.getOrderMode?.() ?? 'random') as OrderMode);
   }
 }

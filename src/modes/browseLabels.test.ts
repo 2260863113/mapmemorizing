@@ -2,10 +2,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ClickMode } from './click';
 import { InputMode } from './input';
 import { browseLabelState } from './browseLabels';
-import type { ModeCtx } from './types';
 import type { AppData, RenderState } from '../types';
-import { makeAppData } from '../testFixture';
-import { Matcher } from '../matcher';
+import { makeTestCtx } from '../testCtx';
 
 /**
  * 「未开始时显示地图标签」的行为约束（2026-09：自由模式下线后并入前四个模式）。
@@ -27,57 +25,7 @@ const DATA_OVER: Partial<AppData> = {
 };
 
 function makeCtx(showBrowseLabels = true) {
-  const states: RenderState[] = [];
-  const renderer = {
-    setWorldMode: () => {},
-    setProvinceMode: () => {},
-    render: (state: RenderState) => {
-      states.push(state);
-    },
-    drillToProvince: () => {},
-    backToNation: () => {},
-    currentProvince: () => null,
-    flash: () => {},
-    focusUnit: () => {},
-    focusWorldCountry: () => {},
-    panUnit: () => {},
-    panWorldCountry: () => {},
-  };
-  const practice = { correctCount: 0, wrongCount: 0, score: 0 };
-  const data = makeAppData(DATA_OVER);
-  const ctx = {
-    data,
-    renderer,
-    matcher: new Matcher(data),
-    store: {
-      getPractice: () => practice,
-      getProvincePractice: () => practice,
-      getWorldPractice: () => practice,
-      recordAnswer: () => {},
-      recordProvinceAnswer: () => {},
-      recordWorldAnswer: () => {},
-    },
-    search: { setPlaceholder: () => {}, setRequireEnter: () => {}, clear: () => {}, focus: () => {} },
-    stats: {},
-    settings: {
-      darkMode: false,
-      cityBoundaryTone: 'light',
-      provinceBoundaryTone: 'dark',
-      worldBoundaryTone: 'mid',
-      ignoreTinyCountries: false,
-      showBrowseLabels,
-    },
-    byAdcode: new Map(),
-    toast: () => {},
-    setHint: () => {},
-    showTimer: () => {},
-    showStopwatch: () => {},
-    showSummary: () => {},
-    hideSummary: () => {},
-    updateProgress: () => {},
-    randomUnit: (pool: never[]) => pool[0],
-  } as unknown as ModeCtx;
-  return { ctx, states };
+  return makeTestCtx({ data: DATA_OVER, showBrowseLabels });
 }
 
 /** 只落粒度、不走 enter（避免开始卡片的 DOM 依赖）。 */

@@ -1,10 +1,9 @@
 import * as echarts from 'echarts';
-import type { AppData, BoundaryTone, Continent, RenderState, SubregionId, Unit, UnitColor } from '../types';
-import { t } from '../i18n';
+import type { AppData, BoundaryTone, Continent, RenderState, SubregionId, Unit } from '../types';
 import { MAP_THEMES, type MapTheme, type ThemeName } from './theme';
-import { bboxOf, bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
+import { bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './geometry';
 import { buildLabelAnchors, buildProvinceLines } from './geoIndex';
-import { MAX_ZOOM, MIN_ZOOM, clampZoom } from './zoom';
+import { MAX_ZOOM, clampZoom } from './zoom';
 import { clampFollowCenter, followZoomFloor, isComfortablyVisible, isNegligibleMove } from './follow';
 import { InsetMap } from './inset';
 import { registerMaps } from './mapRegistry';
@@ -12,110 +11,47 @@ import { boxOfCoords, cullToViewport, type CullBox } from './cull';
 import { worldFaceInteractive, type WorldFaceContext } from './worldFaces';
 import { tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
 import type { MapRendererDiagnostics } from './rendererDiagnostics';
+// 取景换算（纯函数：默认视野 / 标定框 / 取景边界 / 下钻相机 / 缓动）见 ./camera.ts
 import {
-  buildCityEventData,
+  continentView,
+  defaultViewFor,
+  easeInOutCubic,
+  followZoomFor,
+  framingExtent,
+  pickView,
+  provinceCamera,
+  subregionView,
+} from './camera';
+// option 三块大件（geo / tooltip / 各条 series）的构造见 ./series.ts
+import {
+  buildGeoOption,
+  buildTooltipOption,
+  cityLabelSeries,
+  eventSeries,
+  provinceLikeLabelSeries,
+  provinceLinesSeries,
+} from './series';
+import {
   buildLabelData,
-  buildProvinceEventData,
   buildProvinceLabelData,
-  buildProvinceRegionData,
-  buildRegionData,
-  buildWorldEventData,
   buildWorldLabelData,
-  buildWorldRegionData,
   WORLD_LABEL_ZOOM,
   type GeoRegion,
-  type LabelPoint,
   type LayerInput,
 } from './layers';
-import {
-  CITY_LABEL_SIZE,
-  PRICE_LABEL_SIZE,
-  PROVINCE_LABEL_SIZE,
-  buildLabelGraphic,
-  labelScale,
-  parseLabelValue,
-} from './labels';
+import { labelScale } from './labels';
 
-/**
- * `series` 数组的**元素**类型。从 ECharts 自己的 option 类型里取（而不是去猜它内部
- * `SeriesOption$1` 之类被重命名的名字）。
- *
- * 为什么需要显式标注：series 的元素原本嵌在 `const option: echarts.EChartsOption = {...}`
- * 里，靠上下文把 `type: 'custom'` 收窄成字面量类型、把 `renderItem(_params, api)` 的
- * 参数推断出来。一旦把某条 series 搬进独立方法，上下文就丢了 —— 会得到
- * `Type 'string' is not assignable to type '"lines"'` 与一串 `implicitly has an any type`。
- */
-type SeriesItem = Exclude<NonNullable<echarts.EChartsOption['series']>, readonly unknown[]>;
-const NATION_W = 61.6; // 全国经度跨度（约 73.5 ~ 135.1）
-const NATION_H = 49.8; // 全国纬度跨度（约 3.8 ~ 53.6）
+// `series` 数组的元素类型（SeriesItem）与 STATUS_TXT 文案表随 series 构造一起搬到 ./series.ts
 const LABEL_ZOOM = 4; // 默认缩放倍率阈值；记忆模式可通过 RenderState 覆盖（世界档的 WORLD_LABEL_ZOOM 在 ./layers.ts）
 const FOLLOW_ANIMATION_MS = 650;
-const WIDE_FOLLOW_PROVINCES = new Set(['650000', '630000', '540000', '150000']);
-const HAINAN_PROVINCE = '460000';
 const LABEL_UPDATE_DELAY = 120;
 const FOLLOW_FRAME_INTERVAL = 1000 / 45;
-
-/** 投影 bbox（[[lng0,lat0],[lng1,lat1]]）拉平成 [lng0, lat0, lng1, lat1]（与 CONTINENT_VIEWS 同构）。 */
-function flattenBBox(bb: [[number, number], [number, number]]): [number, number, number, number] {
-  return [bb[0][0], bb[0][1], bb[1][0], bb[1][1]];
-}
 
 // 五档缩放档位的阈值与地图名映射统一放在 ./tiers.ts（纯逻辑 + 单测覆盖），
 // renderer 只经 activeTier() / chinaTierMapName() / provinceTierMapName() 间接使用，
 // 避免地级与省级各写一套阈值而漂移。见该文件顶部注释的精细度阶梯表。
-/** 全国视图默认中心/缩放（ECharts geo 在 center=数据 bbox 中心 + zoom=1 时即默认 fit、整图居中）。 */
-const DEFAULT_VIEWS: Record<string, { center: [number, number]; zoom: number }> = {
-  china: { center: [104.3, 28.5], zoom: 1 },
-  'china-coarse': { center: [104.3, 28.5], zoom: 1 }, // coarse 历史别名（= pro 档），同数据范围
-  'china-ultra': { center: [104.3, 28.5], zoom: 1 }, // ultra 档同数据范围
-  'china-pro': { center: [104.3, 28.5], zoom: 1 }, // pro 档同数据范围
-  'china-plus': { center: [104.3, 28.5], zoom: 1 }, // plus 档同数据范围
-  'china-lossless': { center: [104.3, 28.5], zoom: 1 }, // 无损档同数据范围
-  'china-provinces': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-coarse': { center: [104.3, 28.5], zoom: 1 }, // 省级 coarse 历史别名（= ultra 档）
-  'china-provinces-ultra': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-pro': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-plus': { center: [104.3, 28.5], zoom: 1 },
-  'china-provinces-raw': { center: [104.3, 28.5], zoom: 1 }, // 省级无损档同数据范围
-  world: { center: [0, -3.2], zoom: 1 },
-};
-
-/**
- * 固定投影范围（geo.boundingCoords 的 [左上, 右下] lng/lat）。
- *
- * 为什么必需：ECharts 默认按**当前注册地图的几何 bbox** 自动适配投影范围，
- * 而同一地区不同简化档的 bbox 并不严格相同 —— 实测 ultra 档与省级粗档把南海诸岛
- * 最南端简化掉，纬度下界从 3.3974 变成 3.5349（高度少 0.1375°，约 15km）。
- * bbox 一变，投影比例与居中偏移就变，于是缩放跨换档阈值触发换档时整幅地图微移、
- * 鼠标所指位置出现偏移。
- *
- * 用 boundingCoords 把投影范围钉成常量后，地级五档与省级五档共用同一投影，
- * 换档前后同一经纬度的像素位置完全一致（这也是「地图不因换档移动」的根本保证）。
- * 取值与中国族各档数据的实际并集一致，保证默认视野与钉死前完全相同。
- */
-const MAP_PROJECTION_BBOX: Record<'china' | 'world', [[number, number], [number, number]]> = {
-  china: [
-    [73.5, 3.4],
-    [135.1, 53.6],
-  ],
-  world: [
-    [-180, -90],
-    [180, 83.6],
-  ],
-};
-
-const STATUS_TXT: Record<UnitColor, string> = {
-  green: t('map.status.green'),
-  blue: t('map.status.blue'),
-  red: t('map.status.red'),
-  gray: t('map.status.gray'),
-  scoreGreenLight: t('map.status.scoreGreenLight'),
-  scoreGreenMedium: t('map.status.scoreGreenMedium'),
-  scoreGreenDark: t('map.status.scoreGreenDark'),
-  scoreRedLight: t('map.status.scoreRedLight'),
-  scoreRedMedium: t('map.status.scoreRedMedium'),
-  scoreRedDark: t('map.status.scoreRedDark'),
-};
+// 默认视野表（DEFAULT_VIEWS）、钉死的投影范围（MAP_PROJECTION_BBOX）与全国跨度常量
+// （NATION_W / NATION_H）也随取景换算一起搬到 ./camera.ts。
 
 export interface MapHandlers {
   onUnitClick: (adcode: string) => boolean | void;
@@ -184,9 +120,7 @@ export function worldFollowZoom(area: number): number {
   return Math.min(WORLD_FOLLOW_MAX_ZOOM, Math.max(WORLD_FOLLOW_MIN_ZOOM, z));
 }
 
-function easeInOutCubic(t: number) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
+// 镜头动画缓动 easeInOutCubic 随取景换算一起搬到 ./camera.ts
 
 /**
  * ECharts 渲染器：单视图架构。
@@ -522,11 +456,6 @@ export class MapRenderer {
     this.cullToViewport();
   }
 
-  /** 某地图的默认全国视图（数据 bbox 中心 + zoom 1 = ECharts 的 fit 居中视图）。 */
-  private defaultViewFor(mapName: string): { center: [number, number]; zoom: number } {
-    return DEFAULT_VIEWS[mapName] ?? { center: [104.3, 28.5], zoom: 1 };
-  }
-
   /** 切走某地图族前，把当前全国视野记入对应记忆槽（仅全国层：钻省状态不参与，此时以钻省前快照为准）。 */
   private snapshotViewBeforeLeave() {
     const mapName = this.currentMapName();
@@ -548,18 +477,12 @@ export class MapRenderer {
 
   /** 进入某地图族时应用记忆：有记忆则恢复，无则默认居中。仅设字段，不 setOption。 */
   private pickViewFor(mapName: string): { center: [number, number]; zoom: number } {
-    if (mapName === 'world') {
-      // 次区域/大洲视图优先于世界记忆：切范围必须聚焦该范围，不能被「上次世界视野」覆盖
-      if (this.worldSubregion) return this.subregionView(this.worldSubregion);
-      if (this.worldContinent) return this.continentView(this.worldContinent);
-      if (this.savedWorldView) {
-        return { center: [this.savedWorldView.center[0], this.savedWorldView.center[1]], zoom: this.savedWorldView.zoom };
-      }
-    } else if (this.savedChinaView) {
-      return { center: [this.savedChinaView.center[0], this.savedChinaView.center[1]], zoom: this.savedChinaView.zoom };
-    }
-    const def = this.defaultViewFor(mapName);
-    return { center: [def.center[0], def.center[1]], zoom: def.zoom };
+    return pickView(mapName, {
+      worldSubregion: this.worldSubregion,
+      worldContinent: this.worldContinent,
+      savedWorldView: this.savedWorldView,
+      savedChinaView: this.savedChinaView,
+    });
   }
 
   /** 应用地图相机（含记忆恢复），并 setOption 生效。 */
@@ -622,8 +545,8 @@ export class MapRenderer {
       this.savedNationView = null;
       this.viewProvince = null;
       this.viewProvinceBox = null;
-      this.center = saved ? saved.center : this.defaultViewFor(this.currentMapName()).center;
-      this.zoom = saved ? saved.zoom : this.defaultViewFor(this.currentMapName()).zoom;
+      this.center = saved ? saved.center : defaultViewFor(this.currentMapName()).center;
+      this.zoom = saved ? saved.zoom : defaultViewFor(this.currentMapName()).zoom;
       this.labelMode = 'none';
       restoreCamera = true;
     }
@@ -664,12 +587,12 @@ export class MapRenderer {
     }
     if (on && nextSub) {
       // 次区域视图：聚焦该次区域 bbox（比大洲更近）
-      const v = this.subregionView(nextSub);
+      const v = subregionView(nextSub);
       this.center = [v.center[0], v.center[1]];
       this.zoom = v.zoom;
     } else if (on && this.worldContinent) {
       // 大洲视图：聚焦该洲 bbox
-      const v = this.continentView(this.worldContinent);
+      const v = continentView(this.worldContinent);
       this.center = [v.center[0], v.center[1]];
       this.zoom = v.zoom;
     } else if (on !== wasWorld) {
@@ -730,89 +653,9 @@ export class MapRenderer {
     return this.data.subregions.find((s) => s.id === id)?.continent ?? null;
   }
 
-  /**
-   * 大洲聚焦框（手工标定，lng0/lat0/lng1/lat1）。
-   *
-   * 为什么手工标定而不是按成员国 bbox 自动计算：
-   *   1. 跨经度 180° 的海外领地（俄楚科奇、美阿留申、法属波利尼西亚、新西兰查塔姆）
-   *      会让自动 bbox 撑成 360°；
-   *   2. 更根本的是俄罗斯：按国际惯例归欧洲，但主体横跨 20°E–180°E，
-   *      「包含全部成员国」必然把欧洲拉成 200°+ 宽 —— 而使用者要的是「欧洲大陆」的取景。
-   * 相机取景是 UI 决策，标定值确定、可复核、可测试；框外的远端领地仍可通过拖动到达（roam 已开启）。
-   */
-  private static readonly CONTINENT_VIEWS: Record<Continent, [number, number, number, number]> = {
-    // 亚洲：土耳其/高加索 → 日本，西伯利亚 → 印尼
-    AS: [26, -11, 147, 56],
-    // 欧洲：冰岛/葡萄牙 → 乌拉尔（含欧俄），北角 → 地中海
-    EU: [-25, 34, 60, 71],
-    // 非洲：佛得角 → 索马里角，好望角 → 突尼斯
-    AF: [-20, -36, 52, 38],
-    // 北美洲：阿拉斯加 → 纽芬兰，巴拿马 → 加拿大北极群岛
-    NA: [-168, 6, -52, 74],
-    // 南美洲：秘鲁西岸 → 巴西东岸，火地岛 → 委内瑞拉
-    SA: [-82, -56, -34, 13],
-    // 大洋洲：巴布亚新几内亚 → 日界线，新西兰 → 赤道（东侧岛国可平移到达）
-    OC: [112, -48, 180, 2],
-  };
-
-  /** 计算某大洲的聚焦 center/zoom（按标定框换算，见 CONTINENT_VIEWS 的说明）。 */
-  private continentView(c: Continent): { center: [number, number]; zoom: number } {
-    return this.viewFromBox(MapRenderer.CONTINENT_VIEWS[c]);
-  }
-
-  /**
-   * 次区域聚焦框（手工标定，lng0/lat0/lng1/lat1；与 CONTINENT_VIEWS 同一套道理）。
-   *
-   * 为什么同样手标：
-   *   - 「东欧」含俄罗斯 → 自动 bbox 会从 20°E 拉到 180°E，把视角推成半个北半球；
-   *   - 「波利尼西亚/密克罗尼西亚/美拉尼西亚」跨 180° 经线，自动 bbox 直接撑成 360°；
-   *   - 「加勒比」是弧状群岛，自动 bbox 会把大西洋一起框进来。
-   * 框外的远端岛屿仍可通过拖动到达（roam 已开启），取景是 UI 决策而非数据推导。
-   */
-  private static readonly SUBREGION_VIEWS: Record<SubregionId, [number, number, number, number]> = {
-    // 亚洲
-    EAS: [73, 18, 146, 54], // 中国 → 日本，南海 → 蒙古/黑龙江
-    SEA: [92, -11, 141, 24], // 缅甸 → 菲律宾，印尼 → 中南半岛北缘
-    SAS: [60, 5, 93, 37], // 阿富汗 → 孟加拉，斯里兰卡 → 喜马拉雅北麓
-    WAS: [25, 12, 64, 43], // 土耳其 → 阿曼湾，也门 → 高加索
-    CAS: [46, 35, 88, 56], // 里海 → 中国西界，土库曼 → 哈萨克北缘
-    // 欧洲
-    NEU: [-25, 53, 32, 72], // 冰岛 → 芬兰东界，波罗的海三国 → 北角
-    WEU: [-11, 42, 10, 61], // 爱尔兰 → 德国西界，伊比利亚 → 苏格兰
-    CEU: [5, 42, 25, 55], // 德国 → 波兰东界，阿尔卑斯 → 波罗的海
-    EEU: [20, 40, 60, 70], // 波兰东界 → 乌拉尔，巴尔干 → 北冰洋沿岸
-    SEU: [-10, 34, 29, 46], // 葡萄牙 → 希腊/罗马尼亚南缘，地中海 → 阿尔卑斯南麓
-    // 非洲
-    NAF: [-18, 15, 36, 38], // 摩洛哥 → 埃及，萨赫勒 → 地中海
-    WAF: [-18, 4, 16, 25], // 佛得角 → 尼日利亚东界，几内亚湾 → 撒哈拉南缘
-    MAF: [6, -8, 32, 12], // 喀麦隆 → 刚果东界，安哥拉 → 乍得北缘
-    EAF: [28, -27, 52, 18], // 苏丹 → 塞舌尔，莫桑比克 → 厄立特里亚
-    SAF: [11, -35, 41, -16], // 纳米比亚 → 莫桑比克东岸，好望角 → 博茨瓦纳北缘
-    // 北美
-    NAM: [-170, 24, -50, 74], // 阿拉斯加 → 纽芬兰，墨西哥北缘 → 加拿大北极群岛
-    CAM: [-93, 7, -77, 19], // 危地马拉 → 巴拿马，巴拿马 → 墨西哥南缘
-    CAR: [-85, 9, -59, 28], // 古巴西端 → 巴巴多斯，特立尼达 → 巴哈马
-    // 南美（单一分区，UI 不显示次区域行；保留映射以维持数据完整性）
-    SAM: [-82, -56, -34, 13],
-    // 大洋洲
-    ANZ: [110, -48, 179, -9], // 澳大利亚 → 新西兰，塔斯马尼亚 → 巴布亚新几内亚北缘
-    MEL: [140, -23, 172, 1], // 巴布亚新几内亚 → 所罗门/瓦努阿图，斐济 → 赤道
-    MIC: [130, -2, 175, 15], // 帕劳 → 马绍尔，瑙鲁 → 关岛北缘
-    POL: [-180, -28, -130, 12], // 图瓦卢/萨摩亚 → 复活节岛方向，汤加 → 赤道北
-  };
-
-  /** 按标定框换算 center/zoom（世界图 zoom 1 时经度跨度约 360，留 12% 边距）。 */
-  private viewFromBox(box: [number, number, number, number]): { center: [number, number]; zoom: number } {
-    const [x0, y0, x1, y1] = box;
-    const center: [number, number] = [(x0 + x1) / 2, (y0 + y1) / 2];
-    const spanX = Math.max(x1 - x0, 1e-6);
-    return { center, zoom: clampZoom((360 / spanX) * 0.88) };
-  }
-
-  /** 计算某次区域的聚焦 center/zoom（按标定框换算）。 */
-  private subregionView(id: SubregionId): { center: [number, number]; zoom: number } {
-    return this.viewFromBox(MapRenderer.SUBREGION_VIEWS[id]);
-  }
+  // 大洲/次区域的**标定框**（CONTINENT_VIEWS / SUBREGION_VIEWS）与按框换算的
+  // viewFromBox / continentView / subregionView 都是纯换算，已整体搬到 ./camera.ts；
+  // 本类只在 setWorldMode / pickViewFor 里调用它们。
 
   /** 显示港澳放大框（延迟到容器可见后再初始化图表，否则 ECharts 按 0 尺寸渲染）。 */
   private theme(): MapTheme {
@@ -976,15 +819,23 @@ export class MapRenderer {
     // 数据层的只读输入组装**一次**，喂给所有构造器（见 ./layers.ts）
     const ctx = this.layerInput(state);
 
-    // option 的三块大件各自成方法：它们原先首尾相接成一坨 166 行的字面量，
+    // option 的三块大件各自成函数（见 ./series.ts）：它们原先首尾相接成一坨 166 行的字面量，
     // 读的人分不清哪几行属于 tooltip、哪几行属于 geo 的投影钉死、哪几行属于 5 条 series。
+    // 这里只留「建哪三块、按什么顺序」的编排，以及 series 数组里 5 条 series 的先后顺序。
     const option: echarts.EChartsOption = {
       backgroundColor: theme.background,
       animation: false,
       animationDuration: 0,
       animationDurationUpdate: 0,
-      tooltip: this.buildTooltipOption(state, theme),
-      geo: this.buildGeoOption(mapName, ctx),
+      tooltip: buildTooltipOption(state, theme, {
+        // 这三项是 ECharts 悬停时才读的**活值**（formatter 是闭包）：worldMode 收闭包、
+        // 查表收引用（渲染器只原地 set，从不重新赋值），避免取快照后切模式首帧口径不一致。
+        worldMode: () => this.worldMode,
+        worldNameToIso: this.worldNameToIso,
+        isWorldFaceInteractive: (name) => this.worldFaceInteractive(name),
+        nameToUnit: this.nameToUnit,
+      }),
+      geo: buildGeoOption(mapName, ctx),
       series: this.buildSeriesOption(mapName, ctx),
     };
     // ECharts 已知问题：geo 组件的 map 在多个已注册地图间切换（省级↔市级↔世界）时，
@@ -1017,201 +868,34 @@ export class MapRenderer {
     this.cullToViewport();
   }
 
-  /** tooltip：三档粒度各一套文案；不可交互的面（其他洲 / 被排除的极小国 / 装饰面）只显示面名。 */
-  private buildTooltipOption(state: RenderState, theme: MapTheme): echarts.EChartsOption['tooltip'] {
-    return state.disableTooltip
-      ? { show: false }
-      : {
-          trigger: 'item',
-          backgroundColor: theme.tooltipBg,
-          borderColor: theme.tooltipBorder,
-          textStyle: { color: theme.tooltipText },
-          formatter: (p) => {
-            const params = p as { name?: string };
-            const hitName = params.name ?? '';
-            if (this.worldMode) {
-              const iso = this.worldNameToIso.get(hitName);
-              // 不可交互的面（其他洲 / 被排除的极小国 / 装饰面）不显示答题态 tooltip
-              if (!iso || !this.worldFaceInteractive(hitName)) return String(hitName);
-              const color: UnitColor = state.colorOf(iso);
-              return t('map.tooltip.worldBody', { name: hitName, status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }) });
-            }
-            const u = this.nameToUnit.get(hitName);
-            if (!u) return String(hitName);
-            if (state.coin) {
-              const coins = u.decorative ? 0 : state.coin.coins(u.adcode);
-              const coinsTxt = coins > 0 ? `${coins}￥` : t('map.tooltip.coinCollected');
-              return t('map.tooltip.body', { name: u.name, province: u.province, coins: coinsTxt });
-            }
-            const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
-            const status = u.decorative ? '' : t('map.tooltip.statusLine', { status: STATUS_TXT[color] });
-            return t('map.tooltip.bodyBase', { name: u.name, province: u.province, status });
-          },
-        };
-  }
+  // tooltip 与 geo 两个 option 片段的构造（含 STATUS_TXT 文案表、投影钉死）已搬到 ./series.ts，
+  // 那里只读 LayerInput 与显式依赖，不持有渲染器实例。
 
-  /** geo 组件：地图名 + 投影钉死（boundingCoords）+ regions（世界 / 省级 / 地级三分支）。 */
-  private buildGeoOption(mapName: string, ctx: LayerInput): echarts.EChartsOption['geo'] {
-    const theme = ctx.theme;
-    return {
-      map: mapName, // 世界/省级用专属地图；否则用地级地图（series 绑定后使用同一地图，地名才能匹配上）
-      roam: true,
-      scaleLimit: { min: MIN_ZOOM, max: MAX_ZOOM },
-      silent: false,
-      selectedMode: false,
-      tooltip: { show: false },
-      label: { show: false },
-      emphasis: {
-        label: { show: false },
-        itemStyle: { areaColor: theme.hoverArea }, // 悬停高亮（半透明遮罩，覆盖整个面）
-      },
-      select: { label: { show: false } },
-      itemStyle: {
-        areaColor: 'rgba(0,0,0,0)',
-        borderColor: 'rgba(0,0,0,0)',
-        borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
-      },
-      regions: ctx.worldMode
-        ? buildWorldRegionData(ctx)
-        : ctx.provinceMode
-          ? buildProvinceRegionData(ctx)
-          : buildRegionData(ctx),
-      // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
-      // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
-      // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
-      // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
-      boundingCoords: MAP_PROJECTION_BBOX[this.worldMode ? 'world' : 'china'],
-    };
-  }
-
-  /** 5 条 series：事件层、省界线、以及三条标签层。 */
+  /**
+   * 5 条 series：事件层、省界线、以及三条标签层。
+   *
+   * 这里保留编排（数组顺序 = 渲染层序），各条 series 的骨架在 ./series.ts。顺序上有一处
+   * 必须留意：`buildLineData()` 是**带副作用**的（顺带把每段省界线的 bbox 写进 `lineBoxes`
+   * 供逐帧裁剪），所以它作为 `provinceLinesSeries` 的实参、在第 2 个元素处求值 ——
+   * 与搬迁前（第 2 条 series 内部调用它）的求值时机完全一致，既不提前也不延后。
+   */
   private buildSeriesOption(mapName: string, ctx: LayerInput): echarts.EChartsOption['series'] {
     const theme = ctx.theme;
     return [
-      this.eventSeries(mapName, ctx),
-      this.provinceLinesSeries(theme),
+      eventSeries(mapName, ctx),
+      provinceLinesSeries(theme, this.provinceBoundaryTone, this.buildLineData()),
       // 世界练习的国名标签：随缩放缩小
-      this.provinceLikeLabelSeries('world-labels', 10, buildWorldLabelData(ctx), theme, () => labelScale(this.zoom)),
-      this.cityLabelSeries(buildLabelData(ctx), theme),
+      provinceLikeLabelSeries('world-labels', 10, buildWorldLabelData(ctx), theme, () => labelScale(this.zoom)),
+      cityLabelSeries(buildLabelData(ctx), theme, () => labelScale(this.zoom)),
       // 省级练习的省名标签：已作答省的简称，**始终显示**。字号固定为最大档（scale=1）、
       // 不随缩放缩小，故恒按「放大足够时」的样式渲染（字号/衬底/间距统一最大）；
       // z = 9 低于 city-labels 但高于省界线。
-      this.provinceLikeLabelSeries('province-labels', 9, buildProvinceLabelData(ctx), theme, () => 1),
+      provinceLikeLabelSeries('province-labels', 9, buildProvinceLabelData(ctx), theme, () => 1),
     ];
   }
 
-  /** 事件层：只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。 */
-  private eventSeries(mapName: string, ctx: LayerInput): SeriesItem {
-    const data = ctx.worldMode
-      ? buildWorldEventData(ctx)
-      : ctx.provinceMode
-        ? buildProvinceEventData(ctx.data)
-        : buildCityEventData(ctx.units);
-    return {
-      id: 'city-events',
-      type: 'map',
-      map: mapName,
-      geoIndex: 0,
-      selectedMode: false,
-      label: { show: false },
-      emphasis: { label: { show: false } },
-      select: { label: { show: false } },
-      data,
-    };
-  }
-
-  /** 省界线层：粗线画在地级面之上（世界模式无省界线，buildLineData 返回空）。 */
-  private provinceLinesSeries(theme: MapTheme): SeriesItem {
-    return {
-      id: 'province-lines',
-      type: 'lines',
-      coordinateSystem: 'geo',
-      geoIndex: 0,
-      z: 3, // 画在地级面之上
-      silent: true,
-      tooltip: { show: false },
-      polyline: true, // 必须开启：false 时每个省界环只取前两个点，边界基本不可见
-      lineStyle: { color: theme.boundary[this.provinceBoundaryTone], width: 2.4, opacity: 1 },
-      data: this.buildLineData(),
-    };
-  }
-
-  /**
-   * 国名 / 省名标签层。
-   *
-   * 这两条 series 的骨架**完全相同**（同 geoIndex、同 silent、同无 tooltip、同字号与衬底
-   * 比例），原先各写一份、只差 id / z / 「scale 从哪来」。合并成一个工厂，免得两份
-   * renderItem 各自漂移（改了一处忘另一处）。调用点：
-   *   · 国名标签（世界练习）随缩放缩小 → `() => labelScale(this.zoom)`
-   *   · 省名标签（省级练习）恒按放大足够时的样式渲染 → `() => 1`
-   *
-   * `scaleOf` 是**闭包**而不是值，这一点是硬要求：ECharts 会在缩放/拖动期间反复调用
-   * `renderItem`，每次都该读当时的 `this.zoom`。若在构建 option 时取快照，标签字号
-   * 会在缩放过程中卡住（不报错、只是"看起来有点怪"的回归）。
-   */
-  private provinceLikeLabelSeries(
-    id: string,
-    z: number,
-    data: LabelPoint[],
-    theme: MapTheme,
-    scaleOf: () => number,
-  ): SeriesItem {
-    return {
-      id,
-      type: 'custom',
-      coordinateSystem: 'geo',
-      geoIndex: 0,
-      z,
-      silent: true,
-      tooltip: { show: false },
-      renderItem: (_params, api) => {
-        const parsed = parseLabelValue(api);
-        if (!parsed) return { type: 'group', children: [] };
-        const scale = scaleOf();
-        return buildLabelGraphic({
-          ...parsed,
-          scale,
-          theme,
-          fontSize: PROVINCE_LABEL_SIZE * scale,
-          padX: 7 * scale,
-          padY: 4 * scale,
-          minWidth: 30 * scale,
-          fontWeight: 600,
-        });
-      },
-      data,
-    };
-  }
-
-  /** 地名标签层（含无尽闯关的价格标签：字号与衬底按 `isPrice` 分档，故与上面那条不共用）。 */
-  private cityLabelSeries(data: LabelPoint[], theme: MapTheme): SeriesItem {
-    return {
-      id: 'city-labels',
-      type: 'custom',
-      coordinateSystem: 'geo',
-      geoIndex: 0,
-      z: 10,
-      silent: true,
-      tooltip: { show: false },
-      renderItem: (_params, api) => {
-        const parsed = parseLabelValue(api);
-        if (!parsed) return { type: 'group', children: [] };
-        const scale = labelScale(this.zoom);
-        const fontSize = (parsed.isPrice ? PRICE_LABEL_SIZE : CITY_LABEL_SIZE) * scale;
-        return buildLabelGraphic({
-          ...parsed,
-          scale,
-          theme,
-          fontSize,
-          padX: (parsed.isPrice ? 4 : 8) * scale,
-          padY: (parsed.isPrice ? 3 : 6) * scale,
-          minWidth: (parsed.isPrice ? 26 : 34) * scale,
-          fontWeight: parsed.isPrice ? 700 : 600,
-        });
-      },
-      data,
-    };
-  }
+  // 三条标签 series 的骨架（provinceLikeLabelSeries / cityLabelSeries 两个工厂）也在 ./series.ts：
+  // 它们只吃「数据 + 主题 + 读 zoom 的闭包」，唯一的实例状态就是那个 `() => labelScale(this.zoom)`。
 
   /**
    * 只渲染当前视角范围内的地级面与省界线（详见 cull.ts 的说明）。
@@ -1281,7 +965,7 @@ export class MapRenderer {
     }
     const extent = this.framingExtent();
     const win = this.viewportWindow();
-    const zoom = followZoomFloor(win, this.zoom, extent, this.followZoomFor(u.provinceAdcode));
+    const zoom = followZoomFloor(win, this.zoom, extent, followZoomFor(u.provinceAdcode));
     const center = clampFollowCenter(win, this.zoom, u.center, zoom, extent);
     if (isNegligibleMove(win, this.center, this.zoom, center, zoom)) return; // 钳制后基本没动，就别白跑一趟动画
     this.animateViewTo(center, zoom);
@@ -1327,15 +1011,19 @@ export class MapRenderer {
    * 视口越出它就会露出纯背景色 —— 这正是「跟随把边界附近的目标顶到正中 → 半屏空白」的根因。
    * 分层取值：下钻省 = 该省地级单位并集 bbox；世界次区域/大洲 = 各自标定框；
    * 否则按地图族用钉死的投影 bbox（中国 / 世界）。
+   *
+   * 换算本身是 `./camera.ts` 的纯函数 `framingExtent(ctx)`；这里保留同名方法是因为它是
+   * `diagnostics()` 契约的一部分（验收探针直接调 `framingExtent()`），同时充当
+   * 「字段 → 显式上下文」的适配，免得四个调用点各自摊开这份上下文。
    */
   private framingExtent(): [number, number, number, number] {
-    if (this.worldMode) {
-      if (this.worldSubregion) return MapRenderer.SUBREGION_VIEWS[this.worldSubregion];
-      if (this.worldContinent) return MapRenderer.CONTINENT_VIEWS[this.worldContinent];
-      return flattenBBox(MAP_PROJECTION_BBOX.world);
-    }
-    if (this.viewProvince && this.viewProvinceBox) return this.viewProvinceBox;
-    return flattenBBox(MAP_PROJECTION_BBOX.china);
+    return framingExtent({
+      worldMode: this.worldMode,
+      worldSubregion: this.worldSubregion,
+      worldContinent: this.worldContinent,
+      viewProvince: this.viewProvince,
+      viewProvinceBox: this.viewProvinceBox,
+    });
   }
 
   /** geo 坐标系（读数用）：`pointToData` 把画布像素换算成经纬度。 */
@@ -1390,11 +1078,8 @@ export class MapRenderer {
     return this.data.countryArea?.[iso] ?? 0;
   }
 
-  private followZoomFor(provinceAdcode: string) {
-    if (WIDE_FOLLOW_PROVINCES.has(provinceAdcode)) return 6;
-    if (provinceAdcode === HAINAN_PROVINCE) return 28;
-    return 12;
-  }
+  // 中国族的跟随倍率阶梯 followZoomFor（宽省 6x / 海南 28x / 其余 12x）已搬到 ./camera.ts；
+  // 世界族的 worldFollowZoom 留在本文件 —— 它是**导出**给验收探针的标定函数，位置不动。
 
   private animateViewTo(targetCenter: [number, number], targetZoom: number) {
     if (this.followRaf !== null) cancelAnimationFrame(this.followRaf);
@@ -1458,28 +1143,18 @@ export class MapRenderer {
     const geo = this.data.geoJson as {
       features: { properties: { adcode: string }; geometry: { coordinates: unknown } }[];
     };
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const u of units) {
-      const feat = geo.features.find((f) => f.properties.adcode === u.adcode);
-      if (!feat) continue;
-      const b = bboxOf(feat);
-      minX = Math.min(minX, b[0]);
-      minY = Math.min(minY, b[1]);
-      maxX = Math.max(maxX, b[2]);
-      maxY = Math.max(maxY, b[3]);
-    }
-    if (!isFinite(minX)) return;
-    const bw = Math.max(maxX - minX, 0.5);
-    const bh = Math.max(maxY - minY, 0.5);
-    const zoom = clampZoom(Math.max(1.05, (1 / Math.max(bw / NATION_W, bh / NATION_H)) * 0.9));
+    // 并集 bbox 与倍率换算是纯计算，见 ./camera.ts 的 provinceCamera（要素无一命中时返回 null）
+    const cam = provinceCamera(units, geo.features);
+    if (!cam) return;
+    const zoom = cam.zoom;
     if (this.viewProvince === null) {
       // 从全国下钻：记住下钻前的全国视图（缩放/位置），返回全国（backToNation）时恢复
       this.savedNationView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
     }
     this.viewProvince = adcode;
     // 该省几何 bbox 同时充当钻省期间的**取景边界**（邻省透明，越出即露白）
-    this.viewProvinceBox = [minX, minY, maxX, maxY];
-    this.center = [(minX + maxX) / 2, (minY + maxY) / 2];
+    this.viewProvinceBox = cam.box;
+    this.center = cam.center;
     this.zoom = zoom;
     this.labelMode = this.desiredLabelMode();
     if (this.lastState) this.render(this.lastState);
@@ -1496,7 +1171,7 @@ export class MapRenderer {
       this.savedNationView = null;
       this.viewProvince = null;
       this.viewProvinceBox = null;
-      const def = this.defaultViewFor('world');
+      const def = defaultViewFor('world');
       this.center = [def.center[0], def.center[1]];
       this.zoom = def.zoom;
       this.labelMode = 'none';
@@ -1514,7 +1189,7 @@ export class MapRenderer {
       this.center = saved.center;
       this.zoom = saved.zoom;
     } else {
-      const def = this.defaultViewFor(this.currentMapName());
+      const def = defaultViewFor(this.currentMapName());
       this.center = [def.center[0], def.center[1]];
       this.zoom = def.zoom;
     }

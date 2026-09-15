@@ -22,6 +22,7 @@ import { CONTINENTS } from '../types';
 import type { ModeCtx } from './types';
 import { BaseMode } from './baseMode';
 import { t } from '../i18n';
+import { modeTitle } from './capabilities';
 import {
   buildProvinceAdjacency,
   canDrillProvince,
@@ -82,7 +83,7 @@ export function formatClock(ms: number): string {
 
 export class PuzzleMode extends BaseMode {
   id: Mode = 'puzzle';
-  title = t('mode.puzzle.title');
+  title = modeTitle('puzzle');
 
   private pieces: PuzzlePieceDef[] = [];
   private state: PuzzleState | null = null;
@@ -408,7 +409,7 @@ export class PuzzleMode extends BaseMode {
   private renderStartCard() {
     showStartCard({
       id: 'puzzle-start',
-      title: t('puzzle.startTitle'),
+      title: modeTitle('puzzle'),
       subtitle: t('puzzle.startSubtitle', { scope: this.scopeLabel() }),
       onStart: () => this.startRun(),
     });

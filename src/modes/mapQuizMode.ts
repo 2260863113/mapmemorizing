@@ -5,7 +5,8 @@ import type { QuizSessionDiagnostics } from './quizDiagnostics';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { loadStoredNaming, saveStoredNaming } from './namingStore';
 import { browseLabelState, type BrowseLabelScope } from './browseLabels';
-import { flagSrcOf, flagThumbSrcOf, preloadFlags, stopFlagPreload } from './flagPreload';
+import { activeChoiceOf, type NamingField } from './naming';
+import { preloadFlags, stopFlagPreload } from './flagPreload';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView } from './progress';
@@ -16,9 +17,7 @@ import {
   buildProvinceAdjacency,
   canDrillProvince,
   continentScope,
-  provinceAbbr,
   provinceByAdcode,
-  provinceCapital,
   provinceShortName,
   provinceUnits,
   PROVINCE_NATION_SCOPE,
@@ -335,13 +334,16 @@ export abstract class MapQuizMode extends BaseMode {
    * 只在「世界档 + 国旗档」下动作；其它口径/范围立即停队列（省掉无用的请求）。
    */
   protected syncFlagPreload() {
-    if (!this.isWorldNation() || this.naming.world !== 'flag') {
+    // 判据不是"是不是国旗档"，而是"当前这一档的**题面是不是图片**"——由注册表的 questionImage 说话，
+    // 将来若有别的图片档（例如按国徽出题），预取自动跟上，不用改这里。
+    const image = activeChoiceOf('world', this.naming).questionImage;
+    if (!this.isWorldNation() || !image) {
       stopFlagPreload();
       return;
     }
     const srcs: string[] = [];
-    const push = (adcode: string) => {
-      const src = flagSrcOf(this.ctx.data, adcode);
+    const push = (id: string) => {
+      const src = image(id, this.ctx.data);
       if (src) srcs.push(src);
     };
     if (this.question) push(this.question); // 当前题最优先（恢复会话/刚进模式时它可能还不在缓存里）
@@ -379,6 +381,7 @@ export abstract class MapQuizMode extends BaseMode {
   /**
    * 未开始浏览标签的**内容**：按当前取名口径给文本或国旗小图（2026-09 用户口径）。
    *
+   * 内容本身由口径注册表给（`labelName` / `labelImage`）：
    * - 世界档：「国名」→ 国名；「首都」→ 首都名；「国旗」→ **国旗缩略图**；中/英文照常作用于前两者；
    * - 省级全国档：「省名」→ 去后缀省名（历史行为）；「省会」→ 省会名；「简称」→ 单字简称；
    * - 地级档：返回 null —— 地级单位没有别的叫法，标签仍写单位名（口径只覆盖世界全国与省级全国）。
@@ -387,15 +390,13 @@ export abstract class MapQuizMode extends BaseMode {
    * 用户看到的是"少了一面旗"，而不是一个空白标签。
    */
   protected browseLabelContentOf(id: string): BrowseLabelContent | null {
-    if (this.isWorldNation()) {
-      if (this.naming.world === 'flag') {
-        const src = flagThumbSrcOf(this.ctx.data, id);
-        return src ? { image: src } : null;
-      }
-      return { text: this.worldDisplayName(id) };
-    }
-    if (this.isProvinceNation()) return { text: this.provinceLabelTextOf(id) };
-    return null;
+    const field = this.namingField();
+    if (!field) return null;
+    const choice = activeChoiceOf(field, this.naming);
+    const image = choice.labelImage?.(id, this.ctx.data);
+    if (image) return { image };
+    const text = choice.labelName?.(id, this.ctx.data, this.naming);
+    return text ? { text } : null;
   }
 
   /**
@@ -958,63 +959,51 @@ export abstract class MapQuizMode extends BaseMode {
   /**
    * 某个单位在当前口径下的**显示名**：题卡（点击模式）、地图标签、答错提示共用这一处。
    *
-   * 为什么不各自拼一份：这三处都要跟着「国名/首都」「中文/英文」「省名/简称」变，任何一处漏改
+   * 为什么不各自拼一份：这三处都要跟着「国名/首都/国旗」「中文/英文」「省名/省会/简称」变，任何一处漏改
    * 就会出现「题卡写首都、标签写国名」这类自相矛盾的界面。数据缺失时逐级回落（首都 → 国名，
-   * 英文 → 中文），保证永远有可显示文本。
+   * 英文 → 中文，省会 → 去后缀省名），保证永远有可显示文本。
+   *
+   * 文本实现**不在这个类里**：它跟着"考什么"一起声明在口径注册表（`src/modes/naming.ts` 的
+   * `questionName`），这里只负责"取当前档 → 问它 → 没有就用地级单位名"。
    */
   protected displayNameOf(unit: Unit): string {
-    if (this.isWorldNation()) return this.worldDisplayName(unit.adcode);
-    // 省级全国：「省名」档沿用历史题面（省全名，如 广东省），「省会」档是省会名（石家庄），
-    // 「简称」档才是单字（沪）
-    if (this.isProvinceNation()) return this.provinceQuestionNameOf(unit.adcode, unit.name);
-    return unit.name; // 地级（市级全国 / 单省）不受取名口径影响
+    const field = this.namingField();
+    if (!field) return unit.name; // 地级（市级全国 / 单省）不受取名口径影响
+    const choice = activeChoiceOf(field, this.naming);
+    return choice.questionName?.(unit.adcode, this.ctx.data, this.naming) ?? unit.name;
+  }
+
+  /** 当前视图落在哪一档取名口径上（地级档没有口径）。 */
+  protected namingField(): NamingField | null {
+    if (this.isWorldNation()) return 'world';
+    if (this.isProvinceNation()) return 'province';
+    return null;
   }
 
   /**
-   * 省级全国的**题面**名：省名档 = 省全名（`unit.name`，历史行为）；省会档 = 省会名；简称档 = 单字简称。
-   * 抽成一处是因为它同时被题面与答错提示使用（`displayNameOf`），而标签那侧另有 `provinceLabelTextOf`。
+   * 世界档某国的显示名（国名 或 首都名，按语言取中/英文）；
+   * 「国旗」档也走这里 → 返回**国名**：国旗档只换题面，答错提示与已作答标签仍要写出"这面旗是哪国"。
    */
-  protected provinceQuestionNameOf(adcode: string, fullName: string): string {
-    if (this.naming.province === 'abbr') return provinceAbbr(this.ctx.data, adcode);
-    if (this.naming.province === 'capital') return provinceCapital(this.ctx.data, adcode);
-    return fullName;
-  }
-
-  /**
-   * 世界档显示名：国名 或 首都名，再按语言取中/英文。
-   *
-   * `flag` 档也走这里 → 返回**国名**：国旗档只换题面（标签里放不下旗帜，用户口径），
-   * 语言开关照常作用于标签与答错提示里的名字。
-   */
-  protected worldDisplayName(iso: string): string {
-    const names = this.ctx.data.countryNames[iso];
-    if (this.naming.world === 'capital') {
-      const capital = this.naming.lang === 'en' ? names?.capitalEn : names?.capital;
-      return capital || this.countryName(iso);
-    }
-    if (this.naming.lang === 'en') return names?.en || this.countryName(iso);
-    return this.countryName(iso);
+  protected worldNameOf(iso: string): string {
+    const choice = activeChoiceOf('world', this.naming);
+    return choice.questionName?.(iso, this.ctx.data, this.naming) ?? this.countryName(iso);
   }
 
   /**
    * 某国国旗的资源路径（点击模式「国旗」档的题面用）；没有资源时返回 null，
    * 调用方回落到国名题面 —— 宁可退化成文字题，也不要给一张破图/空白卡片。
+   * 哪一档题面用图也由注册表说话（`questionImage`），故这里不含"是不是国旗档"的判断。
    */
   protected worldFlagSrc(iso: string): string | null {
-    return flagSrcOf(this.ctx.data, iso);
+    return activeChoiceOf('world', this.naming).questionImage?.(iso, this.ctx.data) ?? null;
   }
 
   /**
-   * 省级全国**地图标签**的文本。
-   *
-   * 与题面口径分开是因为两者历史上就不同：标签一直是去后缀省名（广东省 → 广东），
-   * 而题面是省全名（广东省）。省会档两者都是省会名，简称档两者统一成单字（沪）
-   * —— 这正是用户要的「标签也显示所选内容」。
+   * 省级全国**地图标签**的文本（省名档是去后缀省名，与题面的省全名不同；省会/简称档两者一致）。
    */
   protected provinceLabelTextOf(adcode: string): string {
-    if (this.naming.province === 'abbr') return provinceAbbr(this.ctx.data, adcode);
-    if (this.naming.province === 'capital') return provinceCapital(this.ctx.data, adcode);
-    return provinceShortName(this.ctx.data, adcode);
+    const choice = activeChoiceOf('province', this.naming);
+    return choice.labelName?.(adcode, this.ctx.data, this.naming) ?? provinceShortName(this.ctx.data, adcode);
   }
 
   /**
@@ -1041,8 +1030,8 @@ export abstract class MapQuizMode extends BaseMode {
   protected worldLabelOf(): RenderState['worldLabel'] {
     if (!this.isWorldNation()) return undefined;
     return (iso) => {
-      if (this.green.has(iso)) return { text: this.worldDisplayName(iso), color: 'green' as const };
-      if (this.red.has(iso)) return { text: this.worldDisplayName(iso), color: 'red' as const };
+      if (this.green.has(iso)) return { text: this.worldNameOf(iso), color: 'green' as const };
+      if (this.red.has(iso)) return { text: this.worldNameOf(iso), color: 'red' as const };
       return null;
     };
   }
