@@ -33,6 +33,7 @@ export function makeAppData(over: Partial<AppData> = {}): AppData {
     countries: [],
     countryNames: {},
     countryFlags: {},
+    countryFlagThumbs: {},
     worldGeoJson: null,
     subregions: [],
     isoSubregion: {},

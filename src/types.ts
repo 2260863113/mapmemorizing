@@ -117,6 +117,14 @@ export interface AppData {
    * 值是 `public/data/flags/` 下的文件名（如 `jp.svg`），前端拼成 `data/flags/<文件名>` 加载。
    */
   countryFlags: Record<string, string>;
+  /**
+   * iso_a3 → 国旗**缩略图**文件名（public/data/flags/thumbs.json；未开始浏览标签上的国旗用）。
+   *
+   * 与 `countryFlags` 是两张表、单一职责：那张是原始矢量（题面卡片要清楚、且用户口径明确不压缩），
+   * 这张是 40×30 WebP 小图（地图标签只有二十几像素宽，194 张合计 163KB 而原始 SVG 是 1.21MB）。
+   * 同样拼成 `data/flags/thumbs/<文件名>`。两张表的键集合一致由 `worldFlagsData.test.ts` 断言。
+   */
+  countryFlagThumbs: Record<string, string>;
   worldGeoJson: unknown; // 世界地图（答题国 + 装饰面）
   subregions: SubregionMeta[]; // 世界 23 个次区域（方位式粗分，见 docs/adr/0004）
   isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（194 条全覆盖）
@@ -230,6 +238,15 @@ export interface ProvinceLabel {
   color: 'green' | 'red';
 }
 
+/**
+ * **未开始的浏览标签**的内容（2026-09：地图标签按用户选的取名口径显示）。
+ *
+ * `text` = 文本标签（国名/首都/省名/省会/简称…）；`image` = 图片标签（「国旗」档的国旗小图）。
+ * 两者互斥，`image` 优先。返回 `null`（或整个钩子不传）= 该单位没有口径特化内容，
+ * 用系列默认文本（地级单位名 / 省去后缀名 / 国名）。
+ */
+export type BrowseLabelContent = { text?: string; image?: string };
+
 export interface RenderState {
   colorOf: (adcode: string) => UnitColor;
   showAllLabels?: boolean; // 记忆模式：全部显示地名标签
@@ -243,4 +260,12 @@ export interface RenderState {
   worldShowAllLabels?: boolean; // 世界地图放大后常显全部国名标签（熟练度分析世界档）
   /** 世界国名标签的显示倍率阈值；省略时用渲染器默认（2.2）。未开始的浏览标签与熟练度分析传 0 = 任何倍率都显示。 */
   worldLabelZoomThreshold?: number;
+  /**
+   * **未开始的浏览标签**的内容（2026-09）：按当前取名口径给文本或图片（见 `BrowseLabelContent`）。
+   *
+   * `id` 是地级/省级的 adcode 或世界的 iso_a3（与 `colorOf` 同一套 id）。
+   * 只在**中性全量标签**那几支生效（`showAllLabels` / `showAllProvinceLabels` / `worldShowAllLabels`）；
+   * 已作答的绿/红标签仍走 `provinceLabel` / `worldLabel` —— 那是答题反馈，不随浏览口径变。
+   */
+  browseLabel?: (id: string) => BrowseLabelContent | null;
 }

@@ -113,9 +113,11 @@
           <button id="world-lang-zh" type="button" class="active" data-world-lang="zh" role="radio" aria-checked="true">中文</button>
           <button id="world-lang-en" type="button" data-world-lang="en" role="radio" aria-checked="false">英文</button>
         </div>
-        <!-- 省级全国取名口径：省名（默认，题面=省全名、标签=去后缀省名）/ 简称（沪）。省级档无中英文切换。 -->
-        <div id="province-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="省级全国题面：按省名或简称">
+        <!-- 省级全国取名口径：省名（默认，题面=省全名、标签=去后缀省名）/ 省会（石家庄）/ 简称（沪）。
+             省级档无中英文切换。三段都作用于**题面与地图标签**（未开始时的浏览标签按所选口径显示）。 -->
+        <div id="province-name-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="省级全国题面：按省名、省会或简称">
           <button id="province-name-full" type="button" class="active" data-province-name="full" role="radio" aria-checked="true">省名</button>
+          <button id="province-name-capital" type="button" data-province-name="capital" role="radio" aria-checked="false">省会</button>
           <button id="province-name-abbr" type="button" data-province-name="abbr" role="radio" aria-checked="false">简称</button>
         </div>
         <div id="analysis-granularity-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="熟练度分析粒度">

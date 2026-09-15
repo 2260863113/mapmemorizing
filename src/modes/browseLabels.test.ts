@@ -106,6 +106,23 @@ describe('browseLabelState（纯函数）', () => {
   it('开关关掉时是空片段（不留下任何标签开关）', () => {
     for (const scope of ['world', 'provinceNation', 'city'] as const) expect(browseLabelState(scope, false)).toEqual({});
   });
+
+  /**
+   * 取名口径的落点：`content` 被原样接进片段，渲染层对每个单位问一次"这一格写什么"
+   * （2026-09：标签显示首都/省会/简称/国旗小图）。不传时 `browseLabel` 为 undefined ——
+   * 渲染层据此回落到历史默认文本。
+   */
+  it('content 原样接进片段（每个 id 问一次），不传则为 undefined', () => {
+    const asked: string[] = [];
+    const withContent = browseLabelState('world', true, (id) => {
+      asked.push(id);
+      return { text: 'X' };
+    });
+    expect(typeof withContent.browseLabel).toBe('function');
+    expect(withContent.browseLabel?.('JPN')).toEqual({ text: 'X' });
+    expect(asked).toEqual(['JPN']);
+    expect(browseLabelState('world', true).browseLabel).toBeUndefined();
+  });
 });
 
 describe('点击/输入模式 · 未开始时的浏览标签', () => {

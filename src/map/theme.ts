@@ -9,6 +9,8 @@ export type MapTheme = {
   hoverArea: string;
   labelBg: string;
   labelShadow: string;
+  /** 图片标签（浏览态国旗）卡片的描边色：白底国旗在浅色主题下需要一圈轮廓才看得见。 */
+  labelBorder: string;
   labelGreen: string;
   labelRed: string;
   labelNeutral: string;
@@ -56,6 +58,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
     hoverArea: 'rgba(255,255,255,0.22)',
     labelBg: 'rgba(255,255,255,0.94)',
     labelShadow: 'rgba(15, 23, 42, 0.22)',
+    labelBorder: 'rgba(15, 23, 42, 0.28)',
     labelGreen: '#15803d',
     labelRed: '#b91c1c',
     labelNeutral: '#374151',
@@ -106,6 +109,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
     hoverArea: 'rgba(148,163,184,0.18)',
     labelBg: 'rgba(15,23,42,0.9)',
     labelShadow: 'rgba(0, 0, 0, 0.42)',
+    labelBorder: 'rgba(148, 163, 184, 0.42)',
     labelGreen: '#86efac',
     labelRed: '#fca5a5',
     labelNeutral: '#dbeafe',

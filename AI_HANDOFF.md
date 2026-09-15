@@ -1,6 +1,52 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：标签按口径显示 + 省级「省会」档 + 国旗小图与"只缓存接下来两个"
+
+用户三句话，三件事（都做完并验收）：
+
+1. 「点击/输入模式下，未开始时地图标签按用户选的内容显示（选首都就标首都、选简称就标简称）」
+2. 「省的分段按钮『省名/简称』加上『省会』」
+3. 「地图上的国旗标签可以压缩，大幅减小体积；但点击模式题面卡片里的国旗不压缩（另外，不一次性全量缓存，仅仅缓存接下来两个国旗）」
+
+### 1. 未开始的浏览标签按取名口径显示
+
+- 落点：`RenderState.browseLabel?: (id) => { text?; image? } | null`（`src/types.ts`），由 `MapQuizMode.browseLabelContentOf()` 给出：世界档 → 国名/首都/英文名，或**国旗缩略图**；省级全国 → 去后缀省名/省会名/单字简称；地级档 → `null`（地级没有别的叫法，回落到单位名）。
+- 渲染侧：`layers.browseLabelPoint()` 给三支中性标签（`showAllLabels` / `showAllProvinceLabels` / `worldShowAllLabels`）统一出数据；图片走 value 元组的**新增第 7 位**（`[lng, lat, text, color, isPrice, noBg, image]`），`labels.parseLabelValue` 因此把"文本为空就丢弃"放宽成"文本与图片都空才丢弃"——**不放宽就会把整档国旗标签静默丢光**（不报错、地图上什么都没有）。
+- 图片标签在 zrender 里就是 `{ type: 'image', style: { image: url, x, y, width, height } }`：**字符串 URL 可用**，加载完自己调 `hostEl.dirty()` 重绘（`zrender/lib/graphic/helper/image.js`），**不需要**任何"图片就绪后再刷一次"的机制。外面套一张 `labelBg` 卡片 + `labelBorder` 描边：白底国旗（瑞士/日本/孟加拉）直接画在浅色地图上等于看不见。缩放下限 0.6（文字缩到 0.5 倍还能认，40px 的旗缩到 20px 只剩色块）。
+- **已作答的绿/红标签仍按原口径写名字**（国旗档写国名）：那是答题反馈，得读得懂；只有浏览态才画旗。这条口径写在 `modes/types.ts` 的 `QuestionNaming` 文档里。
+
+### 2. 省级「省会」档（三档：省名 / 省会 / 简称）
+
+- 数据 `src/province-capital.json`（34 条）+ `province.ts` 的 `provinceCapital()` / `isProvinceCapitalInput()`，与 `province-abbr.json` 同一手法（静态口径表单独成 JSON，不重跑行政区数据管线）。判题接 `Matcher.normalize`，故「石家庄」与「石家庄市」都算对，而「河北」「冀」不算（与简称档同一"考什么就只认什么"原则）。
+- **直辖市与特区的省会就是它自己**（京津沪渝港澳）：事实而非占位，不做特判 —— 特判会让省会档题库随行政体制变化"少几个省"，更难解释。`provinceCapital.test.ts` 专门断言这 6 条相等、其余 28 条必须不同（相同即漏表回落成省名）。
+- 输入模式也提供（用户口径）：占位提示 `self.provinceCapitalPlaceholder` = 输入省会名。
+
+### 3. 国旗：标签用 40px WebP 小图，题面仍用原始 SVG，且只预取接下来两道
+
+- 新管线 `scripts/build-flag-thumbs.mjs`：无头 Edge + CDP 把 194 面 SVG 逐张画进 40×30 canvas、`toDataURL('image/webp', 0.85)`，写出 `public/data/flags/thumbs/*.webp` + `thumbs.json`。**实测合计 163KB**（原始 SVG 1.21MB，小约 87%；中位 814 字节、最大 1KB）。与 `index.json` 是两张表、各自单一职责；`worldFlagsData.test.ts` 断言键集合逐字相同、文件存在且**真的是 40×30 WebP**（读 RISFF/VP8 头解析宽高，防止哪天有人把原图拷进来）。
+- **预取从"整池 194 面"改成"当前题 + 接下来两道"**（用户口径）。难点：点击模式的下一题是答对那一刻才随机/按分数选的，不提前定下来就无从知道该缓存哪两面。于是 `ClickMode.lookahead` 把选题**提前一步**：
+  - 正确性论证（写在 `click.ts` 的类内文档里）：**错题顺序**下分数只在被作答时改变、被作答就离开池子 → 剩余池的排序在预选与消费之间不可能变 → 预选结果与届时重选**逐字相同**；**随机顺序**下池子相同、均匀抽取 → 分布相同，只是抽签提前一次。预演**绝无副作用**：`pickWrongNext` 唯一的副作用是弹"错题已出完"，故传状态副本 + 空提示函数。
+  - 消费时仍按 adcode 重新校验是否还在池内，不在就当场重选（换池/重置会清空预选）。
+  - 新计划**保留仍然有效的旧预选**再补足到两道：否则每题都把下一题的抽签重来一次，上一次预取的那张图白取（等于每题多请求一张）。
+  - 首题也要规划：`start()` 里 `onStarted(first)` 先播种，再 `ask(first)`，**最后**才 `syncFlagPreload()`（顺序反了队列里的"下一题"就是旧的，新题仍要等网络）。
+- 实测（`verify-naming.mjs` 第 6 节，真实浏览器的 `performance.getEntriesByType('resource')`）：未开始时**一次国旗请求都没发**（旧版是 194 面）；开始瞬间恰好 3 面在队、网络 3~4 面；**每换一题只多 1 面**，且新题那一面在换题前就已请求。缩略图标签 193 张 + 1 行已作答国名，`naturalWidth/Height` = 40×30。
+- 顺手修掉一个探针能看到的真 bug：`flagPreload` 的 `inFlight` 在换池时被重置，而旧队列已发出的请求回调仍会跑 → **计数变负**（探针实测 `inFlight: -1`，并发上限因此形同虚设）。加 `generation` 代次：旧回调识别出代次已变就只返回、不再减。
+
+### 验证
+
+- `npm run check` exit 0（43 文件 / **475** 用例；本轮 +25：`provinceCapital.test.ts` 7、`quizNaming.test.ts` +14、`labels.test.ts` +4、`worldFlagsData.test.ts` +4、`browseLabels.test.ts` +1，另有多处随口径更新）。
+- 运行时：`verify-naming.mjs` **47/47**（本轮 30→47）、`verify-round3` 54/54、`verify-round2` 38/38、`verify-puzzle` 75/75 = **214/214**。
+- ⚠ `quizNaming.test.ts` 现在还要 stub `localStorage` 与 `window`（`start()` 会碰秒表与进度记忆），并 `resetFlagPreloadForTest()` 复位模块级 `done`/代次。
+
+### 留给下次
+
+- **每次答对后的地图重绘 ≈120ms**（本机实测，与国旗无关）：`answer()` → `renderer.flash()`（setOption geo.regions + 裁剪）→ 900ms 后再整幅 `render()`。若用户仍觉得"换题有一顿"，该优化的是这里（例如 flash 只改 region 不重建 option）—— 在国旗上已经无可优化（每换一题只 1 个 1KB 请求）。
+- 国旗档的已作答标签写国名，与浏览态的旗是两种表达，这是刻意的；若将来想统一成旗，需要先回答"绿色/红色怎么画在旗上"。
+
 ## 本轮（2026-09）：国旗预加载 —— 消掉"每换一题等 0.5 秒"
+
+> ⚠ 本节的**预取口径已被上一轮取代**：现在是"当前题 + 接下来两道"（用户新口径），不再是整池 194 面。
+> 下面的测量数据与"下一题无法预知"这个约束的论证仍然有效，实现细节（队列来源、挂钩点）请以上一轮为准。
 
 用户报「每次地图都会加载 0.5 秒」。**先量再改**（临时探针：空缓存 profile 下逐题记「出题 → 国旗真的画出来」）：
 

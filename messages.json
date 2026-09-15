@@ -54,6 +54,7 @@
   "self.capitalPlaceholder": "输入首都名",
   "self.capitalEnPlaceholder": "输入首都英文名",
   "self.abbrPlaceholder": "输入省简称",
+  "self.provinceCapitalPlaceholder": "输入省会名",
 
   "click.startTitle": "点击模式",
   "click.startSubtitle": "范围：{scope}，请按提示点击地图",

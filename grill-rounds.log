@@ -751,3 +751,15 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - ⚠ 运行时过滤器要排掉 data/flags/index.json（fetch 发起，会把「预取数」多算 1 并让「全是 img」断言假失败）。verify-naming 新增 2 条：实测预取 194 面且全由 img 发起、当前题的旗已在集合里。
 - 验收：npm run check exit 0（42 文件/445 用例）；verify-naming 30/30、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = 197/197。
 - ⚠ 留给下次：若仍觉得「换题一顿」，该看的是每次答对后的 ~120ms 地图重绘，不是国旗。
+================================================================
+2026-09-15 03:00  未开始的标签按口径显示 + 省级「省会」档 + 国旗小图与「只缓存接下来两个」
+- 需求三句：① 点击/输入模式下**未开始时地图标签按用户选的内容显示**（选首都标首都、选简称标简称）；② 省的分段按钮「省名/简称」加上「省会」；③ 地图上的国旗标签可压缩大幅减体积，但**题面卡片里的国旗不压缩**，且**不一次性全量缓存，仅仅缓存接下来两个国旗**。
+- ① 落点 `RenderState.browseLabel?: (id) => { text?; image? } | null`：世界档给国名/首都/英文名或**国旗缩略图**，省级全国给去后缀省名/省会名/单字简称，地级档返回 null（地级没有别的叫法）。渲染侧三支中性标签统一走 `layers.browseLabelPoint()`；标签数据 value 元组新增**第 7 位 image**，`parseLabelValue` 因此把「文本为空就丢弃」放宽成「文本与图片都空才丢弃」——不放宽会把整档国旗标签**静默丢光**（不报错、地图上什么都没有）。图片在 zrender 里就是 `{type:'image', style:{image:url,...}}`（字符串 URL 可用，加载完自调 `hostEl.dirty()` 重绘，无需任何"就绪后再刷一次"机制），外套一张带描边的卡片（白底国旗直接画在浅色地图上等于看不见），缩放下限 0.6。**已作答的绿/红标签仍写名字**（国旗档写国名）—— 那是答题反馈，要读得懂；只有浏览态画旗。
+- ② 新增 src/province-capital.json（34 条）+ `provinceCapital()` / `isProvinceCapitalInput()`（判题接 Matcher.normalize，故「石家庄」与「石家庄市」都算，省名与简称不算，与简称档同一"考什么只认什么"原则）。**京津沪渝港澳的省会就是它自己**（事实非占位，特判会让省会档题库随行政体制变化"少几个省"，更难解释），provinceCapital.test.ts 专断这 6 条相等、其余 28 条必须不同。输入模式也提供（占位提示「输入省会名」）。
+- ③ 新管线 scripts/build-flag-thumbs.mjs：无头 Edge + CDP 把 194 面 SVG 画进 40×30 canvas、编码 WebP → public/data/flags/thumbs/*.webp + thumbs.json，**实测合计 163KB**（原始 1.21MB，小 87%）。与 index.json 是两张表、各自单一职责；worldFlagsData.test.ts 断言键集合逐字相同、文件存在且**真的是 40×30 WebP**（解 RIFF/VP8 头拿宽高，防"误把原图拷进来"）。
+- ③ 预取从"整池 194 面"改成"当前题 + 接下来两道"：难点是下一题答对那刻才选出，于是 ClickMode.lookahead 把选题**提前一步**。正确性论证写进 click.ts：**错题**顺序下分数只在被作答时改变、被作答就离开池子 → 剩余池排序在预选与消费之间不可能变 → 与届时重选**逐字相同**；**随机**顺序下池子相同、均匀抽取 → 分布相同（只是抽签提前一次）。预演绝无副作用（错题状态传副本 + 空 toast）。消费时按 adcode 重校验是否还在池内；新计划**保留仍有效的旧预选**再补足两道（否则每题重新抽签 → 上次预取的图白取）。首题也要规划：start() 里 onStarted 先播种 → ask(first) → **最后** syncFlagPreload()（顺序反了新题仍要等网络）。
+- 实测（verify-naming 第 6 节，真实浏览器 resource entries）：未开始时**一次国旗请求都没发**（旧版 194 面）；开始瞬间恰好 3 面在队；**每换一题只多 1 面**，且新题那面在换题前就已请求；缩略图标签 193 张 + 1 行已作答国名，naturalWidth/Height = 40×30。
+- ⚠ 顺手修掉探针抓到的真 bug：flagPreload 的 inFlight 在换池时被重置，而旧队列已发出的回调仍会跑 → **计数变负**（实测 inFlight:-1，并发上限形同虚设）。加 generation 代次，旧回调识别后代次已变即只返回。
+- 验收：npm run check exit 0（43 文件/**475** 用例；本轮 +25：provinceCapital 7、quizNaming +14、labels +4、worldFlagsData +4、browseLabels +1）；verify-naming **47/47**（30→47）、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = **214/214**。
+- ⚠ quizNaming.test.ts 现在还要 stub localStorage 与 window（start() 会碰秒表与进度记忆），并 resetFlagPreloadForTest() 复位模块级 done/代次。
+- ⚠ 留给下次：若仍觉得「换题一顿」，该看的是每次答对后的 ~120ms 地图重绘（国旗侧已无可优化：每换一题只 1 个 1KB 请求）；国旗档已作答标签写国名是刻意的，要改成画旗得先回答"绿/红怎么画在旗上"。

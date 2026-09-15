@@ -23,8 +23,8 @@ import type { MapTheme } from './theme';
 /** `geo.regions` 的元素类型（从 ECharts 的 option 类型里取）。 */
 export type GeoRegion = NonNullable<echarts.GeoComponentOption['regions']>[number];
 
-/** 标签点的 value 元组：`[lng, lat, 文字, 字色, 是否价格标签, 是否不画衬底]`。 */
-export type LabelPoint = { name: string; value: [number, number, string, string, number, number] };
+/** 标签点的 value 元组：`[lng, lat, 文字, 字色, 是否价格标签, 是否不画衬底, 图片 URL]`。 */
+export type LabelPoint = { name: string; value: [number, number, string, string, number, number, string] };
 
 /** 世界分析档国名标签的显示倍率阈值；`RenderState.worldLabelZoomThreshold` 可覆盖它。 */
 export const WORLD_LABEL_ZOOM = 2.2;
@@ -72,9 +72,29 @@ export function labelAnchorOf(anchors: Map<string, GeoPoint>, u: Unit): GeoPoint
   return anchors.get(u.adcode) ?? u.center;
 }
 
+/**
+ * **中性全量标签**的一个点（未开始的浏览标签 / 熟练度分析常显）。
+ *
+ * 文字或图片由 `state.browseLabel(id)` 决定 —— 这就是「地图标签按用户选的取名口径显示」的落点：
+ * 选了「首都」标签写首都名（国名/首都 + 中/英文），选了「简称」写单字简称，选了「国旗」画国旗小图。
+ * 钩子没给内容（或返回 null）时用 `fallbackText`（历史行为：地级单位名 / 去后缀省名 / 国名）。
+ *
+ * 图片标签的 `value[2]` 留空串、`value[6]` 放 URL：见 `labels.parseLabelValue` 对空文本的放行。
+ */
+function browseLabelPoint(
+  ctx: LayerInput,
+  id: string,
+  name: string,
+  anchor: GeoPoint,
+  fallbackText: string,
+): LabelPoint {
+  const custom = ctx.state.browseLabel?.(id) ?? null;
+  if (custom?.image) return { name, value: [...anchor, '', ctx.theme.labelNeutral, 0, 0, custom.image] };
+  return { name, value: [...anchor, custom?.text ?? fallbackText, ctx.theme.labelNeutral, 0, 0, ''] };
+}
+
 /** 世界面的范围判定上下文（喂给 `worldFaces.ts` 的纯函数）。 */
-function faceContext(ctx: LayerInput): WorldFaceContext {
-  return {
+function faceContext(ctx: LayerInput): WorldFaceContext {  return {
     continent: ctx.worldContinent,
     subregion: ctx.worldSubregion,
     isoContinent: ctx.isoContinent,
@@ -133,14 +153,15 @@ export function buildLabelData(ctx: LayerInput): LabelPoint[] {
       const lab = state.coin.label(u.adcode);
       if (!lab) return [];
       const anchor = labelAnchorOf(ctx.labelAnchors, u);
-      return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0, lab.noBg ? 1 : 0] }];
+      return [{ name: u.name, value: [...anchor, lab.text, theme.labelNeutral, lab.price ? 1 : 0, lab.noBg ? 1 : 0, ''] }];
     }
     const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
     if (color === 'blue') return []; // 答题模式不泄露当前题目答案
     const anchor = labelAnchorOf(ctx.labelAnchors, u);
-    if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0, 0] }];
-    if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0, 0] }];
-    if (state.showAllLabels) return [{ name: u.name, value: [...anchor, u.name, theme.labelNeutral, 0, 0] }];
+    if (color === 'green') return [{ name: u.name, value: [...anchor, u.name, theme.labelGreen, 0, 0, ''] }];
+    if (color === 'red') return [{ name: u.name, value: [...anchor, u.name, theme.labelRed, 0, 0, ''] }];
+    // 浏览标签：按当前取名口径（地级单位名不受口径影响，钩子返回 null → 用单位名）
+    if (state.showAllLabels) return [browseLabelPoint(ctx, u.adcode, u.name, anchor, u.name)];
     return [];
   });
 }
@@ -191,7 +212,7 @@ export function buildProvinceLabelData(ctx: LayerInput): LabelPoint[] {
     if (!anchor) continue;
     // 熟练度分析省级档：全部省名中性色常显
     if (state.showAllProvinceLabels) {
-      out.push({ name: p.name, value: [...anchor, normalizeProvince(p.name), theme.labelNeutral, 0, 0] });
+      out.push(browseLabelPoint(ctx, p.adcode, p.name, anchor, normalizeProvince(p.name)));
       continue;
     }
     // 测验档：仅已作答省显示绿/红简称
@@ -199,7 +220,7 @@ export function buildProvinceLabelData(ctx: LayerInput): LabelPoint[] {
     const lab = state.provinceLabel(p.adcode);
     if (!lab) continue;
     const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
-    out.push({ name: p.name, value: [...anchor, lab.text, color, 0, 0] });
+    out.push({ name: p.name, value: [...anchor, lab.text, color, 0, 0, ''] });
   }
   return out;
 }
@@ -287,7 +308,7 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
       const lab = state.worldLabel(c.iso);
       if (!lab) continue;
       const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
-      out.push({ name: c.name, value: [...anchor, lab.text, color, 0, 0] });
+      out.push({ name: c.name, value: [...anchor, lab.text, color, 0, 0, ''] });
       colored.add(c.iso);
     }
   }
@@ -301,7 +322,8 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
       if (!visible(c.iso) || colored.has(c.iso)) continue;
       const anchor = ctx.worldLabelAnchors.get(c.iso);
       if (!anchor) continue;
-      out.push({ name: c.name, value: [...anchor, c.name, theme.labelNeutral, 0, 0] });
+      // 浏览标签按当前口径：「国名/首都」+「中/英文」给文本，「国旗」档给国旗小图
+      out.push(browseLabelPoint(ctx, c.iso, c.name, anchor, c.name));
     }
   }
   return out;

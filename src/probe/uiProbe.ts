@@ -29,6 +29,18 @@ export function uiProbe(a: AppDiagnostics) {
           return Array.isArray(value) ? String(value[2] ?? '') : '';
         });
       };
+      /**
+       * 各标签系列实际画出的**图片 URL**（`value[6]`，'' = 文本标签）。
+       * 「国旗」档的浏览标签是**没有文字**的图片标签，故这条与 `textsOf` 必须分开看：
+       * 只看文本会得出"标签为空"的假结论。
+       */
+      const imagesOf = (fn: ((s: RenderState) => unknown[]) | null) => {
+        if (!state || !fn) return null;
+        return fn(state).map((row) => {
+          const value = (row as { value?: unknown[] }).value;
+          return Array.isArray(value) ? String(value[6] ?? '') : '';
+        });
+      };
 
       return {
         mode: a.current?.id ?? null,
@@ -60,6 +72,12 @@ export function uiProbe(a: AppDiagnostics) {
           city: textsOf(d.buildLabelData),
           province: textsOf(d.buildProvinceLabelData),
           world: textsOf(d.buildWorldLabelData),
+        },
+        /** 各标签系列实际会画出的图片 URL（`''` = 该行是文本标签）；「国旗」档的浏览标签靠它断言。 */
+        labelImages: {
+          city: imagesOf(d.buildLabelData),
+          province: imagesOf(d.buildProvinceLabelData),
+          world: imagesOf(d.buildWorldLabelData),
         },
         labels: state
           ? {

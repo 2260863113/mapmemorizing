@@ -1,11 +1,11 @@
-import type { Continent, Mode, RenderState, RoundResult, SubregionId, Unit } from '../types';
+import type { BrowseLabelContent, Continent, Mode, RenderState, RoundResult, SubregionId, Unit } from '../types';
 import { CONTINENTS } from '../types';
 import type { ModeCtx, OrderMode, ProgressSegment, QuestionNaming } from './types';
 import type { QuizSessionDiagnostics } from './quizDiagnostics';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { loadStoredNaming, saveStoredNaming } from './namingStore';
 import { browseLabelState, type BrowseLabelScope } from './browseLabels';
-import { flagSrcOf, preloadFlags, stopFlagPreload } from './flagPreload';
+import { flagSrcOf, flagThumbSrcOf, preloadFlags, stopFlagPreload } from './flagPreload';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView } from './progress';
@@ -18,6 +18,7 @@ import {
   continentScope,
   provinceAbbr,
   provinceByAdcode,
+  provinceCapital,
   provinceShortName,
   provinceUnits,
   PROVINCE_NATION_SCOPE,
@@ -324,10 +325,13 @@ export abstract class MapQuizMode extends BaseMode {
   // ==================== 国旗预加载（点击模式「国旗」档） ====================
 
   /**
-   * 把当前出题池的国旗排进后台预取队列（当前题优先）。
+   * 把**接下来要用的**国旗排进后台预取队列（当前题优先）。
    *
-   * 为什么是"整个池"：点击模式的下一题是答对那一刻才随机决定的，无法预知"下一面"是哪一面；
-   * 把池子预取完，之后无论抽到谁都在缓存里 → 换题瞬间出图（详见 flagPreload.ts 的说明）。
+   * 为什么不是"整个池"：那是本机制的第一版做法（194 面 1.21MB）—— 用户 2026-09 口径改为
+   * 「不一次性全量缓存，仅仅缓存接下来两个国旗」。要做到这一点必须**知道接下来考哪两面**，
+   * 于是点击模式把选题提前了一步（`ClickMode.lookahead` 的说明里有正确性论证）。
+   *
+   * 队列长度因此恒为 3（当前 + 接下来两道），与 `flagPreload` 的 3 并发正好对上：三张图同时请求。
    * 只在「世界档 + 国旗档」下动作；其它口径/范围立即停队列（省掉无用的请求）。
    */
   protected syncFlagPreload() {
@@ -336,13 +340,18 @@ export abstract class MapQuizMode extends BaseMode {
       return;
     }
     const srcs: string[] = [];
-    const push = (iso: string) => {
-      const src = flagSrcOf(this.ctx.data, iso);
+    const push = (adcode: string) => {
+      const src = flagSrcOf(this.ctx.data, adcode);
       if (src) srcs.push(src);
     };
-    if (this.question) push(this.question); // 当前题最优先（万一缓存里还没有它）
-    for (const u of this.activePool()) push(u.adcode);
+    if (this.question) push(this.question); // 当前题最优先（恢复会话/刚进模式时它可能还不在缓存里）
+    for (const adcode of this.flagLookaheadIds()) push(adcode);
     preloadFlags(srcs);
+  }
+
+  /** 已经**确定**的后续题 adcode（队首 = 下一题）。子类在没有预选能力时返回空。 */
+  protected flagLookaheadIds(): string[] {
+    return [];
   }
 
   // ==================== 浏览标签（未开始时的全量地名） ====================
@@ -362,7 +371,31 @@ export abstract class MapQuizMode extends BaseMode {
    */
   protected browseLabelState(): Partial<RenderState> {
     if (this.started && !this.settled) return {};
-    return browseLabelState(this.browseLabelScope(), this.ctx.settings.showBrowseLabels);
+    return browseLabelState(this.browseLabelScope(), this.ctx.settings.showBrowseLabels, (id) =>
+      this.browseLabelContentOf(id),
+    );
+  }
+
+  /**
+   * 未开始浏览标签的**内容**：按当前取名口径给文本或国旗小图（2026-09 用户口径）。
+   *
+   * - 世界档：「国名」→ 国名；「首都」→ 首都名；「国旗」→ **国旗缩略图**；中/英文照常作用于前两者；
+   * - 省级全国档：「省名」→ 去后缀省名（历史行为）；「省会」→ 省会名；「简称」→ 单字简称；
+   * - 地级档：返回 null —— 地级单位没有别的叫法，标签仍写单位名（口径只覆盖世界全国与省级全国）。
+   *
+   * 数据缺失一律返回 null 而不是空内容：渲染层会回落到默认文本（缺国旗就写国名），
+   * 用户看到的是"少了一面旗"，而不是一个空白标签。
+   */
+  protected browseLabelContentOf(id: string): BrowseLabelContent | null {
+    if (this.isWorldNation()) {
+      if (this.naming.world === 'flag') {
+        const src = flagThumbSrcOf(this.ctx.data, id);
+        return src ? { image: src } : null;
+      }
+      return { text: this.worldDisplayName(id) };
+    }
+    if (this.isProvinceNation()) return { text: this.provinceLabelTextOf(id) };
+    return null;
   }
 
   /**
@@ -726,6 +759,9 @@ export abstract class MapQuizMode extends BaseMode {
     this.onStarted(first);
     this.stopwatch.start((elapsedMs) => this.ctx.showStopwatch(elapsedMs));
     this.ask(first);
+    // 首题也要排预取：`onStarted` 刚把"接下来两道"定下来，此刻队列 = 首题 + 接下来两道。
+    // （不进这里的话首题的国旗要等 `ask` 之后那次 refresh 才发现缓存里没有 —— 正是要消掉的那次等待）
+    this.syncFlagPreload();
   }
 
   protected unvisited(): Unit[] {
@@ -804,8 +840,11 @@ export abstract class MapQuizMode extends BaseMode {
       this.finish();
       return;
     }
-    this.syncFlagPreload(); // 国旗档：新题最优先（池子可能因答题而缩小）
-    this.ask(this.nextUnit(pool));
+    // 先选题（子类的预选队列随之推进到"接下来两道"），再排预取 —— 顺序不能反：
+    // 反了的话预取队列里的"下一题"还是旧的，新题仍要等一次网络（这正是本机制要消掉的那 0.5 秒）。
+    const next = this.nextUnit(pool);
+    this.syncFlagPreload();
+    this.ask(next);
   }
 
   /**
@@ -925,9 +964,20 @@ export abstract class MapQuizMode extends BaseMode {
    */
   protected displayNameOf(unit: Unit): string {
     if (this.isWorldNation()) return this.worldDisplayName(unit.adcode);
-    // 省级全国：「省名」档沿用历史题面（省全名，如 广东省），「简称」档才是单字（沪）
-    if (this.isProvinceNation()) return this.naming.province === 'abbr' ? provinceAbbr(this.ctx.data, unit.adcode) : unit.name;
+    // 省级全国：「省名」档沿用历史题面（省全名，如 广东省），「省会」档是省会名（石家庄），
+    // 「简称」档才是单字（沪）
+    if (this.isProvinceNation()) return this.provinceQuestionNameOf(unit.adcode, unit.name);
     return unit.name; // 地级（市级全国 / 单省）不受取名口径影响
+  }
+
+  /**
+   * 省级全国的**题面**名：省名档 = 省全名（`unit.name`，历史行为）；省会档 = 省会名；简称档 = 单字简称。
+   * 抽成一处是因为它同时被题面与答错提示使用（`displayNameOf`），而标签那侧另有 `provinceLabelTextOf`。
+   */
+  protected provinceQuestionNameOf(adcode: string, fullName: string): string {
+    if (this.naming.province === 'abbr') return provinceAbbr(this.ctx.data, adcode);
+    if (this.naming.province === 'capital') return provinceCapital(this.ctx.data, adcode);
+    return fullName;
   }
 
   /**
@@ -958,12 +1008,13 @@ export abstract class MapQuizMode extends BaseMode {
    * 省级全国**地图标签**的文本。
    *
    * 与题面口径分开是因为两者历史上就不同：标签一直是去后缀省名（广东省 → 广东），
-   * 而题面是省全名（广东省）。「简称」档两者统一成单字（沪）—— 这正是用户要的「标签也显示简称」。
+   * 而题面是省全名（广东省）。省会档两者都是省会名，简称档两者统一成单字（沪）
+   * —— 这正是用户要的「标签也显示所选内容」。
    */
   protected provinceLabelTextOf(adcode: string): string {
-    return this.naming.province === 'abbr'
-      ? provinceAbbr(this.ctx.data, adcode)
-      : provinceShortName(this.ctx.data, adcode);
+    if (this.naming.province === 'abbr') return provinceAbbr(this.ctx.data, adcode);
+    if (this.naming.province === 'capital') return provinceCapital(this.ctx.data, adcode);
+    return provinceShortName(this.ctx.data, adcode);
   }
 
   /**

@@ -20,10 +20,22 @@ class ImmediateImage {
     this.onload?.();
   }
 }
+/**
+ * `start()` 会碰 `window.setInterval`（秒表）与 `localStorage`（进度/口径记忆），node 测试环境两者都没有。
+ * 给最小替身：秒表只要"能起能停"，存储只要"能读写不报错"。每个用例前清空，保证口径不跨用例串。
+ */
+const storage = new Map<string, string>();
 beforeEach(() => {
   requestedFlags.length = 0;
+  storage.clear();
   resetFlagPreloadForTest(); // 预取队列是模块级状态，测试之间必须复位，否则 done 集合会串
   vi.stubGlobal('Image', ImmediateImage);
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem: (k: string, v: string) => void storage.set(k, String(v)),
+    removeItem: (k: string) => void storage.delete(k),
+  });
+  vi.stubGlobal('window', { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -47,11 +59,34 @@ const PROVINCES: Province[] = [
   { adcode: '110000', name: '北京市', center: [116, 40] },
 ];
 
+/** 省级口径用的夹具：补一个真正的省（河北省 → 石家庄/冀/河北），否则省会档只能拿直辖市自证。 */
+const PROVINCE_DATA: Partial<AppData> = {
+  provinces: [...PROVINCES, { adcode: '130000', name: '河北省', center: [114.5, 38] }],
+};
+
 function unit(adcode: string, name: string, provinceAdcode: string): Unit {
   return { adcode, name, shortName: name, province: 'P', provinceAdcode, center: [0, 0], neighbors: [], decorative: false };
 }
 
 const UNITS = [unit('310100', '上海市', '310000'), unit('110100', '北京市', '110000')];
+
+/**
+ * 预取口径用的夹具：**6 个国家**（够看出"只缓存接下来两道"）+ 确定的题序。
+ * `randomUnit` 取池首 → 题序恒为 JPN → CHN → KOR → MNG → IND → THA。
+ */
+const LOOKAHEAD_A2: Record<string, string> = { JPN: 'jp', CHN: 'cn', KOR: 'kr', MNG: 'mn', IND: 'in', THA: 'tha' };
+const LOOKAHEAD_DATA: Partial<AppData> = {
+  countries: Object.keys(LOOKAHEAD_A2).map((iso) => ({
+    iso,
+    name: iso,
+    fullName: iso,
+    center: [0, 0] as [number, number],
+    neighbors: [],
+    continent: 'AS' as const,
+  })),
+  countryFlags: Object.fromEntries(Object.entries(LOOKAHEAD_A2).map(([iso, a2]) => [iso, `${a2}.svg`])),
+  countryFlagThumbs: Object.fromEntries(Object.entries(LOOKAHEAD_A2).map(([iso, a2]) => [iso, `${a2}.webp`])),
+};
 
 function makeCtx(over: Partial<AppData> = {}) {
   const states: RenderState[] = [];
@@ -105,7 +140,7 @@ function makeCtx(over: Partial<AppData> = {}) {
       focus: () => {},
     },
     stats: {},
-    settings: { darkMode: false, cityBoundaryTone: 'light', provinceBoundaryTone: 'dark', worldBoundaryTone: 'mid', ignoreTinyCountries: false },
+    settings: { darkMode: false, cityBoundaryTone: 'light', provinceBoundaryTone: 'dark', worldBoundaryTone: 'mid', ignoreTinyCountries: false, showBrowseLabels: true },
     byAdcode: new Map(UNITS.map((u) => [u.adcode, u])),
     toast: (m: string) => toasts.push(m),
     setHint: (html: string) => hints.push(html),
@@ -223,24 +258,88 @@ describe('点击模式 · 世界档「国名 / 首都」+「中文 / 英文」',
     expect(hints.at(-1)).not.toContain('<img');
   });
 
-  it('选上国旗档就**立刻**开始预取整个出题池的国旗（不必等到点开始）', () => {
+  /**
+   * 国旗预取口径（2026-09 第二轮）：**只缓存接下来两个**。
+   *
+   * 上一版是"选上国旗档就把整个出题池排进队列"（世界全国 194 面 1.21MB），用户口径改为
+   * 「不一次性全量缓存，仅仅缓存接下来两个国旗」。要"知道接下来考哪两面"，点击模式把选题
+   * 提前了一步（见 click.ts 的 lookahead 说明），于是每换一题只多一次请求、且那一面**必然**用得上。
+   */
+  it('选上国旗档不预取整个池（未开始、还没选题 → 一个请求都不发）', () => {
     const { ctx } = makeCtx();
     const mode = new ClickMode(ctx);
     mode.applyScopeQuery(scopeQuery('world'));
-    expect(requestedFlags).toEqual([]); // 还没选国旗 → 一个请求都不该发
     mode.setQuestionNaming({ world: 'flag' });
-    // 池子＝夹具里的两个国家（JPN/CHN）→ 两面旗都排队；顺序即池序
-    expect([...requestedFlags].sort()).toEqual(['data/flags/cn.svg', 'data/flags/jp.svg']);
+    expect(requestedFlags).toEqual([]);
   });
 
   it('切到国名档会停掉预取队列（不做无用的后台下载）', () => {
-    const { ctx } = makeCtx();
+    const { ctx } = makeCtx(LOOKAHEAD_DATA);
     const mode = new ClickMode(ctx);
     mode.applyScopeQuery(scopeQuery('world'));
     mode.setQuestionNaming({ world: 'flag' });
-    expect(requestedFlags.length).toBe(2);
+    mode.diagnostics().start(false);
+    const afterStart = requestedFlags.length;
+    expect(afterStart).toBe(3); // 当前题 + 接下来两道
+    mode.diagnostics().started = false;
     mode.setQuestionNaming({ world: 'country' });
-    expect(requestedFlags.length).toBe(2); // 没有新请求
+    mode.diagnostics().start(false);
+    expect(requestedFlags.length).toBe(afterStart); // 没有新请求
+  });
+
+  it('开始后立刻排上「首题 + 接下来两道」三面国旗（不是整池 6 面）', () => {
+    const { ctx } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    mode.diagnostics().start(false);
+    // 首题 JPN（randomUnit 取池首），接下来两道按池序是 CHN/KOR
+    expect(requestedFlags).toEqual(['data/flags/jp.svg', 'data/flags/cn.svg', 'data/flags/kr.svg']);
+    // 池里还有 MNG/IND/THA 三国：一面都没请求（它们还不是"接下来两道"）
+    expect(requestedFlags).not.toContain('data/flags/tha.svg');
+  });
+
+  it('每换一题只多请求一面，且那一面就是**下一题**的旗（换题不再等网络）', () => {
+    const { ctx } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    mode.diagnostics().start(false);
+    const d = mode.diagnostics();
+    expect(d.question).toBe('JPN');
+
+    d.answer(true, true); // 答对 → 换到预选好的 CHN
+    expect(d.question).toBe('CHN');
+    // 换题时它的旗**早就在队列里**（上一轮预取的），本轮只补 1 面（MNG）
+    expect(requestedFlags).toEqual([
+      'data/flags/jp.svg',
+      'data/flags/cn.svg',
+      'data/flags/kr.svg',
+      'data/flags/mn.svg',
+    ]);
+
+    d.answer(true, true); // 再换一题 → KOR
+    expect(d.question).toBe('KOR');
+    expect(requestedFlags).toEqual([
+      'data/flags/jp.svg',
+      'data/flags/cn.svg',
+      'data/flags/kr.svg',
+      'data/flags/mn.svg',
+      'data/flags/in.svg',
+    ]);
+    // 第 6 国（THA）始终没被请求：始终只缓存"当前 + 接下来两道"
+    expect(requestedFlags).not.toContain('data/flags/tha.svg');
+  });
+
+  it('非国旗档不做预选（预选只为预取国旗而存在）', () => {
+    const { ctx } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.diagnostics().start(false); // 默认国名档
+    expect(requestedFlags).toEqual([]);
+    // 预选也没吃随机数：换题仍是"真选"那一次
+    mode.diagnostics().answer(true, true);
+    expect(requestedFlags).toEqual([]);
   });
 
   it('国旗档答错：提示里的正确答案是国名（不是「国旗」这类占位文字）', () => {
@@ -294,6 +393,138 @@ describe('点击模式 · 省级全国「省名 / 简称」', () => {
     mode.setQuestionNaming({ province: 'abbr' });
     mode.refresh();
     expect(states.at(-1)?.provinceLabel?.('110000')).toBeNull();
+  });
+});
+
+describe('未开始的浏览标签 · 按取名口径显示', () => {
+  /** 未开始（浏览态）时地图上那份全量标签的渲染状态。 */
+  const browse = (mode: ClickMode | InputMode) => {
+    mode.refresh();
+    return mode;
+  };
+  const contentOf = (states: RenderState[], id: string) => states.at(-1)?.browseLabel?.(id) ?? null;
+
+  it('世界档 + 首都：标签写首都名（用户口径：选「首都」地图标签就显示首都）', () => {
+    const { ctx, states } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'capital' });
+    browse(mode);
+    expect(contentOf(states, 'JPN')).toEqual({ text: '东京' });
+  });
+
+  it('世界档 + 国名 + 英文：标签写英文国名', () => {
+    const { ctx, states } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ lang: 'en' });
+    browse(mode);
+    expect(contentOf(states, 'JPN')).toEqual({ text: 'Japan' });
+  });
+
+  it('世界档 + 国旗：标签画**国旗缩略图**（不是国名，也不是原始 SVG）', () => {
+    const { ctx, states } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    browse(mode);
+    const jp = contentOf(states, 'JPN');
+    expect(jp).toEqual({ image: 'data/flags/thumbs/jp.webp' });
+  });
+
+  it('世界档 + 国旗但缺缩略图数据：回落国名文本（不画破图）', () => {
+    const { ctx, states } = makeCtx(); // 夹具没给 countryFlagThumbs
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    browse(mode);
+    expect(contentOf(states, 'JPN')).toBeNull(); // null → 渲染层用默认国名
+  });
+
+  it('输入模式同样按口径显示（用户口径点名了点击与输入两个模式）', () => {
+    const { ctx, states } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'capital' });
+    browse(mode);
+    expect(contentOf(states, 'JPN')).toEqual({ text: '东京' }); // 输入模式同样按口径写首都名
+    mode.setQuestionNaming({ world: 'flag' });
+    browse(mode);
+    expect(contentOf(states, 'JPN')).toEqual({ image: 'data/flags/thumbs/jp.webp' });
+  });
+
+  it('省级全国：省名档 = 去后缀省名 / 省会档 = 省会名 / 简称档 = 单字简称', () => {
+    const { ctx, states } = makeCtx(PROVINCE_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('province'));
+    browse(mode);
+    expect(contentOf(states, '130000')).toEqual({ text: '河北' }); // 历史默认（标签一直是去后缀省名）
+    mode.setQuestionNaming({ province: 'capital' });
+    browse(mode);
+    expect(contentOf(states, '130000')).toEqual({ text: '石家庄' });
+    mode.setQuestionNaming({ province: 'abbr' });
+    browse(mode);
+    expect(contentOf(states, '130000')).toEqual({ text: '冀' });
+  });
+
+  it('地级档不受口径影响（地级单位没有别的叫法，返回 null → 渲染层写单位名）', () => {
+    const { ctx, states } = makeCtx(PROVINCE_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('city'));
+    mode.setQuestionNaming({ province: 'abbr' });
+    browse(mode);
+    expect(contentOf(states, '310100')).toBeNull();
+  });
+
+  it('开始答题后不再有浏览标签（口径只改浏览态内容，不改显隐规则）', () => {
+    const { ctx, states } = makeCtx(LOOKAHEAD_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    mode.diagnostics().start(false);
+    expect(states.at(-1)?.browseLabel).toBeUndefined();
+  });
+});
+
+describe('省级全国 · 省会档', () => {
+  it('点击模式：题面与标签都是省会名', () => {
+    const { ctx, states, hints } = makeCtx(PROVINCE_DATA);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('province'));
+    mode.setQuestionNaming({ province: 'capital' });
+    askAnswered(mode, unit('130000', '河北省', '130000'));
+    expect(hints.at(-1)).toContain('石家庄');
+    expect(hints.at(-1)).not.toContain('河北');
+    expect(states.at(-1)?.provinceLabel?.('130000')?.text).toBe('石家庄');
+  });
+
+  it('输入模式：只认省会名（含「市」后缀），省名与简称不算对', () => {
+    const accept = (answer: string) => {
+      const { ctx } = makeCtx(PROVINCE_DATA);
+      const mode = new InputMode(ctx);
+      mode.applyScopeQuery(scopeQuery('province'));
+      mode.setQuestionNaming({ province: 'capital' });
+      const d = mode.diagnostics();
+      d.question = '130000';
+      mode.onSubmit(answer);
+      return d.green.has('130000');
+    };
+    expect(accept('石家庄')).toBe(true);
+    expect(accept('石家庄市')).toBe(true); // 同一个名字的两种写法（行政后缀）
+    expect(accept('河北')).toBe(false);
+    expect(accept('冀')).toBe(false);
+  });
+
+  it('直辖市/特区的省会就是它自己（数据如此，不做特判）；占位提示写「输入省会名」', () => {
+    const { ctx, placeholders } = makeCtx(PROVINCE_DATA);
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery(scopeQuery('province'));
+    mode.setQuestionNaming({ province: 'capital' });
+    expect(placeholders.at(-1)).toContain('省会');
+    const d = mode.diagnostics();
+    d.question = '310000'; // 上海市
+    mode.onSubmit('上海');
+    expect(d.green.has('310000')).toBe(true);
   });
 });
 

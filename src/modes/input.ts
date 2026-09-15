@@ -14,7 +14,7 @@ import {
   saveSelfRequireEnter,
   type ModeSettingsPanel,
 } from '../modeSettings';
-import { canDrillProvince, drillTargetOfUnit, isProvinceAbbrInput } from '../province';
+import { canDrillProvince, drillTargetOfUnit, isProvinceAbbrInput, isProvinceCapitalInput } from '../province';
 import { MapQuizMode } from './mapQuizMode';
 import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
@@ -109,15 +109,19 @@ export class InputMode extends MapQuizMode {
   }
 
   /**
-   * 输入匹配：省级全国 → 精确省名匹配（简称档只认简称）；世界全国 → 国家名匹配（国名档走 `bestMatch`，
-   * 首都档走「是不是这一题的首都名」，见 `WorldMatcher.acceptsCapital` 的同形异国说明）；
-   * 市级 → 地级单位匹配。
+   * 输入匹配：省级全国 → 精确省名匹配（省会档只认省会名、简称档只认简称）；世界全国 → 国家名匹配
+   * （国名档走 `bestMatch`，首都档走「是不是这一题的首都名」，见 `WorldMatcher.acceptsCapital`
+   * 的同形异国说明）；市级 → 地级单位匹配。
    */
   private matchInput(v: string): string | null {
     if (this.isProvinceNation()) {
       // 简称档：只认单字简称（含 蜀/黔/滇/秦/陇 等别名），不认省名 —— 见 province.isProvinceAbbrInput
       if (this.naming.province === 'abbr') {
         return this.provincePool.find((p) => isProvinceAbbrInput(this.ctx.data, p.adcode, v))?.adcode ?? null;
+      }
+      // 省会档：只认省会名（石家庄 / 石家庄市），**不认省名与简称** —— 见 province.isProvinceCapitalInput
+      if (this.naming.province === 'capital') {
+        return this.provincePool.find((p) => isProvinceCapitalInput(this.ctx.data, p.adcode, v))?.adcode ?? null;
       }
       const ni = normalizeProvince(v);
       if (!ni) return null;
@@ -219,11 +223,13 @@ export class InputMode extends MapQuizMode {
 
   /**
    * 按当前粒度与取名口径给出占位提示（口径变了提示要跟着变，否则用户不知道该输入什么）。
-   * 世界档四种组合、省级档两种；地级沿用历史提示。
+   * 世界档四种组合、省级档三种；地级沿用历史提示。
    */
   private placeholderForNaming(): string {
     if (this.isProvinceNation()) {
-      return this.naming.province === 'abbr' ? t('self.abbrPlaceholder') : t('self.provincePlaceholder');
+      if (this.naming.province === 'abbr') return t('self.abbrPlaceholder');
+      if (this.naming.province === 'capital') return t('self.provinceCapitalPlaceholder');
+      return t('self.provincePlaceholder');
     }
     if (this.isWorldNation()) {
       const capital = this.naming.world === 'capital';

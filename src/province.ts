@@ -1,7 +1,8 @@
 import type { AppData, Continent, Province, SubregionId, Unit } from './types';
 import { CONTINENTS, SUBREGION_IDS } from './types';
-import { normalizeProvince } from './matcher';
+import { normalize, normalizeProvince } from './matcher';
 import abbrRules from './province-abbr.json';
+import capitalRules from './province-capital.json';
 
 /**
  * 省级粒度（省级全国练习 / 省名熟练度分析）与粒度共用常量的共享数据与规则。
@@ -115,6 +116,36 @@ export function provinceAbbrInputs(data: AppData, adcode: string): string[] {
 export function isProvinceAbbrInput(data: AppData, adcode: string, input: string): boolean {
   const s = input.trim();
   return !!s && provinceAbbrInputs(data, adcode).includes(s);
+}
+
+/**
+ * 省级**省会**表（34 条）：「省名 / 省会 / 简称」中间那一档的显示与判题口径。
+ *
+ * 与简称表同一手法、同一理由（静态口径表单独成 JSON，不重跑行政区数据管线）。
+ *
+ * ⚠ **直辖市与特别行政区的「省会」就是它自己**（北京/天津/上海/重庆/香港/澳门）：
+ * 这不是占位，而是事实（北京市政府驻北京市）。因此 34 条里有 6 条在省会档下
+ * 「题面 = 省名」，用户看到的是一道送分题 —— 这是真实情况的自然结果，不做特判隐藏：
+ * 一旦特判，省会档的题库就会随行政体制变化而"少几个省"，反而更难解释。
+ * `provinceCapital.test.ts` 断言这 34 条的**键集合与数据完全一致、且取值互不重复**。
+ */
+const PROVINCE_CAPITAL = capitalRules.capital as Record<string, string>;
+
+/** 该省的省会名（表里没有该 adcode 时回落去后缀省名，保证调用方永远拿得到可显示文本）。 */
+export function provinceCapital(data: AppData, adcode: string): string {
+  return PROVINCE_CAPITAL[adcode] ?? provinceShortName(data, adcode);
+}
+
+/**
+ * 省会档判题：只认省会名，**不认省名/简称**（与简称档同一口径，理由见 `isProvinceAbbrInput`）。
+ *
+ * 两种写法都算对：「石家庄」与「石家庄市」——它们**是同一个名字**（行政后缀），
+ * 与地级市档 `Matcher.bestUnit` 同时接受 `shortName` 与 `normalize(name)` 一致；
+ * 而「河北」「冀」不算对。
+ */
+export function isProvinceCapitalInput(data: AppData, adcode: string, input: string): boolean {
+  const s = normalize(input);
+  return !!s && s === normalize(provinceCapital(data, adcode));
 }
 
 /**

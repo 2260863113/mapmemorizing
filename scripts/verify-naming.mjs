@@ -29,12 +29,17 @@ const CDP = 9982;
 const NAMES = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'world_names.json'), 'utf8')).names;
 const COUNTRIES = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'countries.json'), 'utf8')).countries;
 const ABBR = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'province-abbr.json'), 'utf8')).abbr;
+const CAPITAL = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'province-capital.json'), 'utf8')).capital;
 const PROVINCE_NAME = new Map(
   JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'units.json'), 'utf8')).provinces.map((p) => [p.adcode, p.name]),
 );
 const COUNTRY_NAME = new Map(COUNTRIES.map((c) => [c.iso, c.name]));
 /** iso → 国旗文件名（点击模式「国旗」档的题面用）。 */
 const FLAGS = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'flags', 'index.json'), 'utf8')).flags;
+/** iso → 国旗**缩略图**文件名（未开始的浏览标签画的就是这张小图）。 */
+const THUMBS = JSON.parse(fs.readFileSync(path.join(DIST, 'data', 'flags', 'thumbs.json'), 'utf8')).thumbs;
+/** 某省 → 去后缀省名（省名档的地图标签口径；与实现同一套后缀规则的最简版本）。 */
+const shortOf = (full) => full.replace(/(维吾尔自治区|壮族自治区|回族自治区|特别行政区|自治区|省|市)$/g, '');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -133,7 +138,9 @@ try {
   await clickSel('#mode-tabs button[data-mode="click"]');
   await clickSel('#granularity-province');
   await sleep(500);
-  check('省级全国：显示「省名 / 简称」', (await visible('#province-name-toggle')) === true);
+  check('省级全国：显示「省名 / 省会 / 简称」三段', (await visible('#province-name-toggle')) === true);
+  const provinceSegs = JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('#province-name-toggle button')].map(b => b.textContent))`));
+  check('三段就是「省名 / 省会 / 简称」（顺序也是）', JSON.stringify(provinceSegs) === JSON.stringify(['省名', '省会', '简称']), JSON.stringify(provinceSegs));
   check('省级全国：不显示「国名 / 首都」与「中文 / 英文」（省级档无中英文）', (await visible('#world-name-toggle')) === false && (await visible('#world-lang-toggle')) === false);
 
   await clickSel('#granularity-world');
@@ -255,8 +262,9 @@ try {
   check('点击模式·世界档出现「国旗」段并选中',
     flagSeg.visible === true && flagSeg.active === true && flagSeg.label === '国旗', JSON.stringify(flagSeg));
 
-  // 预加载：选上国旗档（还没点开始）就该把**当前出题池**的国旗后台取上 —— 这样点开始后无论随机抽到
-  // 哪个国家，图片都已在缓存里（不用再等一次网络往返，那正是用户看到的约 0.5 秒）。
+  // 预取口径（2026-09 第二轮）：**只缓存接下来两个国旗**。
+  // 旧版是"选上国旗档就把整池 194 面排进队列"（1.21MB）；现在改为：未开始时不预取，
+  // 开始答题时预取「当前题 + 接下来两道」三面，之后每换一题只补一面。
   // 注意过滤器要排掉 `data/flags/index.json`（那是 data.ts 用 fetch 拉的索引，不是预取）。
   const prefetched = async () =>
     JSON.parse(await evaluate(`JSON.stringify((function(){
@@ -266,28 +274,53 @@ try {
       return { count: rs.length, allImg: rs.every(function(r){ return r.initiatorType === 'img'; }),
                files: rs.map(function(r){ return r.name.split('/').pop(); }) };
     })())`));
-  let pre = await prefetched();
-  for (let i = 0; i < 30 && pre.count < 190; i++) {
-    await sleep(500);
-    pre = await prefetched();
-  }
-  check('选上国旗档后，当前出题池的国旗被后台预取（世界全国 194 面，全部由 <img> 发起）',
-    pre.count >= 150 && pre.allImg === true, `已预取 ${pre.count} 面，allImg=${pre.allImg}`);
+  const nmFlagIdle = await naming();
+  // 注：这里可能带一条恢复出来的"当前题"（上一个用例在同一范围存过进度），那一条本来就该预取 ——
+  // 断言的是"不再全量"，故上限是 3（当前题 + 接下来两道），而不是 0。
+  check('选上国旗档、还没开始时**不预取整个池**（旧版这里是 194；用户口径：不一次性全量缓存）',
+    nmFlagIdle.flagPreload.total <= 3, JSON.stringify(nmFlagIdle.flagPreload));
+
+  // 未开始的浏览标签：国旗档下地图标签是**国旗缩略图**（文本为空、image 指向 thumbs/*.webp）。
+  // 注意已作答的那些国家仍是**国名**文本标签（绿/红反馈要读得懂，见 modes/types.ts 的口径说明），
+  // 故只对"图片行"做断言。
+  const thumbUrls = (nmFlagIdle.worldLabelImages ?? []).filter((u) => u);
+  const textRows = (nmFlagIdle.worldLabels ?? []).filter((t) => t);
+  check('国旗档下未开始的浏览标签是缩略图：文本为空、图片指向 data/flags/thumbs/*.webp',
+    thumbUrls.length > 150 && textRows.length <= 5 &&
+      thumbUrls.every((u) => u.indexOf('data/flags/thumbs/') === 0 && u.slice(-5) === '.webp'),
+    `缩略图 ${thumbUrls.length} 张（另有 ${textRows.length} 行文本 = 已作答的国名），前几张=${JSON.stringify(thumbUrls.slice(0, 3))}`);
+  const thumb = JSON.parse(await evaluate(`JSON.stringify(await (async function(){
+    var url = ${JSON.stringify(thumbUrls[0] ?? '')};
+    var im = new Image();
+    var ok = await new Promise(function(res){ im.onload = function(){res(true)}; im.onerror = function(){res(false)}; im.src = url; });
+    return { url: url, ok: ok, w: im.naturalWidth, h: im.naturalHeight };
+  })())`));
+  check('缩略图真的能加载，且是 40×30 的小图（地图标签画的就是它）',
+    thumb.ok === true && thumb.w === 40 && thumb.h === 30, JSON.stringify(thumb));
+
+  const pre0 = await prefetched();
+  check('未开始时没有全量预取（不是"先全量下 194 张"；队列里最多只有恢复出来的当前题）',
+    pre0.count <= 3 && nmFlagIdle.flagPreload.total <= 3, `已请求 ${JSON.stringify(pre0.files)} 队列=${JSON.stringify(nmFlagIdle.flagPreload)}`);
 
   await clickSel('#click-start');
   await sleep(800);
   const nm6 = await naming();
   const iso6 = nm6.question;
   const expectFile = FLAGS[iso6];
-  check('当前题的国旗已在预取集合里（点开始时图已就绪，不会"先空框后出图"）',
-    pre.files.includes(expectFile), `当前题 ${expectFile}；已预取 ${pre.count} 面${pre.files.includes(expectFile) ? '（含当前题）' : '（不含当前题）'}`);
+  const pre1 = await prefetched();
+  check('开始时只预取「当前题 + 接下来两道」三面国旗（队列恒为 3）',
+    nm6.flagPreload.total === 3 && pre1.count >= 3 && pre1.count <= 4,
+    `队列=${JSON.stringify(nm6.flagPreload)} 已请求 ${pre1.count} 面 ${JSON.stringify(pre1.files)}`);
+  check('当前题的国旗在预取集合里（点开始时图已就绪，不会"先空框后出图"）',
+    pre1.files.includes(expectFile), `当前题 ${expectFile}；已请求 ${JSON.stringify(pre1.files)}`);
   const img = JSON.parse(await evaluate(`JSON.stringify((function(){
     var im = document.querySelector('#top-hint img');
     if (!im) return null;
     return { src: im.getAttribute('src'), alt: im.getAttribute('alt'), draggable: im.getAttribute('draggable'),
              loaded: im.complete && im.naturalWidth > 0, w: im.naturalWidth, h: im.naturalHeight };
   })())`));
-  check('题面是一张国旗图片，src 与数据一致', !!img && img.src === 'data/flags/' + expectFile, JSON.stringify({ img, expectFile }));
+  check('题面是一张国旗图片，src 与数据一致（题面用**原始 SVG**，不压缩）',
+    !!img && img.src === 'data/flags/' + expectFile, JSON.stringify({ img, expectFile }));
   check('国旗图真的加载出来了（资源存在且被正确服务）', !!img && img.loaded === true && img.w > 0 && img.h > 0, JSON.stringify(img));
   check('国旗题面不泄露答案：alt 为空、题面没有任何文字',
     !!img && img.alt === '' && nm6.hint === '', JSON.stringify({ alt: img && img.alt, hint: nm6.hint }));
@@ -297,6 +330,11 @@ try {
   check('国旗档下地图标签显示国名（不是空白、也不是国旗）',
     Array.isArray(nm6b.worldLabels) && nm6b.worldLabels.includes(COUNTRY_NAME.get(iso6)),
     `标签=${JSON.stringify(nm6b.worldLabels)} 期望含「${COUNTRY_NAME.get(iso6)}」`);
+  const pre2 = await prefetched();
+  check('答一题只补一面国旗（不是重新下一批）', pre2.count >= pre1.count && pre2.count <= pre1.count + 2,
+    `前一题时 ${pre1.count} 面 → 现在 ${pre2.count} 面`);
+  check('新题的国旗**在换题前就已请求**（这就是"只缓存接下来两个"要保证的事）',
+    pre2.files.includes(FLAGS[nm6b.question]), `新题 ${FLAGS[nm6b.question]}；已请求 ${JSON.stringify(pre2.files)}`);
 
   await load();
   await clickSel('#mode-tabs button[data-mode="self"]');
@@ -306,6 +344,91 @@ try {
   const selfNameVisible = await evaluate(`!document.getElementById('world-name-toggle').classList.contains('hidden')`);
   check('输入模式不显示「国旗」段（该国名/首都两段仍在）', selfFlagHidden === true && selfNameVisible === true,
     JSON.stringify({ flagHidden: selfFlagHidden, groupVisible: selfNameVisible }));
+
+  // ---------------------------------------------------------------------------
+  console.log('\n=== 7. 未开始（浏览态）的地图标签按取名口径显示 ===');
+  await load();
+  await clickSel('#mode-tabs button[data-mode="click"]');
+  await clickSel('#granularity-world');
+  await clickSel('#world-name-capital');
+  await clickSel('#world-lang-zh');
+  await sleep(700);
+  const nm7 = await naming();
+  const jpCapital = NAMES['JPN']?.capital;
+  check('世界档 + 首都：未开始时的地图标签就是首都名（不是国名）',
+    (nm7.worldLabels ?? []).length > 100 && (nm7.worldLabels ?? []).includes(jpCapital) && !(nm7.worldLabels ?? []).includes('日本'),
+    `标签数=${(nm7.worldLabels ?? []).length} 含「${jpCapital}」=${(nm7.worldLabels ?? []).includes(jpCapital)} 含「日本」=${(nm7.worldLabels ?? []).includes('日本')}`);
+
+  await clickSel('#world-name-country');
+  await clickSel('#world-lang-en');
+  await sleep(700);
+  const nm7b = await naming();
+  const jpEn = NAMES['JPN']?.en;
+  check('世界档 + 英文：未开始的标签是英文国名',
+    (nm7b.worldLabels ?? []).includes(jpEn), `含「${jpEn}」=${(nm7b.worldLabels ?? []).includes(jpEn)}`);
+  await clickSel('#world-lang-zh');
+
+  await clickSel('#granularity-province');
+  await clickSel('#province-name-capital');
+  await sleep(700);
+  const nm7c = await naming();
+  const capitalSet = new Set(Object.values(CAPITAL));
+  check('省级全国 + 省会：未开始的标签是省会名（且全在省会表里）',
+    (nm7c.provinceLabels ?? []).length >= 30 && (nm7c.provinceLabels ?? []).includes('石家庄') && (nm7c.provinceLabels ?? []).every((t) => capitalSet.has(t)),
+    `标签数=${(nm7c.provinceLabels ?? []).length} 含石家庄=${(nm7c.provinceLabels ?? []).includes('石家庄')}`);
+
+  await clickSel('#province-name-abbr');
+  await sleep(700);
+  const nm7d = await naming();
+  const abbrSet = new Set(Object.values(ABBR));
+  check('省级全国 + 简称：未开始的标签是单字简称（且全在简称表里）',
+    (nm7d.provinceLabels ?? []).length >= 30 && (nm7d.provinceLabels ?? []).includes('冀') && (nm7d.provinceLabels ?? []).every((t) => abbrSet.has(t)),
+    `标签数=${(nm7d.provinceLabels ?? []).length} 含冀=${(nm7d.provinceLabels ?? []).includes('冀')}`);
+
+  await clickSel('#province-name-full');
+  await sleep(700);
+  const nm7e = await naming();
+  check('省级全国 + 省名：标签回到去后缀省名（历史口径不变，不是省会也不是简称）',
+    (nm7e.provinceLabels ?? []).includes('河北') && !(nm7e.provinceLabels ?? []).includes('石家庄'),
+    `含河北=${(nm7e.provinceLabels ?? []).includes('河北')} 含石家庄=${(nm7e.provinceLabels ?? []).includes('石家庄')}`);
+
+  // ---------------------------------------------------------------------------
+  console.log('\n=== 8. 省级全国 · 省会档：题面与地图标签都是省会名 ===');
+  await load();
+  await clickSel('#mode-tabs button[data-mode="click"]');
+  await clickSel('#granularity-province');
+  await clickSel('#province-name-capital');
+  await sleep(500);
+  check('点「省会」后该段变为选中态', (await evaluate(`document.querySelector('#province-name-capital').classList.contains('active')`)) === true);
+  await clickSel('#click-start');
+  await sleep(700);
+  const nm8 = await naming();
+  const adcode8 = nm8.question;
+  const expectCapital8 = CAPITAL[adcode8];
+  check('题面显示省会名（与省会表一致）', expectCapital8 ? nm8.hint === expectCapital8 : false, `题面「${nm8.hint}」应为「${expectCapital8}」`);
+  check('题面**不是**省名/简称（证明口径真的生效）',
+    nm8.hint !== PROVINCE_NAME.get(adcode8) && nm8.hint !== ABBR[adcode8],
+    `题面「${nm8.hint}」省名=${PROVINCE_NAME.get(adcode8)} 简称=${ABBR[adcode8]}`);
+  await answerCurrent();
+  await sleep(600);
+  const nm8b = await naming();
+  check('已作答省的地图标签显示省会名',
+    Array.isArray(nm8b.provinceLabels) && nm8b.provinceLabels.includes(expectCapital8),
+    `标签=${JSON.stringify(nm8b.provinceLabels)} 期望含「${expectCapital8}」`);
+
+  await load();
+  await clickSel('#mode-tabs button[data-mode="self"]');
+  await clickSel('#granularity-province');
+  await clickSel('#province-name-capital');
+  await sleep(600);
+  const selfProvince = JSON.parse(await evaluate(`JSON.stringify({
+    visible: !document.getElementById('province-name-toggle').classList.contains('hidden'),
+    capitalActive: document.getElementById('province-name-capital').classList.contains('active'),
+    placeholder: document.getElementById('search-input').placeholder
+  })`));
+  check('输入模式的省级全国同样有「省会」段，选中后输入框提示「输入省会名」',
+    selfProvince.visible === true && selfProvince.capitalActive === true && selfProvince.placeholder === '输入省会名',
+    JSON.stringify(selfProvince));
 
   const failed = results.filter((r) => !r.pass);
   console.log(`\n===== ${results.length - failed.length}/${results.length} 通过 =====`);

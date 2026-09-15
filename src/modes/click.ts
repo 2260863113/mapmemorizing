@@ -2,7 +2,7 @@ import type { Mode, Unit } from '../types';
 import type { ModeCtx, OrderMode } from './types';
 import { t } from '../i18n';
 import { formatElapsedSeconds } from '../ui/format';
-import { pickWrongNext } from './wrongOrder';
+import { pickWrongNext, type WrongOrderState } from './wrongOrder';
 import { loadClickErrorRollback, saveClickErrorRollback, type ModeSettingsPanel } from '../modeSettings';
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { MapQuizMode } from './mapQuizMode';
@@ -16,6 +16,12 @@ import { escapeAttr } from '../ui/html';
  *   省级答题只计入省级熟练度（与地级熟练度隔离）。
  * - 粒度选择：仅全国视图（scopeProvince=null）可切换；测试开始后锁定隐藏。
  */
+/**
+ * 国旗档要预取的"接下来几道题"（用户口径 2026-09：只缓存接下来两个国旗）。
+ * 进缓存的图 = 当前题 + 接下来这道 + 再下一道 = 3 张，与 `flagPreload` 的 3 并发正好对上。
+ */
+const FLAG_LOOKAHEAD = 2;
+
 export class ClickMode extends MapQuizMode {
   readonly id: Mode = 'click';
   readonly title = t('mode.click.title');
@@ -109,8 +115,92 @@ export class ClickMode extends MapQuizMode {
   }
 
   nextUnit(pool: Unit[]): Unit {
-    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, this.wrongOrder, this.ctx.toast);
+    if (!this.needsLookahead()) {
+      this.lookahead = []; // 非国旗档不留预选（它只为预取国旗而存在）
+      return this.pickNextOf(pool);
+    }
+    // 消费预选：仍要确认它还在池内（换池/重置会清空预选，这里再兜一层保险）——
+    // 不在就当场重选，最坏情况只是那一题的国旗等一次网络，不会出错的题。
+    const planned = this.lookahead.find((u) => pool.some((p) => p.adcode === u.adcode));
+    const u = planned ?? this.pickNextOf(pool);
+    this.lookahead = this.planAhead(pool, u, FLAG_LOOKAHEAD);
+    return u;
+  }
+
+  // ==================== 国旗档的预选（"只缓存接下来两个"的前提） ====================
+
+  /**
+   * 已经定下来的后续题（队首 = 下一题，最多 `FLAG_LOOKAHEAD` 道）。
+   *
+   * ## 为什么需要预选
+   * 用户口径（2026-09）：「不一次性全量缓存，仅仅缓存接下来两个国旗」。而点击模式的下一题是**答对那一刻**
+   * 才随机/按分数选出来的，不提前定下来就无从知道该缓存哪两面 —— 只有两条路：全量缓存（上一版做法，
+   * 世界全国 194 面 1.21MB）或每题等一次网络（这就是用户看到的"每换一题等约 0.5 秒"）。
+   * 于是把选题**提前一步**：出一道题的同时把后面两道定下来，于是哪两面要预取变成确定的事。
+   *
+   * ## 预选与"届时真选"是否一致（这是本机制的正确性前提）
+   * · 「错题」顺序：`pickWrongNext` 取池内熟练度分最低者；而**分数只在单位被作答时改变，被作答就离开池子**，
+   *   故剩余池内各单位的相对顺序在预选与消费之间不可能变 → 预选结果与届时重选**逐字相同**（等价性可证）。
+   * · 「随机」顺序：池子相同、均匀抽取 → 分布相同，只是抽签提前了一次。
+   * · 预演绝无副作用：`pickWrongNext` 唯一的副作用是弹"错题已出完"提示，故预演传**状态副本 + 空提示函数**。
+   * · 消费时按 adcode **重新校验是否还在池内**，不在则当场重选（见 `nextUnit`）。
+   *
+   * ## 为什么"保留旧预选"而不是每题重新抽签
+   * 新计划先把仍然有效的旧预选原样留下、再补足到两道。否则每题都把下一题的抽签重来一次，
+   * 上一次预取的那张图就白取了（缓存命中率归零，等于每题多请求一张）——"接下来两面确定、必然命中"也就没了。
+   */
+  private lookahead: Unit[] = [];
+
+  /** 只有「世界全国 + 国旗」档需要预选：其它口径的题面根本不加载图片。 */
+  private needsLookahead(): boolean {
+    return this.isWorldNation() && this.naming.world === 'flag';
+  }
+
+  /**
+   * 选下一题（真实路径）。
+   * `state` / `toast` 可注入是为了让 `planAhead` 复用同一份选择逻辑做**无副作用预演**。
+   */
+  private pickNextOf(pool: Unit[], state: WrongOrderState = this.wrongOrder, toast = this.ctx.toast): Unit {
+    if (this.orderMode === 'wrong') return pickWrongNext(pool, this.scoreOf, state, toast);
     return this.ctx.randomUnit(pool);
+  }
+
+  /** 预演后续出题：在 `pool` 上选出 `count` 道题（`start` 是已确定的当前题，从池里剔除）。 */
+  private planAhead(pool: Unit[], start: Unit | null, count: number): Unit[] {
+    const rest = pool.filter((u) => u.adcode !== start?.adcode);
+    const out: Unit[] = [];
+    // 先原样保留仍然有效的旧预选（见类内说明：不然每题重新抽签会白取图）
+    for (const u of this.lookahead) {
+      if (out.length >= count) break;
+      const at = rest.findIndex((p) => p.adcode === u.adcode);
+      if (at < 0) continue;
+      out.push(u);
+      rest.splice(at, 1);
+    }
+    const state: WrongOrderState = { ...this.wrongOrder }; // 副本：预演不许把"已提示过"写进真实状态
+    while (out.length < count && rest.length > 0) {
+      const u = this.pickNextOf(rest, state, () => {}); // 空 toast：预演绝不弹提示
+      const at = rest.findIndex((p) => p.adcode === u.adcode);
+      if (at < 0) break; // 理论上不会发生（randomUnit/pickWrongNext 都从池内取）；防死循环
+      out.push(u);
+      rest.splice(at, 1);
+    }
+    return out;
+  }
+
+  /** 已确定的后续题（供基类排预取队列 = 当前 + 接下来两道）。 */
+  protected flagLookaheadIds(): string[] {
+    return this.lookahead.map((u) => u.adcode);
+  }
+
+  /** 新会话/换池：旧池的预选不能拿到新池里用。 */
+  protected resetSessionSpecific() {
+    this.lookahead = [];
+  }
+
+  /** 首题就要把"接下来两道"定下来 —— 否则第二题仍要等一次网络（首题之后才开始规划）。 */
+  protected onStarted(first: Unit) {
+    if (this.needsLookahead()) this.lookahead = this.planAhead(this.unvisited(), first, FLAG_LOOKAHEAD);
   }
 
   showStartHint() {

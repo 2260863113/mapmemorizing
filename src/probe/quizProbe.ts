@@ -9,6 +9,7 @@
  * （见 `modes/quizDiagnostics.ts`）；公开 API（`start`/`nextUnit`/`setGranularity` 等）直接调。
  */
 import { ROLLBACK_RED_MS } from '../modes/mapQuizMode';
+import { flagPreloadStats } from '../modes/flagPreload';
 import type { AppDiagnostics } from '../appDiagnostics';
 import type { RenderState } from '../types';
 
@@ -231,6 +232,9 @@ export function quizProbe(a: AppDiagnostics) {
       const state = ui.lastState;
       const textsOf = (fn: ((s: RenderState) => unknown[]) | null) =>
         state && fn ? fn(state).map((row) => String((row as { value?: unknown[] }).value?.[2] ?? '')) : null;
+      /** 同上的**图片 URL**（`value[6]`，'' = 文本标签）：「国旗」档的浏览标签没有文字，只能看这一列。 */
+      const imagesOf = (fn: ((s: RenderState) => unknown[]) | null) =>
+        state && fn ? fn(state).map((row) => String((row as { value?: unknown[] }).value?.[6] ?? '')) : null;
       const togglesVisible = (id: string) => {
         const el = document.getElementById(id);
         return !!el && !el.classList.contains('hidden') && el.getBoundingClientRect().width > 0;
@@ -246,6 +250,14 @@ export function quizProbe(a: AppDiagnostics) {
         hint: document.getElementById('top-hint')?.textContent?.trim() ?? '',
         worldLabels: textsOf(ui.buildWorldLabelData),
         provinceLabels: textsOf(ui.buildProvinceLabelData),
+        /** 两条标签系列实际会画出的**图片 URL**（「国旗」档的浏览标签靠它断言）。 */
+        worldLabelImages: imagesOf(ui.buildWorldLabelData),
+        provinceLabelImages: imagesOf(ui.buildProvinceLabelData),
+        /**
+         * 国旗预取队列（模块级状态）。用户口径是「只缓存接下来两个国旗」，
+         * 故 `total` 应恒 ≤ 3（当前题 + 接下来两道）—— 旧版全池预取时这里是 194。
+         */
+        flagPreload: flagPreloadStats(),
         /** 三组分段按钮是否可见（显隐由 chromeSync 按模式 + 粒度算）。 */
         toggles: {
           worldName: togglesVisible('world-name-toggle'),

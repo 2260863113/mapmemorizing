@@ -1,5 +1,5 @@
 /**
- * 「国名 / 首都」「中文 / 英文」「省名 / 简称」的本地记忆（localStorage）。
+ * 「国名 / 首都」「中文 / 英文」「省名 / 省会 / 简称」的本地记忆（localStorage）。
  *
  * 与 `granularityStore.ts` 同一手法：一个模式的键前缀 + 非法值逐字段回落默认。
  * 为什么逐字段回落（而不是整体回落）：三个开关互不相关，一个字段被写坏不该把另外两个一起重置。
@@ -11,6 +11,9 @@ const KEY_PREFIX = 'china-admin-mode-naming:';
 
 /** 首访默认：国名 + 中文 + 省名 —— 即本功能上线前的历史行为，老用户升上来观感不变。 */
 export const DEFAULT_NAMING: QuestionNaming = { world: 'country', lang: 'zh', province: 'full' };
+
+/** 省级档合法取值（新增「省会」档时只需改这一处，读了旧值的用户照常回落默认）。 */
+const PROVINCE_VALUES: QuestionNaming['province'][] = ['full', 'capital', 'abbr'];
 
 export function namingStorageKey(modePrefix: string): string {
   return KEY_PREFIX + modePrefix;
@@ -26,7 +29,9 @@ export function loadStoredNaming(modePrefix: string): QuestionNaming {
     return {
       world: parsed.world === 'capital' ? 'capital' : parsed.world === 'flag' ? 'flag' : DEFAULT_NAMING.world,
       lang: parsed.lang === 'en' ? 'en' : DEFAULT_NAMING.lang,
-      province: parsed.province === 'abbr' ? 'abbr' : DEFAULT_NAMING.province,
+      province: PROVINCE_VALUES.includes(parsed.province as QuestionNaming['province'])
+        ? (parsed.province as QuestionNaming['province'])
+        : DEFAULT_NAMING.province,
     };
   } catch {
     return { ...DEFAULT_NAMING };
