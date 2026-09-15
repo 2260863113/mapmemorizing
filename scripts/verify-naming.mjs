@@ -255,11 +255,32 @@ try {
   check('点击模式·世界档出现「国旗」段并选中',
     flagSeg.visible === true && flagSeg.active === true && flagSeg.label === '国旗', JSON.stringify(flagSeg));
 
+  // 预加载：选上国旗档（还没点开始）就该把**当前出题池**的国旗后台取上 —— 这样点开始后无论随机抽到
+  // 哪个国家，图片都已在缓存里（不用再等一次网络往返，那正是用户看到的约 0.5 秒）。
+  // 注意过滤器要排掉 `data/flags/index.json`（那是 data.ts 用 fetch 拉的索引，不是预取）。
+  const prefetched = async () =>
+    JSON.parse(await evaluate(`JSON.stringify((function(){
+      var rs = performance.getEntriesByType('resource').filter(function(r){
+        return r.name.indexOf('/data/flags/') >= 0 && r.name.slice(-4) === '.svg';
+      });
+      return { count: rs.length, allImg: rs.every(function(r){ return r.initiatorType === 'img'; }),
+               files: rs.map(function(r){ return r.name.split('/').pop(); }) };
+    })())`));
+  let pre = await prefetched();
+  for (let i = 0; i < 30 && pre.count < 190; i++) {
+    await sleep(500);
+    pre = await prefetched();
+  }
+  check('选上国旗档后，当前出题池的国旗被后台预取（世界全国 194 面，全部由 <img> 发起）',
+    pre.count >= 150 && pre.allImg === true, `已预取 ${pre.count} 面，allImg=${pre.allImg}`);
+
   await clickSel('#click-start');
   await sleep(800);
   const nm6 = await naming();
   const iso6 = nm6.question;
   const expectFile = FLAGS[iso6];
+  check('当前题的国旗已在预取集合里（点开始时图已就绪，不会"先空框后出图"）',
+    pre.files.includes(expectFile), `当前题 ${expectFile}；已预取 ${pre.count} 面${pre.files.includes(expectFile) ? '（含当前题）' : '（不含当前题）'}`);
   const img = JSON.parse(await evaluate(`JSON.stringify((function(){
     var im = document.querySelector('#top-hint img');
     if (!im) return null;

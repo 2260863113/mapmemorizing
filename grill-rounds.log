@@ -743,3 +743,11 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - 验收：npm run check exit 0（41 文件/436 用例）；verify-round3 54/54、verify-naming 28/28（+6 国旗，含图片真的加载出来）、verify-round2 38/38、verify-puzzle 75/75 = 195/195。
 - ⚠ data/flags/index.json 是**硬依赖**：缺失时应用整体启动失败（与 world_names.json 同策略）。资源未生成时跑验收会出现「静态断言假通过、JS 断言全失败」的假象，根因是 boot 失败，别误判成布局改动坏了。
 - ⚠ 国旗档只在点击模式提供；若将来要支持输入模式「看国旗写国名」，只需放开 chromeSync 里对 #world-name-flag 的隐藏，并在 InputMode 的占位提示里加一档文案。
+================================================================
+2026-09-15 01:00  国旗预加载（消掉「每换一题等 0.5 秒」）
+- 先量后改：本机空缓存 profile 逐题实测「出题→国旗可见」第 1 面 32ms、之后 0ms（延迟来自网络而非解码），而每次答对后的地图重绘稳定 ~120ms（ECharts，与国旗无关）；线上慢网下每面新国旗是一次独立请求，那才是 0.5 秒。
+- 关键约束：点击模式的下一题是答对那刻才随机决定的，无法预知「后面那一面」→ 唯一能让每面都零延迟的做法是预取整个出题池（用户口径：全预取，不看 saveData）。
+- 新增 src/modes/flagPreload.ts（3 并发、低优先级 new Image()、失败不阻塞、stop 可停、done 去重）；MapQuizMode 在 setQuestionNaming/enter/onViewChange/answer 挂钩、exit 停队列；flagSrcOf 统一拼路径。新增 flagPreload.test.ts（7 例）+ quizNaming 2 例（需 stub Image 并复位模块级 done）。
+- ⚠ 运行时过滤器要排掉 data/flags/index.json（fetch 发起，会把「预取数」多算 1 并让「全是 img」断言假失败）。verify-naming 新增 2 条：实测预取 194 面且全由 img 发起、当前题的旗已在集合里。
+- 验收：npm run check exit 0（42 文件/445 用例）；verify-naming 30/30、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = 197/197。
+- ⚠ 留给下次：若仍觉得「换题一顿」，该看的是每次答对后的 ~120ms 地图重绘，不是国旗。

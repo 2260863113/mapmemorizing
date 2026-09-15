@@ -1,10 +1,31 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ClickMode } from './click';
 import { InputMode } from './input';
 import type { ModeCtx } from './types';
 import type { AppData, CountryMeta, Province, RenderState, Unit } from '../types';
 import { makeAppData } from '../testFixture';
 import { Matcher } from '../matcher';
+import { resetFlagPreloadForTest } from './flagPreload';
+
+/**
+ * 国旗预加载会用到 `Image`（node 测试环境没有）；这里给一个"立刻 onload"的替身，
+ * 顺便记录被请求过的 src，供下面断言"选上国旗档就开始预取"。
+ */
+const requestedFlags: string[] = [];
+class ImmediateImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  set src(value: string) {
+    requestedFlags.push(value);
+    this.onload?.();
+  }
+}
+beforeEach(() => {
+  requestedFlags.length = 0;
+  resetFlagPreloadForTest(); // 预取队列是模块级状态，测试之间必须复位，否则 done 集合会串
+  vi.stubGlobal('Image', ImmediateImage);
+});
+afterEach(() => vi.unstubAllGlobals());
 
 /**
  * 「国名 / 首都」+「中文 / 英文」+「省名 / 简称」三组分段按钮的行为约束（2026-09 需求）。
@@ -200,6 +221,26 @@ describe('点击模式 · 世界档「国名 / 首都」+「中文 / 英文」',
     askAnswered(mode, unit('JPN', '日本', 'JPN'));
     expect(hints.at(-1)).toContain('日本');
     expect(hints.at(-1)).not.toContain('<img');
+  });
+
+  it('选上国旗档就**立刻**开始预取整个出题池的国旗（不必等到点开始）', () => {
+    const { ctx } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    expect(requestedFlags).toEqual([]); // 还没选国旗 → 一个请求都不该发
+    mode.setQuestionNaming({ world: 'flag' });
+    // 池子＝夹具里的两个国家（JPN/CHN）→ 两面旗都排队；顺序即池序
+    expect([...requestedFlags].sort()).toEqual(['data/flags/cn.svg', 'data/flags/jp.svg']);
+  });
+
+  it('切到国名档会停掉预取队列（不做无用的后台下载）', () => {
+    const { ctx } = makeCtx();
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.setQuestionNaming({ world: 'flag' });
+    expect(requestedFlags.length).toBe(2);
+    mode.setQuestionNaming({ world: 'country' });
+    expect(requestedFlags.length).toBe(2); // 没有新请求
   });
 
   it('国旗档答错：提示里的正确答案是国名（不是「国旗」这类占位文字）', () => {

@@ -1,5 +1,42 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：国旗预加载 —— 消掉"每换一题等 0.5 秒"
+
+用户报「每次地图都会加载 0.5 秒」。**先量再改**（临时探针：空缓存 profile 下逐题记「出题 → 国旗真的画出来」）：
+
+| 题次 | 出题→可见 | 该请求耗时 | 答对后地图重绘 |
+|---|---|---|---|
+| 1（冷缓存） | 32ms | 15ms | 121ms |
+| 2~6 | 0ms | 2~5ms | 119ms（平均） |
+
+结论：**本机国旗几乎不花时间**（第 1 面 32ms、之后 0ms，延迟来自网络而非解码），而**每换一题都有一次地图重绘 ≈120ms**（ECharts，`answer → flash/setOption → render`）。线上慢网下每面新国旗是**一次独立网络请求**（每题一个文件、缓存未命中）→ 那才是 0.5 秒的来源，用户的诊断是对的。
+
+### 关键约束：点击模式的"下一题"无法预知
+
+`answer()` 里才 `this.ask(this.nextUnit(pool))`，而 `nextUnit` 是**随机**（或错题按分数）—— 所以"预加载后面那一面"根本不知道加载哪一面。
+唯一能让每面国旗都零延迟的做法：**预取当前出题池的全部国旗**（用户 2026-09 口径：全预取，不看 `saveData`）。
+
+### 实现
+
+- 新增 `src/modes/flagPreload.ts`：模块级队列，**3 并发、低优先级**，逐个 `new Image()`（同源静态 SVG，一次普通 GET 即进 HTTP 缓存，不需要 decode、不入 DOM）。
+  - `preloadFlags(srcs)` 替换队列（调用方给的顺序即优先级）；`done` 集合避免对同一 src 反复建 Image；
+  - 单张失败（404）**不阻塞队列**、不重试（重试交给下次换池）—— 否则一次网络抖动会让整池永远取不完；
+  - `stopFlagPreload()` 清队列（已发出的请求不可回收）；`flagPreloadStats()` / `resetFlagPreloadForTest()` 供探针与测试。
+- `MapQuizMode` 挂钩点：`setQuestionNaming`（**一选上国旗档就开取**，符合用户原话）、`enter()`、`onViewChange()`（下钻/返回换池）、`answer()` 里 `ask()` 之前（当前题优先）；`exit()` 停队列。
+- 池子顺序 = 当前题（若有）→ `activePool()`；`flagSrcOf()` 统一了"iso → `data/flags/<文件>`"这一处拼路径（原来 `worldFlagSrc` 自己拼，现在共用）。
+- **题面卡片不做"等图就绪"**（用户口径）：卡片尺寸固定（高 112px）不会跳动，预取生效后基本看不到空框。
+
+### 验证
+
+- 单测：`flagPreload.test.ts` 7 例（并发上限 3、完成即补位、**失败不阻塞**、同池不重发、换池替换、stop 后不再发、去重）；`quizNaming.test.ts` +2（选上国旗档立刻开取整池、切回国名档停队列）。⚠ 该测试现在需要 stub `Image`（node 没有），并 `resetFlagPreloadForTest()` 复位模块级 `done`，否则测试之间会串。
+- 运行时 `verify-naming.mjs` +2：**实测预取到 194 面且 initiatorType 全是 `img`**、当前题的旗在预取集合里。⚠ 过滤器要排掉 `data/flags/index.json`（那是 `data.ts` 用 fetch 拉的索引，initiatorType 是 `fetch`，会把计数多算 1、也会让"全是 img"的断言假失败 —— 我第一版就是这么错的）。
+- 合计：`npm run check` exit 0（42 文件 / 445 用例）；运行时 verify-naming 30/30、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = **197/197**。
+
+### 留给下次的性能项（本轮没动）
+
+- **每次答对后的地图重绘 ≈120ms**（本机实测，与国旗无关）：`answer()` → `renderer.flash()`（setOption geo.regions + 裁剪）→ 900ms 后再整幅 `render()`。若用户仍觉得"换题有一顿"，该优化的是这里（例如 flash 只改 region 不重建 option），而不是继续在国旗上找。
+- 预取的 1.2MB 在移动网络下是实打实的流量（用户明确选择不看 `saveData`）；若将来要改，只需在 `flagPreload.preloadFlags` 调用点按 `navigator.connection` 截断 `srcs` 长度。
+
 ## 本轮（2026-09）：按钮顺序再修订（粒度行回到范围行之上）+ 点击模式「国旗」档
 
 ### 1. 未开始按钮顺序（第二轮修订）

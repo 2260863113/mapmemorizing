@@ -5,6 +5,7 @@ import type { QuizSessionDiagnostics } from './quizDiagnostics';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { loadStoredNaming, saveStoredNaming } from './namingStore';
 import { browseLabelState, type BrowseLabelScope } from './browseLabels';
+import { flagSrcOf, preloadFlags, stopFlagPreload } from './flagPreload';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
 import { clearProgress, loadProgress, loadScopeProvince, progressOf, saveProgress, saveScopeProvince, scopedUnits, syncScopeView } from './progress';
@@ -312,11 +313,37 @@ export abstract class MapQuizMode extends BaseMode {
     this.naming = next;
     saveStoredNaming(this.storagePrefix(), next);
     this.onNamingChanged();
+    // 刚选上「国旗」就开始把它那个池子的国旗预取进缓存（用户口径：选了国旗档就先把国旗备好）
+    this.syncFlagPreload();
     this.refresh();
   }
 
   /** 口径变化后的子类收尾（点击模式要按新口径重写题卡；输入模式无需）。 */
   protected onNamingChanged(): void {}
+
+  // ==================== 国旗预加载（点击模式「国旗」档） ====================
+
+  /**
+   * 把当前出题池的国旗排进后台预取队列（当前题优先）。
+   *
+   * 为什么是"整个池"：点击模式的下一题是答对那一刻才随机决定的，无法预知"下一面"是哪一面；
+   * 把池子预取完，之后无论抽到谁都在缓存里 → 换题瞬间出图（详见 flagPreload.ts 的说明）。
+   * 只在「世界档 + 国旗档」下动作；其它口径/范围立即停队列（省掉无用的请求）。
+   */
+  protected syncFlagPreload() {
+    if (!this.isWorldNation() || this.naming.world !== 'flag') {
+      stopFlagPreload();
+      return;
+    }
+    const srcs: string[] = [];
+    const push = (iso: string) => {
+      const src = flagSrcOf(this.ctx.data, iso);
+      if (src) srcs.push(src);
+    };
+    if (this.question) push(this.question); // 当前题最优先（万一缓存里还没有它）
+    for (const u of this.activePool()) push(u.adcode);
+    preloadFlags(srcs);
+  }
 
   // ==================== 浏览标签（未开始时的全量地名） ====================
 
@@ -370,12 +397,14 @@ export abstract class MapQuizMode extends BaseMode {
     this.syncScopeView();
     this.configureSearch(false);
     this.showStartHint();
+    this.syncFlagPreload(); // 国旗档：进模式/换范围就把这个池子的国旗排上预取
     this.refresh();
     this.ctx.updateProgress();
     this.onEntered();
   }
 
   exit() {
+    stopFlagPreload(); // 离开模式：不再排队预取（已发出的请求不可回收）
     this.stopwatch.stop();
     this.started = false;
     this.paused = false;
@@ -450,6 +479,7 @@ export abstract class MapQuizMode extends BaseMode {
     this.order = this.activePool().map((u) => u.adcode);
     this.restore();
     this.showStartHint();
+    this.syncFlagPreload(); // 下钻/返回都可能换池：重排预取队列
     this.ctx.updateProgress();
   }
 
@@ -774,6 +804,7 @@ export abstract class MapQuizMode extends BaseMode {
       this.finish();
       return;
     }
+    this.syncFlagPreload(); // 国旗档：新题最优先（池子可能因答题而缩小）
     this.ask(this.nextUnit(pool));
   }
 
@@ -920,8 +951,7 @@ export abstract class MapQuizMode extends BaseMode {
    * 调用方回落到国名题面 —— 宁可退化成文字题，也不要给一张破图/空白卡片。
    */
   protected worldFlagSrc(iso: string): string | null {
-    const file = this.ctx.data.countryFlags[iso];
-    return file ? `data/flags/${file}` : null;
+    return flagSrcOf(this.ctx.data, iso);
   }
 
   /**
