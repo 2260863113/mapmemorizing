@@ -4,6 +4,14 @@ export type ThemeName = 'light' | 'dark';
 export type MapTheme = {
   background: string;
   fill: Record<UnitColor, string>;
+  /**
+   * **范围外惰性面**的填充色：关闭全局设置「下钻后隐藏无关地区」时，下钻范围之外的面
+   * （其他省 / 其他洲的国家）画成这个颜色 —— 看得见，但不可交互。
+   *
+   * 取「比地图空白底色（`background`）更深一档的浅灰」：两者必须能一眼分开，
+   * 否则用户分不清"这块是练习范围外的地区"还是"这里本来就没有内容"（用户口径 2026-09）。
+   */
+  inactiveFill: string;
   emphasis: Record<UnitColor, string>;
   boundary: Record<BoundaryTone, string>;
   hoverArea: string;
@@ -38,6 +46,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#dc9292',
       scoreRedDark: '#bd5d5d',
     },
+    inactiveFill: '#b0b5bd', // 比底色 #d1d5db 深一档的浅灰
     emphasis: {
       green: '#93cfa0',
       blue: '#83b7e3',
@@ -89,6 +98,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#a23737',
       scoreRedDark: '#991b1b',
     },
+    inactiveFill: '#2b3441', // 比底色 #374151 深一档（暗主题没有"浅灰"，对应关系与明主题一致）
     emphasis: {
       green: '#15803d',
       blue: '#2563eb',

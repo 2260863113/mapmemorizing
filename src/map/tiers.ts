@@ -38,8 +38,7 @@ export const TIER_KEEP_PCT: Record<Tier, number> = {
  * 按 zoom 解析档位（含边界）。
  *
  * @param zoom 当前缩放倍率
- * @param drilled 是否已下钻到某个省。下钻时视口只剩一个省，顶点再多也被视口裁剪挡住，
- *                故直接给最精细档，避免「放大到 12 倍却因为阈值没到 14 而看着糙」。
+ * @param drilled 是否**强制最精细档**（由 `drillForcesLossless` 算出，不要直接传 "是否下钻"）。
  */
 export function tierOfZoom(zoom: number, drilled = false): Tier {
   if (drilled) return 'lossless';
@@ -48,6 +47,20 @@ export function tierOfZoom(zoom: number, drilled = false): Tier {
   if (zoom < TIER_ZOOM_MIN.plus) return 'fine';
   if (zoom < TIER_ZOOM_MIN.lossless) return 'plus';
   return 'lossless';
+}
+
+/**
+ * 下钻时是否强制最精细档。
+ *
+ * 只有**关闭不下**「下钻后隐藏无关地区」时才强制 lossless：那时视口里只剩当前范围的面，
+ * 顶点再多也被视口裁剪挡住，直接给最精细档最划算（避免"放大到 12 倍却因为阈值没到 14 而看着糙"）。
+ *
+ * 关闭该设置后，**范围外的面仍在画**，若还强制 lossless，邻省/邻洲会顶着一整份 100% 顶点的
+ * 几何参与每帧构建（裁剪只跳过视口外的面，视口内的照样 buildPath）——拖动与缩放会明显掉帧。
+ * 故此时必须回到按 zoom 分档（五档），这也是用户口径「关闭后下钻到省份依然保持五级精细度分段」。
+ */
+export function drillForcesLossless(drilled: boolean, hideUnrelatedOnDrill: boolean): boolean {
+  return drilled && hideUnrelatedOnDrill;
 }
 
 /** 档位 → 地级注册地图名。注意 fine 档沿用历史名 `china`（无后缀）。 */

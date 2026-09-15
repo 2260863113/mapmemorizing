@@ -85,3 +85,42 @@ describe('loadSettings · 「未开始时显示地图标签」', () => {
     expect(s.darkMode).toBe(true);
   });
 });
+
+/**
+ * 全局设置「下钻后隐藏无关地区」。
+ *
+ * 为什么必须测：默认值必须是 **true**（= 历史观感）—— 老档没有这个字段，
+ * 若归一化写反，所有老用户升级后地图观感会当场变样（下钻后冒出一片灰）。
+ */
+describe('loadSettings · 「下钻后隐藏无关地区」', () => {
+  it('全新用户：默认隐藏（与历史观感一致）', () => {
+    stubStorage();
+    expect(DEFAULT_SETTINGS.hideUnrelatedOnDrill).toBe(true);
+    expect(loadSettings().hideUnrelatedOnDrill).toBe(true);
+  });
+
+  it('老档缺该字段：回落默认 true（不因升级而改观感）', () => {
+    stubStorage({
+      [SETTINGS_KEY]: JSON.stringify({ cityBoundaryTone: 'dark', darkMode: true, ignoreTinyCountries: true }),
+    });
+    const s = loadSettings();
+    expect(s.hideUnrelatedOnDrill).toBe(true);
+    expect(s.cityBoundaryTone).toBe('dark'); // 其它字段照常读回
+  });
+
+  it('用户关过：读回 false（关闭后下钻仍显示其他地区）', () => {
+    stubStorage({ [SETTINGS_KEY]: JSON.stringify({ ...DEFAULT_SETTINGS, hideUnrelatedOnDrill: false }) });
+    expect(loadSettings().hideUnrelatedOnDrill).toBe(false);
+  });
+
+  it('字段值不是布尔（脏档）：归一为默认值，不让 undefined/字符串透传渲染层', () => {
+    stubStorage({ [SETTINGS_KEY]: JSON.stringify({ ...DEFAULT_SETTINGS, hideUnrelatedOnDrill: 'false' }) });
+    expect(loadSettings().hideUnrelatedOnDrill).toBe(true);
+  });
+
+  it('保存后能读回', () => {
+    stubStorage();
+    saveSettings({ ...DEFAULT_SETTINGS, hideUnrelatedOnDrill: false });
+    expect(loadSettings().hideUnrelatedOnDrill).toBe(false);
+  });
+});

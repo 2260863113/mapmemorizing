@@ -109,6 +109,7 @@ function ctx(over: Partial<Omit<LayerInput, 'state'>> & { state?: Partial<Render
     worldSubregion: null,
     cityBoundaryTone: 'light',
     worldBoundaryTone: 'mid',
+    hideUnrelatedOnDrill: true, // 默认（= 历史观感）：范围外的面透明
     excludedIso: new Set<string>(),
     units: UNITS,
     labelAnchors: new Map(),
@@ -124,7 +125,7 @@ function ctx(over: Partial<Omit<LayerInput, 'state'>> & { state?: Partial<Render
 const regionOf = (regions: { name?: string }[], name: string) =>
   regions.find((r) => r.name === name) as {
     silent?: boolean;
-    itemStyle?: { areaColor?: string; borderWidth?: number };
+    itemStyle?: { areaColor?: string; borderColor?: string; borderWidth?: number };
     emphasis?: { disabled?: boolean };
   };
 
@@ -194,6 +195,48 @@ describe('buildWorldRegionData', () => {
     const dark = buildWorldRegionData(ctx({ worldMode: true, worldBoundaryTone: 'dark' }));
     // 深浅只影响颜色，不影响宽度
     expect(regionOf(dark, '中国').itemStyle?.borderWidth).toBe(0.4);
+  });
+
+  /**
+   * 全局设置「下钻后隐藏无关地区」关闭时：范围外的面**保留可见**（浅灰 + 国界），
+   * 但**仍然不可交互** —— 可见性只改画法，不改"能不能点"。
+   */
+  describe('关闭「下钻后隐藏无关地区」', () => {
+    const OFF = { worldMode: true, worldContinent: 'AS' as const, hideUnrelatedOnDrill: false };
+
+    it('范围外的面改成浅灰填充（不再是透明），且仍 silent + 不可高亮', () => {
+      const regions = buildWorldRegionData(ctx(OFF));
+      const fra = regionOf(regions, '法国');
+      expect(fra.itemStyle?.areaColor).toBe(THEME.inactiveFill);
+      expect(fra.itemStyle?.areaColor).not.toBe(TRANSPARENT);
+      expect(fra.silent).toBe(true);
+      expect(fra.emphasis?.disabled).toBe(true);
+    });
+
+    it('范围外的面照画国界（否则整片浅灰会糊成一块看不出国别）', () => {
+      const regions = buildWorldRegionData(ctx(OFF));
+      expect(regionOf(regions, '法国').itemStyle?.borderWidth).toBe(0.4);
+      // 国界深浅仍跟随全局设置
+      const dark = buildWorldRegionData(ctx({ ...OFF, worldBoundaryTone: 'dark' }));
+      expect(regionOf(dark, '法国').itemStyle?.borderColor).toBe(THEME.boundary.dark);
+    });
+
+    it('范围内与范围外的画法必须不同：本洲国面照常按答题态着色', () => {
+      const regions = buildWorldRegionData(
+        ctx({ ...OFF, state: { colorOf: (iso) => (iso === 'CHN' ? 'green' : 'gray') } }),
+      );
+      expect(regionOf(regions, '中国').itemStyle?.areaColor).toBe(THEME.fill.green);
+      expect(regionOf(regions, '法国').itemStyle?.areaColor).toBe(THEME.inactiveFill);
+    });
+
+    it('浅灰比地图空白底色更深（用户口径：要让"看得到但不能动"和"这里本来就没内容"分开）', () => {
+      // 亮度加权近似（0.299R + 0.587G + 0.114B），只用来锁"更深"这个方向
+      const luma = (hex: string) => {
+        const n = parseInt(hex.slice(1), 16);
+        return 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+      };
+      expect(luma(THEME.inactiveFill)).toBeLessThan(luma(THEME.background));
+    });
   });
 });
 
@@ -358,6 +401,38 @@ describe('buildRegionData', () => {
     const fz = regionOf(regions, '福州');
     expect(fz.silent).toBe(true);
     expect(fz.itemStyle?.areaColor).toBe(TRANSPARENT);
+  });
+
+  /**
+   * 关闭「下钻后隐藏无关地区」：省外的面画成浅灰（看得见其他地区），但依旧 `silent`
+   * —— 悬停不高亮、点击等同点空白（与「装饰面 / 被排除的极小国」同一套惰性面口径）。
+   */
+  it('关闭该设置后：下钻某省时省外面浅灰可见，但仍静默、不画地级边界', () => {
+    const regions = buildRegionData(ctx({ viewProvince: '440000', hideUnrelatedOnDrill: false }));
+    const fz = regionOf(regions, '福州');
+    expect(fz.itemStyle?.areaColor).toBe(THEME.inactiveFill);
+    expect(fz.silent).toBe(true);
+    expect(fz.itemStyle?.borderWidth).toBe(0);
+    // 本省单位不受影响：照常着色 + 画边界
+    const gz = regionOf(regions, '广州');
+    expect(gz.silent).toBe(false);
+    expect(gz.itemStyle?.areaColor).toBe(THEME.fill.gray);
+    expect(gz.itemStyle?.borderWidth).toBe(0.6);
+  });
+
+  it('范围外的判定优先于无尽闯关的金币着色：省外仍是浅灰，本省才按金币上色', () => {
+    const coin = { coins: () => 300, label: () => null };
+    const regions = buildRegionData(
+      ctx({ viewProvince: '440000', hideUnrelatedOnDrill: false, state: { coin } }),
+    );
+    expect(regionOf(regions, '广州').itemStyle?.areaColor).toBe(THEME.coinGreen(300));
+    expect(regionOf(regions, '福州').itemStyle?.areaColor).toBe(THEME.inactiveFill);
+  });
+
+  it('没下钻时该设置不影响任何面（范围外为空集）', () => {
+    const on = buildRegionData(ctx({ state: { colorOf: () => 'green' } }));
+    const off = buildRegionData(ctx({ hideUnrelatedOnDrill: false, state: { colorOf: () => 'green' } }));
+    expect(off.map((r) => r.itemStyle?.areaColor)).toEqual(on.map((r) => r.itemStyle?.areaColor));
   });
 
   it('省级模式不画地级边界', () => {

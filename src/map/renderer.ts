@@ -9,7 +9,7 @@ import { InsetMap } from './inset';
 import { registerMaps } from './mapRegistry';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
 import { worldFaceInteractive, type WorldFaceContext } from './worldFaces';
-import { tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, type Tier } from './tiers';
+import { tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, drillForcesLossless, type Tier } from './tiers';
 import type { MapRendererDiagnostics } from './rendererDiagnostics';
 // 取景换算（纯函数：默认视野 / 标定框 / 取景边界 / 下钻相机 / 缓动）见 ./camera.ts
 import {
@@ -169,6 +169,12 @@ export class MapRenderer {
   private cityBoundaryTone: BoundaryTone = 'light';
   private provinceBoundaryTone: BoundaryTone = 'dark';
   private worldBoundaryTone: BoundaryTone = 'mid'; // 世界地图国家边界（默认取中间灰，同历史视觉）
+  /**
+   * 全局设置「下钻后隐藏无关地区」（默认开）。
+   * 关掉后下钻时范围之外的面画成浅灰（看得见但不可交互），且**下钻不再强制最精细档**
+   * ——两处的作用点见 `layerInput()`（数据层着色）与 `buildLineData()` / `activeTier()`（档位与省界）。
+   */
+  private hideUnrelatedOnDrill = true;
   private provinceMode = false; // 省级模式：不画地级边界、省界加粗、不支持下钻
   private provinceModeInset = true; // 省级模式是否显示港澳放大框
   private provinceModeDrill = false; // 省级模式是否支持下钻（双击省级面 → onUnitDblClick(省adcode)）
@@ -193,6 +199,8 @@ export class MapRenderer {
   private flashTimer: number | null = null;
   /** 省界折线各元素的数据坐标 bbox（下标与 'province-lines' 系列 data 对齐，供逐帧视口裁剪用）。 */
   private lineBoxes: CullBox[] = [];
+  /** 省界折线各元素所属省 adcode（与 `lineBoxes` 逐项对齐；验收探针据此断言"下钻时到底画了谁"）。 */
+  private lineAdcodes: string[] = [];
   /** 命名 resize 监听器引用，dispose 时移除，避免匿名监听泄漏。 */
   private handleResize = () => this.resize();
   onViewChange: (() => void) | null = null;
@@ -516,6 +524,21 @@ export class MapRenderer {
     if (this.lastState) this.render(this.lastState);
   }
 
+  /**
+   * 全局设置「下钻后隐藏无关地区」。
+   *
+   * 一处设置影响三处渲染结果，故必须整块重绘（而不仅是换色）：
+   *   1. 范围外的面：透明 ↔ 浅灰（数据层，见 `layers.ts` 的 `outOfScopeFill`）；
+   *   2. 下钻时的省界线：只画本省 ↔ 邻省省界照画（见 `buildLineData()`）；
+   *   3. 下钻时的精细度档：强制 lossless ↔ 按 zoom 五档（见 `./tiers.ts` 的 `drillForcesLossless`）。
+   * 第 3 条会改变 geo 地图名，`render()` 自带的地图名检测会走 replaceMerge 换图，故这里只调 render。
+   */
+  setHideUnrelatedOnDrill(on: boolean) {
+    if (on === this.hideUnrelatedOnDrill) return;
+    this.hideUnrelatedOnDrill = on;
+    if (this.lastState) this.render(this.lastState);
+  }
+
   /** 省级模式：仅渲染省级地图（35 个省面），不渲染地级市行政区；港澳放大框与下钻能力可选。 */
   setProvinceMode(on: boolean, opts: { inset?: boolean; allowDrill?: boolean } = {}) {
     const nextInset = opts.inset ?? true;
@@ -683,6 +706,7 @@ export class MapRenderer {
       worldSubregion: this.worldSubregion,
       cityBoundaryTone: this.cityBoundaryTone,
       worldBoundaryTone: this.worldBoundaryTone,
+      hideUnrelatedOnDrill: this.hideUnrelatedOnDrill,
       excludedIso: this.excludedIso,
       units: this.units,
       labelAnchors: this.labelAnchors,
@@ -695,10 +719,11 @@ export class MapRenderer {
 
   /**
    * 按 zoom 解析当前档位（阈值与映射见 ./tiers.ts，有单测覆盖）。
-   * 钻省时强制 lossless：钻省后视口只剩一个省，顶点再多也被裁剪挡住。
+   * 钻省时是否强制 lossless 由全局设置「下钻后隐藏无关地区」决定：关掉后邻省也在画，
+   * 必须继续按 zoom 走五档（见 `drillForcesLossless` 的说明）。
    */
   private activeTier(): Tier {
-    return tierOfZoom(this.zoom, this.viewProvince !== null);
+    return tierOfZoom(this.zoom, drillForcesLossless(this.viewProvince !== null, this.hideUnrelatedOnDrill));
   }
 
   /** 省界线当前档（与地级档位同步换档，五档）。 */
@@ -706,17 +731,27 @@ export class MapRenderer {
     return this.provinceLines[this.activeTier()];
   }
 
-  /** 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。 */
+  /**
+   * 当前视图下的省界线数据（下钻时只保留当前省）；世界模式无省界线。
+   *
+   * 关闭「下钻后隐藏无关地区」时**邻省省界也要留着**：那时范围外的地级面会画成浅灰、
+   * 且不画地级边界（见 `layers.ts` 的 `buildRegionData`），若省界也只剩本省，
+   * 一整片邻省会糊成一块看不出分界的灰 —— 用户无法分辨「哪一块不是我要练的」。
+   */
   private buildLineData(): { coords: number[][] }[] {
     if (this.worldMode) {
       this.lineBoxes = [];
+      this.lineAdcodes = [];
       return [];
     }
-    const lines = this.activeProvinceLines()
-      .filter((l) => !this.viewProvince || l.adcode === this.viewProvince || (l.adcode === '100000_JD' && this.viewProvince === '460000'))
-      .map((l) => ({ coords: l.coords }));
+    const keepProvince = this.hideUnrelatedOnDrill ? this.viewProvince : null;
+    const kept = this.activeProvinceLines().filter(
+      (l) => !keepProvince || l.adcode === keepProvince || (l.adcode === '100000_JD' && keepProvince === '460000'),
+    );
+    const lines = kept.map((l) => ({ coords: l.coords }));
     // 逐帧裁剪需要每个元素的数据坐标 bbox：构建时算一次，拖动时只做区间比较
     this.lineBoxes = lines.map((l) => boxOfCoords(l.coords));
+    this.lineAdcodes = kept.map((l) => l.adcode);
     return lines;
   }
 
@@ -1027,12 +1062,25 @@ export class MapRenderer {
   }
 
   /** geo 坐标系（读数用）：`pointToData` 把画布像素换算成经纬度。 */
-  private geoCoordSystem(): { pointToData?: (p: number[]) => number[] } | null {
+  private geoCoordSystem(): { pointToData?: (p: number[]) => number[]; dataToPoint?: (p: number[]) => number[] } | null {
     const geoModel = (this.chart as unknown as {
       getModel: () => { getComponent: (t: string) => { coordinateSystem?: unknown } | null };
     }).getModel().getComponent('geo');
-    const cs = geoModel?.coordinateSystem as { pointToData?: (p: number[]) => number[] } | undefined;
+    const cs = geoModel?.coordinateSystem as { pointToData?: (p: number[]) => number[]; dataToPoint?: (p: number[]) => number[] } | undefined;
     return cs?.pointToData ? cs : null;
+  }
+
+  /**
+   * 经纬度 → 画布像素（与 `viewportWindow()` 反向）。
+   *
+   * 只有运行时验收探针用它：要把**真实指针事件**打到某个面上（断言"悬停灰区不出统计卡片"），
+   * 就必须先知道那个面落在画布上的哪个像素。
+   */
+  private dataToPixel(point: [number, number]): [number, number] | null {
+    const cs = this.geoCoordSystem();
+    if (!cs?.dataToPoint) return null;
+    const p = cs.dataToPoint([point[0], point[1]]);
+    return p && Number.isFinite(p[0]) && Number.isFinite(p[1]) ? [p[0], p[1]] : null;
   }
 
   /**
@@ -1252,6 +1300,9 @@ export class MapRenderer {
       get cityBoundaryTone() { return self.cityBoundaryTone; },
       get provinceBoundaryTone() { return self.provinceBoundaryTone; },
       get worldBoundaryTone() { return self.worldBoundaryTone; },
+      get hideUnrelatedOnDrill() { return self.hideUnrelatedOnDrill; },
+      get activeTier() { return self.activeTier(); },
+      get provinceLineAdcodes() { return self.lineAdcodes; },
       get worldNameToIso() { return self.worldNameToIso; },
       get worldDecorativeNames() { return self.worldDecorativeNames; },
       get worldExcludedNames() { return self.worldExcludedNames; },
@@ -1261,6 +1312,7 @@ export class MapRenderer {
       animateViewTo: (center, zoom) => self.animateViewTo(center, zoom),
       framingExtent: () => self.framingExtent(),
       viewportWindow: () => self.viewportWindow(),
+      dataToPixel: (point) => self.dataToPixel(point),
       flash: (adcode) => self.flash(adcode),
       // 数据层已迁到 ./layers.ts；这里保留同签名的薄封装，验收探针的契约不变。
       buildLabelData: (state) => buildLabelData(self.layerInput(state)),

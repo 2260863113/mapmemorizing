@@ -16,11 +16,12 @@
 import type { BoundaryTone, Continent, RenderState, SubregionId } from '../types';
 import type { GeoPoint } from './geometry';
 import type { ViewportWindow } from './follow';
+import type { Tier } from './tiers';
 
 export interface MapRendererDiagnostics {
   // ==================== ECharts 实例与渲染状态 ====================
   /** ECharts 实例。探针只调 `getOption()` 读回**真正生效**的配置（不是我们以为写进去的）。 */
-  readonly chart: { getOption: () => unknown };
+  readonly chart: { getOption: () => unknown; getWidth: () => number; getHeight: () => number };
   /** 最近一次 `render()` 收到的状态：标签显隐断言的来源。 */
   readonly lastState: RenderState | null;
 
@@ -42,6 +43,17 @@ export interface MapRendererDiagnostics {
   readonly provinceBoundaryTone: BoundaryTone;
   readonly worldBoundaryTone: BoundaryTone;
 
+  // ==================== 下钻范围（全局设置「下钻后隐藏无关地区」） ====================
+  /** 当前生效的设置值（读回它比读设置面板上的勾选状态更可信）。 */
+  readonly hideUnrelatedOnDrill: boolean;
+  /** 当前生效的精细度档：关掉上面的设置后，下钻某省**不再**强制 lossless，这里能直接看出来。 */
+  readonly activeTier: Tier;
+  /**
+   * 最近一次渲染实际画出的省界线元素所属省 adcode（一项 = 一个环，与 `province-lines` 系列逐项对齐）。
+   * 断言「下钻时到底画了谁」靠它：默认设置下应当只有当前省，关闭设置后应当有多个省。
+   */
+  readonly provinceLineAdcodes: string[];
+
   // ==================== 世界面命中判定表 ====================
   /** 世界面 name → iso_a3。 */
   readonly worldNameToIso: Map<string, string>;
@@ -62,6 +74,8 @@ export interface MapRendererDiagnostics {
   framingExtent(): [number, number, number, number];
   /** 当前视口在数据坐标系里的矩形与像素比。 */
   viewportWindow(): ViewportWindow | null;
+  /** 数据坐标 → 画布像素（探针用来把真实指针事件打到某个面上）。 */
+  dataToPixel(point: [number, number]): [number, number] | null;
 
   // ==================== 高亮与标签数据 ====================
   /** 让某单位闪烁高亮（截图用）。 */

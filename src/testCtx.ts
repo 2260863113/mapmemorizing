@@ -88,6 +88,7 @@ export function makeTestCtx(opts: TestCtxOptions = {}): TestCtx {
       worldBoundaryTone: 'mid',
       ignoreTinyCountries: false,
       showBrowseLabels: opts.showBrowseLabels ?? true,
+      hideUnrelatedOnDrill: true,
     },
     byAdcode: new Map(data.allUnits.map((u) => [u.adcode, u])),
     toast: (m: string) => toasts.push(m),

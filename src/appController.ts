@@ -167,6 +167,7 @@ export class AppController {
     });
     renderer.setDarkMode(this.settings.darkMode);
     renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
+    renderer.setHideUnrelatedOnDrill(this.settings.hideUnrelatedOnDrill); // 全局设置：下钻后是否隐藏无关地区
     renderer.onViewChange = () => {
       this.current?.onViewChange();
       this.current?.refresh();
@@ -817,7 +818,7 @@ export class AppController {
     // 顶栏「黑夜模式 / 白天模式」开关（位于全局设置按钮左侧）：文案显示点击后将切换到的主题
     ($('btn-theme') as HTMLButtonElement).addEventListener('click', () => this.toggleTheme());
 
-    // 导航栏设置：个性化（地级/省级/世界边界深浅）+ 答题范围（忽略面积极小的国家）
+    // 导航栏设置：个性化（地级/省级/世界边界深浅）+ 答题范围（忽略面积极小的国家）+ 地图下钻
     ($('btn-settings') as HTMLButtonElement).addEventListener('click', () => {
       openSettings(this.settings, (s) => {
         Object.assign(this.settings, s);
@@ -825,6 +826,8 @@ export class AppController {
         this.syncThemeButton();
         this.renderer.setDarkMode(this.settings.darkMode);
         this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
+        // 下钻范围设置：立即重绘（当前若正停在下钻视图里，观感当场跟着变，无需重进）
+        this.renderer.setHideUnrelatedOnDrill(this.settings.hideUnrelatedOnDrill);
         this.applyTinyCountrySetting();
       });
     });

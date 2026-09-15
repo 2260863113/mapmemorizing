@@ -54,6 +54,13 @@ export interface LayerInput {
   /** 边界深浅设置（全局设置里的三档）。 */
   cityBoundaryTone: BoundaryTone;
   worldBoundaryTone: BoundaryTone;
+  /**
+   * 全局设置「下钻后隐藏无关地区」（默认 true）。
+   *
+   * 只决定范围外的面**画成什么样**：true = 透明（看不见）；false = `theme.inactiveFill` 浅灰（看得见）。
+   * 两种情况都是 `silent: true` —— 可见性不影响可交互性，范围外的面在这两种取值下都不可交互。
+   */
+  hideUnrelatedOnDrill: boolean;
   /** 被「忽略面积极小的国家」排除的 iso 集合。 */
   excludedIso: Set<string>;
   /** 全部地级/省级单位（含装饰面）。 */
@@ -108,9 +115,24 @@ function faceVisible(ctx: LayerInput, iso: string, isDecorative: boolean): boole
 
 // ==================== 地级（全国 / 单省） ====================
 
-/** 地级面的 region 数据：按答题态/熟练度着色，范围外的面静默透明。 */
+/**
+ * 范围外惰性面的填充色。
+ *
+ * 关闭「下钻后隐藏无关地区」时用 `theme.inactiveFill`（比空白底色深一档的浅灰，看得见）；
+ * 开启时透明（完全看不见）。抽成常量而非就地写 `'rgba(0,0,0,0)'`：地级与世界两个分支共用它，
+ * 断言（单测 + 运行时探针）也认这一个值。
+ */
+export const OUT_OF_SCOPE_HIDDEN_FILL = 'rgba(0,0,0,0)';
+
+/** 范围外惰性面的填充色（按设置取「浅灰可见」或「透明不可见」）。 */
+function outOfScopeFill(ctx: LayerInput): string {
+  return ctx.hideUnrelatedOnDrill ? OUT_OF_SCOPE_HIDDEN_FILL : ctx.theme.inactiveFill;
+}
+
+/** 地级面的 region 数据：按答题态/熟练度着色，范围外的面静默（透明或浅灰，见 `outOfScopeFill`）。 */
 export function buildRegionData(ctx: LayerInput): GeoRegion[] {
   const { state, theme } = ctx;
+  const outFill = outOfScopeFill(ctx);
   return ctx.units.map((u) => {
     const inView = !ctx.viewProvince || u.provinceAdcode === ctx.viewProvince;
     const color: UnitColor = u.decorative ? 'gray' : state.colorOf(u.adcode);
@@ -119,7 +141,11 @@ export function buildRegionData(ctx: LayerInput): GeoRegion[] {
       name: u.name,
       silent: !inView,
       itemStyle: {
-        areaColor: state.coin ? (theme.coinGreen(coinCoins) ?? theme.fill[color]) : inView ? theme.fill[color] : 'rgba(0,0,0,0)',
+        areaColor: !inView
+          ? outFill
+          : state.coin
+            ? (theme.coinGreen(coinCoins) ?? theme.fill[color])
+            : theme.fill[color],
         // 省级模式不画地级边界（省界由 province-lines 系列单独绘制）
         borderColor: inView && !ctx.provinceMode ? theme.boundary[ctx.cityBoundaryTone] : 'rgba(0,0,0,0)',
         borderWidth: inView && !ctx.provinceMode ? 0.6 : 0,
@@ -239,15 +265,22 @@ export function buildWorldEventData(ctx: LayerInput): { name: string }[] {
 /**
  * 世界模式的国面 region 数据：答题国按熟练度/答题态着色；装饰面灰显且静默。
  *
- * 大洲/次区域视图下**非本范围的面不渲染外观但仍登记为 `silent` 透明面**：
+ * 大洲/次区域视图下**非本范围的面不渲染为"有内容的面"但仍登记为 `silent`**：
  * 只 continue 跳过外观会让这些面回落到 geo 层默认样式——几何依然参与命中测试、
  * 且 geo.emphasis 的悬停遮罩照常生效，于是「空白处悬停高亮看不见的国家、点击
  * 跳到它的上级区域」。登记为 silent 后 ECharts 既不派发鼠标事件也不做 emphasis，
  * 空白区因此彻底无交互。
+ *
+ * 范围外的面**画成什么**由全局设置「下钻后隐藏无关地区」决定（`outOfScopeFill`）：
+ * 开启 = 透明（看不见）；关闭 = 浅灰可见 + 照画国界（看得出是哪些国家，但依然点不动）。
  */
 export function buildWorldRegionData(ctx: LayerInput): GeoRegion[] {
   const { state, theme } = ctx;
   const geo = ctx.data.worldGeoJson as { features?: GeoFeature[] };
+  const outFill = outOfScopeFill(ctx);
+  // 关闭设置时范围外面可见：国界照画，否则整片浅灰会糊成一块看不出国别
+  const outBorder = ctx.hideUnrelatedOnDrill ? 'rgba(0,0,0,0)' : theme.boundary[ctx.worldBoundaryTone];
+  const outBorderWidth = ctx.hideUnrelatedOnDrill ? 0 : 0.4;
   const out: GeoRegion[] = [];
   for (const f of geo.features ?? []) {
     const iso = f.properties.iso_a3 ? String(f.properties.iso_a3) : '';
@@ -255,12 +288,12 @@ export function buildWorldRegionData(ctx: LayerInput): GeoRegion[] {
     const excluded = !isDecorative && ctx.excludedIso.has(iso);
     const gray = isDecorative || excluded; // 装饰面与被排除的极小国：灰显
     if (!faceVisible(ctx, iso, isDecorative)) {
-      // 范围外：保留几何（否则 ECharts 会把它当默认面处理）但不可见、不可交互
+      // 范围外：保留几何（否则 ECharts 会把它当默认面处理）但不可交互
       out.push({
         name: f.properties.name ?? '',
         silent: true,
-        itemStyle: { areaColor: 'rgba(0,0,0,0)', borderColor: 'rgba(0,0,0,0)', borderWidth: 0 },
-        emphasis: { disabled: true, itemStyle: { areaColor: 'rgba(0,0,0,0)' }, label: { show: false } },
+        itemStyle: { areaColor: outFill, borderColor: outBorder, borderWidth: outBorderWidth },
+        emphasis: { disabled: true, itemStyle: { areaColor: outFill }, label: { show: false } },
         label: { show: false },
       });
       continue;

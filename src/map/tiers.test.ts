@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  tierOfZoom, chinaMapNameForTier, provinceMapNameForTier,
+  tierOfZoom, chinaMapNameForTier, provinceMapNameForTier, drillForcesLossless,
   TIER_ZOOM_MIN, TIER_KEEP_PCT, ALL_CHINA_MAP_NAMES, ALL_PROVINCE_MAP_NAMES,
   type Tier,
 } from './tiers';
@@ -38,7 +38,6 @@ describe('tierOfZoom', () => {
     // 钻省后视口只剩一个省，顶点再多也被视口裁剪挡住 → 不必降精度。
     for (const z of [0.8, 1, 3, 8, 12, 13.9]) expect(tierOfZoom(z, true)).toBe('lossless');
   });
-
   it('is monotonically non-decreasing in precision as zoom grows', () => {
     const order = TIERS.map((t) => TIER_KEEP_PCT[t]);
     expect(order).toEqual([...order].sort((a, b) => a - b)); // 4 < 8 < 15 < 40 < 100
@@ -54,6 +53,27 @@ describe('tierOfZoom', () => {
     const seen = new Set<Tier>();
     for (let z = 0.8; z <= 28; z += 0.05) seen.add(tierOfZoom(z));
     expect([...seen].sort()).toEqual([...TIERS].sort());
+  });
+});
+
+describe('drillForcesLossless（全局设置「下钻后隐藏无关地区」的档位口径）', () => {
+  it('下钻 + 隐藏无关地区开启：强制最精细档', () => {
+    expect(drillForcesLossless(true, true)).toBe(true);
+  });
+
+  it('下钻 + 该设置关闭：不强制，仍按 zoom 走五档（邻省也在画，必须走简化档）', () => {
+    expect(drillForcesLossless(true, false)).toBe(false);
+    // 用户口径：关闭后下钻到省份，依然保持五级精细度分段
+    expect(tierOfZoom(1, drillForcesLossless(true, false))).toBe('ultra');
+    expect(tierOfZoom(3, drillForcesLossless(true, false))).toBe('pro');
+    expect(tierOfZoom(8, drillForcesLossless(true, false))).toBe('fine');
+    expect(tierOfZoom(12, drillForcesLossless(true, false))).toBe('plus');
+    expect(tierOfZoom(20, drillForcesLossless(true, false))).toBe('lossless');
+  });
+
+  it('没下钻时该设置无关紧要（全国视野本来就是按 zoom 分档）', () => {
+    expect(drillForcesLossless(false, true)).toBe(false);
+    expect(drillForcesLossless(false, false)).toBe(false);
   });
 });
 

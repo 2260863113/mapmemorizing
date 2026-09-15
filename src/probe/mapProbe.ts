@@ -28,7 +28,7 @@ export function mapProbe(a: AppDiagnostics) {
   type ReadbackRegion = {
     name?: string;
     silent?: boolean;
-    itemStyle?: { areaColor?: string; borderWidth?: number };
+    itemStyle?: { areaColor?: string; borderColor?: string; borderWidth?: number };
   };
 
   return {
@@ -58,12 +58,15 @@ export function mapProbe(a: AppDiagnostics) {
     },
 
     /**
-     * 1b. 渲染层验收：下钻后，范围外的面必须**既不可见也不可交互**。
+     * 1b. 渲染层验收：下钻后，范围外的面必须**既不可见也不可交互**（默认设置下的口径）。
      *
      * 光验事件层不够——如果范围外的面只是「没有外观」但回落到 geo 默认样式，
      * 它们仍会被画成有颜色的国家轮廓（正是用户看到的「看不见却能被高亮的国家」）。
      * 这里直接读回 ECharts 实际生效的 geo.regions，断言范围外的面是
      * 透明 + silent（既不画也不响应）。
+     *
+     * 关闭「下钻后隐藏无关地区」后，范围外的面改为**浅灰可见**——此时 `outOfScopeBlank`
+     * 应当为 false、`outOfScopeSilent` 仍须为 true（可见性变了，可交互性没变）。
      */
     renderedRegions() {
       renderer.setWorldMode(true, 'AS', null);
@@ -86,8 +89,9 @@ export function mapProbe(a: AppDiagnostics) {
               silent: g.silent === true,
               transparent: isTransparent(g.itemStyle?.areaColor),
               areaColor: g.itemStyle?.areaColor,
+              borderWidth: g.itemStyle?.borderWidth ?? 0,
             }
-          : { found: false, silent: false, transparent: false, areaColor: '' };
+          : { found: false, silent: false, transparent: false, areaColor: '', borderWidth: 0 };
       };
       const out = {
         total: regions.length,
@@ -98,8 +102,10 @@ export function mapProbe(a: AppDiagnostics) {
       const outOfScopeBlank =
         out.france.found && out.france.silent && out.france.transparent &&
         out.brazil.found && out.brazil.silent && out.brazil.transparent;
+      const outOfScopeSilent =
+        out.france.found && out.france.silent && out.brazil.found && out.brazil.silent;
       const inScopePainted = out.china.found && !out.china.silent && !out.china.transparent;
-      return { ...out, outOfScopeBlank, inScopePainted };
+      return { ...out, setting: d.hideUnrelatedOnDrill, outOfScopeBlank, outOfScopeSilent, inScopePainted };
     },
 
     /** 2. 梵蒂冈：不在池内，但灰面仍在（填住意大利的内部环）。 */
@@ -320,6 +326,70 @@ export function mapProbe(a: AppDiagnostics) {
         center: d.center,
         zoom: d.zoom,
       });
+    },
+
+    /**
+     * 9. 全局设置「下钻后隐藏无关地区」—— **当前实际视图**的只读回读（本轮需求）。
+     *
+     * 为什么必须运行时验：这条需求落在**真正渲染出来的面**与**真正生效的档位**上 ——
+     * 「范围外的面到底画没画」「关掉开关后下钻是不是还强制最无损档」，纯函数与单测都只能证明一半。
+     *
+     * **本方法刻意只读**（不改设置、不改视图）：验收脚本走真实路径
+     * 「打开设置面板 → 关掉开关 → 保存」，在保存前后各读一次，就能证明设置**当场生效**，
+     * 且拿到省外惰性面的**画布像素**去派发真实指针事件（断言"灰区悬停没有反应"）。
+     * 视图没下钻时 `drilledProvince` 为 null，调用方据此判断样本是否有效。
+     */
+    drillShade() {
+      const province = renderer.currentProvince();
+      const center = data.provinces.find((p) => p.adcode === province)?.center ?? [113.4, 23.4];
+      const inUnit = province
+        ? (data.allUnits.find((u) => u.provinceAdcode === province && !u.decorative) ?? null)
+        : null;
+      // 省外候选：按到本省中心的距离排序取最近的若干（下钻后视口里才可能出现它们）
+      const outUnits = province
+        ? data.allUnits
+            .filter((u) => u.provinceAdcode !== province && !u.decorative)
+            .map((u) => ({ u, dist: Math.hypot(u.center[0] - center[0], u.center[1] - center[1]) }))
+            .sort((a, b) => a.dist - b.dist)
+            .slice(0, 12)
+            .map((x) => x.u)
+        : [];
+      const outUnit = outUnits[0] ?? null;
+
+      const opt = d.chart.getOption() as
+        | { geo?: { regions?: unknown[] }[] | { regions?: unknown[] } }
+        | undefined;
+      const geo = Array.isArray(opt?.geo) ? opt.geo[0] : opt?.geo;
+      const regions = (geo?.regions ?? []) as ReadbackRegion[];
+      /** 某个面**此刻实际生效**的样式（不是我们以为写进去的）。 */
+      const describe = (name: string) => {
+        if (!name) return { found: false, silent: false, areaColor: '', borderWidth: 0 };
+        const r = regions.find((x) => x.name === name);
+        return r
+          ? {
+              found: true,
+              silent: r.silent === true,
+              areaColor: r.itemStyle?.areaColor ?? '',
+              borderWidth: r.itemStyle?.borderWidth ?? 0,
+            }
+          : { found: false, silent: false, areaColor: '', borderWidth: 0 };
+      };
+      return {
+        setting: d.hideUnrelatedOnDrill,
+        drilledProvince: province,
+        zoom: d.zoom,
+        tier: d.activeTier,
+        // 省界线：一项 = 一个环，故数量本身没意义；真正要看的是"画了哪些省"
+        provinceLineCount: d.provinceLineAdcodes.length,
+        provinceLineProvinces: [...new Set(d.provinceLineAdcodes)].sort(),
+        inScope: { adcode: inUnit?.adcode ?? '', name: inUnit?.name ?? '', ...describe(inUnit?.name ?? '') },
+        outScope: { adcode: outUnit?.adcode ?? '', name: outUnit?.name ?? '', ...describe(outUnit?.name ?? '') },
+        // 候选面的画布像素（脚本再按 canvas 矩形与 elementFromPoint 筛掉打不到画布的点）
+        pixels: {
+          inScope: inUnit ? { adcode: inUnit.adcode, name: inUnit.name, pixel: d.dataToPixel(inUnit.center) } : null,
+          outScope: outUnits.map((u) => ({ adcode: u.adcode, name: u.name, pixel: d.dataToPixel(u.center) })),
+        },
+      };
     },
 
     /** 还原：把视图切回世界全图（探针之间互不污染）。 */

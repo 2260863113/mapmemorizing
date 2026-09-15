@@ -1,5 +1,63 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：全局设置「下钻后隐藏无关地区」
+
+用户口径（一次说清，无追问）：全局设置里加开关，**默认打开**；打开 = 现在的样子；关闭后下钻到次级区域**依然显示其他地区**，但**无法交互**，填充为**比空白底色更深一档的浅灰**；关闭时下钻到省份**依然保持五级精细度分段**。
+
+**一条开关改了四处渲染结果**（这是本轮最需要先读的一张表）：
+
+| 作用点 | 开（默认） | 关 |
+|---|---|---|
+| 范围外的面可见性 | 透明 | 浅灰 `#b0b5bd`（暗 `#2b3441`） |
+| 范围外的面可交互性 | `silent` | **同样 `silent`（刻意不变）** |
+| 下钻时的省界线 | 只画本省 | 邻省省界照画 |
+| 下钻时的精细度档 | 强制 lossless | 按 zoom 走五档 |
+
+### 1. 关键判断：只切"可见性"，不切"可交互性"
+
+`silent` 是本项目「惰性面」的全部含义（见 `CONTEXT.md` 的**惰性面**、`docs/adr/0005`）：ECharts 对 `silent` region 既不派发鼠标事件也不做 emphasis。本轮把「可见性」与「可交互性」当成**两条正交的轴**：`layers.ts` 的 `outOfScopeFill()` 只改 `areaColor`，`silent` 两态恒为 true。于是关闭后得到的是「**看得见的惰性面**」——占位置、画浅灰，但悬停不高亮、没有 tooltip、点了等同点空白（有下钻层级时退回上一层）。
+
+⚠ 值得记住的实测细节：**zrender 的 `findHover` 对 silent 元素返回 `topTarget` 但不返回 `target`**（`node_modules/zrender/lib/Handler.js` 第 283 行附近），所以 `event.target` 仍是 `undefined` —— 点击灰区**照旧**走 `getZr().on('click')` 里的空点分支 → `onBlankClick()`。这不是本轮新行为，而是既有惰性面语义的自然延续（README 第 53 条早就写着"点击等同点空白"）。**若将来想让灰区"点了完全没反应"，必须改成 `silent: false` + 在 `wireChartClick`/`wireChartHover`/tooltip 三处各自加范围守卫，还要接受"下钻后点不动就没法靠点空白退回上一层"这个代价**——本轮刻意没做。
+
+### 2. 为什么关闭后必须放弃"下钻强制无损档"
+
+开着时下钻某省，视口里只剩一个省，顶点再多也被 `cull.ts` 的视口裁剪挡住（`ignore=true` 让 zrender 直接跳过 `buildPath`），所以 `tierOfZoom(zoom, drilled=true)` 直接给 lossless 最划算。关掉后邻省**仍在绘制**——若还强制 lossless，它们会顶着 100% 顶点的几何参与每帧构建，拖动缩放明显掉帧。故新加纯函数 `tiers.ts::drillForcesLossless(drilled, hideUnrelatedOnDrill)`，只有"下钻 **且** 隐藏无关地区"才强制。用户那句「依然保持五级精细度分段」说的就是这件事。
+
+实测（广东省，1440×900）：下钻取景 zoom ≈ **7.37**，按阈值本该是 `fine`；开着时被强制成 `lossless`，关掉后回到 `fine` —— 这条差异是验收脚本里最直接的证据（若某省的取景倍率恰好 ≥14，这条就验不出来了，脚本里显式断言了 `zoom < 14`）。
+
+### 3. 改动的文件
+
+- `types.ts`（`Settings.hideUnrelatedOnDrill` + 长注释）、`store.ts`（默认 true + 旧档回落/脏值归一）、`index.html`（新增「地图下钻」分区与 `#set-hide-unrelated-drill`）、`ui/settingsPanel.ts`（读写该开关）；
+- `map/theme.ts`（新令牌 `inactiveFill`：明 `#b0b5bd` / 暗 `#2b3441`，比 `background` 深一档）；
+- `map/layers.ts`（`LayerInput.hideUnrelatedOnDrill` + `outOfScopeFill()`；地级分支把"范围外"判定挪到金币色**之前**，世界分支范围外照画国界）；
+- `map/tiers.ts`（`drillForcesLossless()`）；`map/renderer.ts`（字段 + `setHideUnrelatedOnDrill()` + `layerInput()` + `activeTier()` + `buildLineData()` 保留邻省 + 诊断视图新增 `hideUnrelatedOnDrill`/`activeTier`/`provinceLineAdcodes`/`dataToPixel`）；
+- `appController.ts`（建渲染器时与保存设置时各灌一次）；
+- `probe/mapProbe.ts`（`drillShade()` 只读回读 + `renderedRegions()` 增加 `setting`/`borderWidth`/`outOfScopeSilent`）。
+
+### 4. 验收
+
+- 单测 **529**（+15）：`layers.test.ts` 新增"关闭后浅灰可见但静默/边界/比底色深/金币不覆盖范围外/未下钻时无影响"、`tiers.test.ts` 新增 `drillForcesLossless` 与"关闭后五档齐全"、`store.test.ts` 新增默认值与归一化；
+- 运行时新增 `scripts/verify-drill-scope.mjs`（**34/34**，截图 `docs/shots/drill-scope-1..6-*.png`），**全部走真实路径**：真实点击设置面板保存 → 读回 ECharts 真正生效的 `geo.regions` → 真实鼠标事件 → 画布像素直方图；
+- 回归：`verify-round2` 38/38、`verify-round3` 54/54 未受影响（默认取值下行为零变化，`renderedRegions` 的旧断言照旧通过）。
+
+⚠ **验收脚本踩过的两个坑**（都值得记住，已写进脚本注释）：
+1. **画布不止一张**：zrender 建了两张 1410×745 的 canvas，**索引 1 才是主画布**（悬停高亮画在另一张上，实测只有那张的指纹会随悬停变化）。取样时逐张找"该点有内容的"，别写死索引。
+2. **地图空白处画布是透明的**：用户看到的空白色来自 CSS（`#map { background: var(--map-bg) }`），故像素取样必须回落到容器的计算背景色，否则会把"空白"读成"没有颜色"。另外单点取样会**正好落在白衬底的地名标签上**（实测：澳门中心被珠海的标签盖住）——所以"其他地方变灰了"这条断言用的是**同屏颜色直方图**（多出的浅灰格 621 ≈ 少掉的空白格 655 − 34 条画在灰面上的省界/标签），比单点稳得多。
+
+### 建议验证
+
+1. `npm run check`（typecheck + lint + 单测 529 条）与 `npm run build` 均须通过；
+2. `node scripts/verify-drill-scope.mjs` → 应输出 `34/34 通过`，并刷新 `docs/shots/drill-scope-1..6-*.png`；
+3. 回归三个老脚本：`verify-round2.mjs` 38/38、`verify-round3.mjs` 54/54、`verify-puzzle.mjs` 75/75（本轮的默认取值 = 历史观感，故它们必须一字不改地通过）；
+4. 手工：打开「设置 → 地图下钻」看开关默认在开；进点击/输入模式市级档，点某省下钻 → 其他省不可见；关掉开关并保存 → 当前画面**当场**变成"其他省浅灰可见"，但悬停不高亮、点了等同点空白（退回全国）；再点开 → 恢复原样；顺手核对左下缩放角标：关闭时该省的档位会比"强制无损"时低一档（如广东 7.37x → 从 lossless 回落到 fine）。
+
+### 5. 注意事项（给下次改动）
+
+- **不要**把范围外面改成非 `silent`：那是"能不能点"的口径变更，会连带 `wireChartClick` / `wireChartHover` / tooltip 三处守卫与"点空白退回上一层"的出口（理由见第 1 条）。
+- **颜色只有一处来源**：`MapTheme.inactiveFill`。验收脚本里另写了一份 `#b0b5bd` 的期望值（刻意的独立重述）——改颜色时脚本会红，那正是提醒你复核观感并同步改脚本。
+- **`buildLineData()` 有副作用**：它顺手写 `lineBoxes`（逐帧裁剪用）与 `lineAdcodes`（探针用），两者必须与返回的折线逐项对齐；这轮把过滤结果先算成 `kept` 再同时喂给三处，就是为了不让三个数组漂移。
+- 「惰性面」在 `CONTEXT.md` 里现在明确写成"可见性与可交互性正交"，下次再有人问"灰的能不能点"，答案是**不能**。
+
 ## 本轮（2026-09）：P0/P1 重构（口径注册表 + 模式目录 + 渲染器拆分）
 
 来自一次"哪里亟待重构"的自评，六项一次做完。**行为零变化**（514 单测、214 个运行时断言全绿）。

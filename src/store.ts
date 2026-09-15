@@ -259,6 +259,7 @@ export const DEFAULT_SETTINGS: Settings = {
   darkMode: false,
   ignoreTinyCountries: false,
   showBrowseLabels: true, // 默认显示（与自由模式的默认观感一致）
+  hideUnrelatedOnDrill: true, // 默认隐藏（= 历史观感：下钻后只看得到当前范围）
 };
 
 /**
@@ -291,6 +292,11 @@ export function loadSettings(): Settings {
         worldBoundaryTone: boundaryToneOf(parsed.worldBoundaryTone, DEFAULT_SETTINGS.worldBoundaryTone),
         // 旧档没有该字段：显式归一为布尔，避免 undefined 透传到开关与判定
         ignoreTinyCountries: parsed.ignoreTinyCountries === true,
+        // 旧档没有该字段：回落到默认「隐藏」（= 历史观感，老用户不该发现地图变了）
+        hideUnrelatedOnDrill:
+          typeof parsed.hideUnrelatedOnDrill === 'boolean'
+            ? parsed.hideUnrelatedOnDrill
+            : DEFAULT_SETTINGS.hideUnrelatedOnDrill,
         // 旧档没有该字段：从自由模式的旧键迁移（老用户关过标签就保持关闭）
         showBrowseLabels:
           typeof parsed.showBrowseLabels === 'boolean' ? parsed.showBrowseLabels : legacyShowBrowseLabels(),
