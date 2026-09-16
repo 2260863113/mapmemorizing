@@ -5,7 +5,7 @@
  *   1. 世界下钻后，空白区域悬停不高亮、点击不下钻（空白区无交互）
  *   2. 梵蒂冈不在答题池内
  *   3. 「忽略面积极小的国家」开启后，极小国家不出题且不可交互
- *   4. 错误回滚：红显时长 1.5s，且**每次**答错都标红
+ *   4. 错误回滚：红显时长 1.1s（2026-09 由 1.5s 调整），且**每次**答错都标红
  *   5. 世界输入模式自动跟随：缩放与国家面积成反比
  *   6. 所有模式答错后镜头平移到正确答案位置且缩放不变
  *
@@ -140,9 +140,9 @@ try {
   const off = await evaluate('window.__probe.toggleTiny(false)');
   check('关闭后恢复 194', off.poolAfter === 194, `${off.poolAfter}`);
 
-  console.log('\n=== 4. 错误回滚：每次标红 + 1.5s ===');
+  console.log('\n=== 4. 错误回滚：每次标红 + 1.1s ===');
   const rb = await evaluate('window.__probe.rollback()');
-  check('红显时长为 1500ms', rb.delayMs === 1500, `delayMs=${rb.delayMs}`);
+  check('红显时长为 1100ms', rb.delayMs === 1100, `delayMs=${rb.delayMs}`);
   check('第一次答错标红', rb.firstWrongRed === true);
   check('红显到时间后被清掉（是临时高亮）', rb.redClearedAfterTimer === true);
   check('回滚后题目被恢复，可重新作答', rb.questionRestored === true);

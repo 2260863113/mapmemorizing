@@ -1,13 +1,28 @@
 import type { AuthStore } from '../authStore';
 import type { AnnouncementStore } from '../announcementStore';
-import type { AdminUser } from '../api';
+import type { AdminUser, AccessStats } from '../api';
 import { api } from '../api';
 import { avatarHtml } from './avatar';
 import { escapeAttr, escapeHtml } from './html';
 import { formatDate, formatDateTime } from './dateFormat';
 import { normalizeProvince } from '../matcher';
-import type { AppData } from '../types';
+import type { AppData, Settings } from '../types';
 import { t } from '../i18n';
+import { TrafficChart } from './trafficChart';
+import type { AdminPanelDiagnostics } from './adminPanelDiagnostics';
+import {
+  DEFAULT_TRAFFIC_RANGE,
+  isEmptyTraffic,
+  normalizeTrafficPoints,
+  normalizeTrafficRange,
+  normalizeTrafficUnit,
+  trafficRangeSpec,
+  trafficUnitKey,
+  TRAFFIC_RANGES,
+  type TrafficPoint,
+  type TrafficRange,
+  type TrafficUnit,
+} from './trafficSeries';
 
 export type AdminView = 'users' | 'logs' | 'announcements';
 
@@ -19,12 +34,20 @@ export class AdminPanel {
   private el: HTMLElement;
   private view: AdminView = 'users';
   private editingAnnouncementId: number | null = null;
+  /** 流量看板当前范围（会话内记忆；切换子视图后保留，避免每次都跳回默认）。 */
+  private trafficRange: TrafficRange = DEFAULT_TRAFFIC_RANGE;
+  /** 流量折线图实例：**必须在重建 `#admin-body` 之前销毁**（见 `./trafficChart.ts` 的说明）。 */
+  private traffic: TrafficChart | null = null;
+  /** 最近一次画出的点序列与粒度：主题切换时用原数据重上色，不重新请求。 */
+  private trafficPoints: TrafficPoint[] | null = null;
+  private trafficUnit: TrafficUnit = 'day';
 
   constructor(
     containerId: string,
     private auth: AuthStore,
     private announcements: AnnouncementStore,
     private data: AppData,
+    private settings: Settings,
   ) {
     this.el = document.getElementById(containerId) as HTMLElement;
   }
@@ -44,7 +67,71 @@ export class AdminPanel {
     return this.auth.sessionToken();
   }
 
+  /**
+   * 主题切换后重上色（暗色模式的 tooltip 三色取自 `MAP_THEMES`，必须在切换后重画一次）。
+   * 数据不变，故不重新请求；图表没挂载时是空操作。
+   */
+  applyTheme() {
+    if (!this.traffic || !this.trafficPoints) return;
+    this.traffic.render(this.trafficPoints, this.trafficUnit, this.settings.darkMode);
+  }
+
+  /**
+   * 销毁流量图实例。**重建 `#admin-body` 之前必须调用**：容器元素会被 innerHTML 换掉，
+   * 不销毁就等于把 ECharts 实例与它的 canvas 一起丢掉（切几次 tab 泄漏几个）。
+   */
+  private disposeTraffic() {
+    this.traffic?.dispose();
+    this.traffic = null;
+    this.trafficPoints = null;
+  }
+
+  /**
+   * 验收探针的**只读**诊断视图（见 `./adminPanelDiagnostics.ts` 的说明）。
+   * 生产路径不调用（只有 URL 带 `?probe=1` 时探针取一次）。
+   */
+  diagnostics(): AdminPanelDiagnostics {
+    const self = this;
+    return {
+      get view() { return self.view; },
+      get trafficRange() { return self.trafficRange; },
+      get trafficMounted() { return self.traffic?.mounted === true; },
+      get trafficUnit() { return self.trafficUnit; },
+      get trafficPointCount() { return self.trafficPoints?.length ?? 0; },
+      get trafficCounts() { return (self.trafficPoints ?? []).map((p) => p.count); },
+      get trafficLabels() { return (self.trafficPoints ?? []).map((p) => p.label); },
+      trafficCanvasCount: () => self.traffic?.canvasCount() ?? 0,
+      trafficHeight: () => self.traffic?.height() ?? 0,
+      trafficReadback: () => self.traffic?.readback() ?? null,
+      /** 第 index 个数据点在**页面坐标**下的像素位置（脚本据此派发真实鼠标事件）。 */
+      trafficPointClientPixel: (index) => {
+        const point = self.trafficPoints?.[index];
+        if (!point || !self.traffic) return null;
+        const pixel = self.traffic.pointPixel(index, point.count);
+        if (!pixel) return null;
+        const rect = self.trafficElement()?.getBoundingClientRect();
+        if (!rect) return null;
+        return [rect.left + pixel[0], rect.top + pixel[1]];
+      },
+      /** 图表容器在页面坐标下的矩形（脚本用来判断鼠标落点是否在图上）。 */
+      trafficRect: () => {
+        const rect = self.trafficElement()?.getBoundingClientRect();
+        return rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+      },
+      /** 空态文案元素当前是否可见。 */
+      get trafficEmptyVisible() {
+        const el = self.el.querySelector<HTMLElement>('#admin-traffic-empty');
+        return !!el && !el.classList.contains('hidden');
+      },
+    };
+  }
+
+  private trafficElement(): HTMLElement | null {
+    return this.el.querySelector<HTMLElement>('#admin-traffic');
+  }
+
   private render() {
+    this.disposeTraffic(); // 下面这行会换掉整个面板的 DOM（含图表容器）
     const tabs = (['users', 'logs', 'announcements'] as AdminView[])
       .map((v) => `<button class="admin-tab${v === this.view ? ' active' : ''}" data-view="${v}" type="button">${adminTabLabel(v)}</button>`)
       .join('');
@@ -68,6 +155,7 @@ export class AdminPanel {
   private async renderBody() {
     const body = document.getElementById('admin-body');
     if (!body) return;
+    this.disposeTraffic(); // 同理：下面的 innerHTML 会换掉图表容器
     body.innerHTML = `<div class="admin-loading">${t('admin.loading')}</div>`;
     try {
       if (this.view === 'users') await this.renderUsers(body);
@@ -115,21 +203,18 @@ export class AdminPanel {
 
   // ---------- 日志记录 ----------
 
+  /**
+   * 日志记录视图：**流量看板（折线图 + 范围选择）** + 访问明细列表。
+   *
+   * 布局口径（用户本轮的改动要求）：折线图仍然放在这个子视图里、不新开 tab；
+   * 三个范围按钮与项目既有分段按钮同一套样式（`.mode-segmented`），点击只**局部刷新图表**
+   * （见 `selectTrafficRange`：不重建 `#admin-body`，因此不会丢滚动位置、也不会闪一下）。
+   */
   private async renderLogs(body: HTMLElement) {
     const token = this.token();
     if (!token) throw new Error('no token');
-    const [stats, logs] = await Promise.all([api.adminStats(token), api.adminLogs(token)]);
+    const [stats, logs] = await Promise.all([api.adminStats(token, this.trafficRange), api.adminLogs(token)]);
 
-    const dayHtml = stats.days.length
-      ? stats.days.map((d) => `<div class="stat-row"><span>${escapeHtml(d.day)}</span><span class="stat-count">${d.count}</span></div>`).join('')
-      : `<div class="admin-empty">${t('admin.noStats')}</div>`;
-    const hourHtml = stats.hours.length
-      ? stats.hours
-          .slice()
-          .reverse()
-          .map((h) => `<div class="stat-row"><span>${escapeHtml(h.hour)}</span><span class="stat-count">${h.count}</span></div>`)
-          .join('')
-      : `<div class="admin-empty">${t('admin.noStats')}</div>`;
     const logHtml = logs.logs.length
       ? logs.logs
           .map(
@@ -141,38 +226,98 @@ export class AdminPanel {
 
     body.innerHTML = `
       <div class="admin-section-title">${t('admin.statsTitle')}</div>
-      <div class="admin-stats-grid">
-        <div class="stat-panel"><div class="stat-panel-title">${t('admin.daysTitle')}</div>${dayHtml}</div>
-        <div class="stat-panel"><div class="stat-panel-title">${t('admin.hoursTitle')}</div>${hourHtml}</div>
+      <div class="admin-traffic">
+        <div class="admin-traffic-head">
+          <div class="mode-segmented" id="admin-traffic-range">${this.rangeButtonsHtml()}</div>
+          <span class="admin-traffic-unit" id="admin-traffic-unit"></span>
+        </div>
+        <div class="admin-traffic-chart" id="admin-traffic"></div>
+        <div class="admin-traffic-empty admin-empty hidden" id="admin-traffic-empty">${t('admin.noStats')}</div>
       </div>
       <div class="admin-section-title">${t('admin.logsTitle')}</div>
       <div class="admin-log-list">${logHtml}</div>
       <button id="admin-log-more" class="board-load-more" type="button">${t('admin.loadMore')}</button>
     `;
-    const more = body.querySelector<HTMLButtonElement>('#admin-log-more');
-    if (more) {
-      more.addEventListener('click', async () => {
-        const last = logs.logs.length ? logs.logs[logs.logs.length - 1].id : 0;
-        try {
-          const next = await api.adminLogs(token, last);
-          const list = body.querySelector('.admin-log-list');
-          if (list && next.logs.length) {
-            list.insertAdjacentHTML(
-              'beforeend',
-              next.logs
-                .map(
-                  (l) =>
-                    `<div class="log-row"><span class="log-time">${formatDateTime(l.createdAt)}</span><span class="log-user">${l.username ? escapeHtml(l.username) : t('admin.guest')}</span><span class="log-ua">${escapeHtml(truncateUa(l.ua))}</span></div>`,
-                )
-                .join(''),
-            );
-          }
-          if (next.logs.length === 0 || next.logs.length < 50) more.style.display = 'none';
-        } catch {
-          /* 忽略 */
-        }
-      });
+
+    const chartEl = this.trafficElement();
+    if (chartEl) {
+      this.traffic = new TrafficChart(chartEl);
+      this.drawTraffic(stats);
     }
+    // 范围按钮：只切 active 与图表，不重建面板 DOM
+    body.querySelectorAll<HTMLButtonElement>('#admin-traffic-range button').forEach((btn) => {
+      btn.addEventListener('click', () => void this.selectTrafficRange(normalizeTrafficRange(btn.dataset.range)));
+    });
+    this.bindLogMore(body, token, logs.logs.length ? logs.logs[logs.logs.length - 1].id : 0);
+  }
+
+  /** 三个范围按钮（当前范围带 `active`）。 */
+  private rangeButtonsHtml(): string {
+    return TRAFFIC_RANGES.map((range) => {
+      const cls = range === this.trafficRange ? ' class="active"' : '';
+      return `<button type="button"${cls} data-range="${range}">${t(trafficRangeSpec(range).labelKey)}</button>`;
+    }).join('');
+  }
+
+  /** 画一次图 + 同步粒度提示与空态（数据来自服务端，`unit` 以服务端为准）。 */
+  private drawTraffic(stats: AccessStats) {
+    const points = normalizeTrafficPoints(stats.points);
+    this.trafficPoints = points;
+    this.trafficUnit = normalizeTrafficUnit(stats.unit);
+    this.traffic?.render(points, this.trafficUnit, this.settings.darkMode);
+
+    const unitEl = this.el.querySelector<HTMLElement>('#admin-traffic-unit');
+    if (unitEl) unitEl.textContent = t(trafficUnitKey(this.trafficUnit));
+    this.el.querySelector<HTMLElement>('#admin-traffic-empty')?.classList.toggle('hidden', !isEmptyTraffic(points));
+  }
+
+  /**
+   * 切范围：**只**刷新图表（不重建 `#admin-body`）。
+   *
+   * 为什么不做整页重渲染：那会把访问明细列表与滚动位置一起清掉，用户每切一次范围就被弹回
+   * 顶部（而且图表会先消失再出现）。这里只改按钮的 active 类与图表内容。
+   */
+  private async selectTrafficRange(range: TrafficRange) {
+    if (range === this.trafficRange) return;
+    this.trafficRange = range;
+    this.el.querySelectorAll<HTMLButtonElement>('#admin-traffic-range button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.range === range);
+    });
+    const token = this.token();
+    if (!token) return;
+    try {
+      this.drawTraffic(await api.adminStats(token, range));
+    } catch {
+      /* 失败时保留当前图，不把看板清空 */
+    }
+  }
+
+  /** 访问明细：加载更多（保持原行为）。 */
+  private bindLogMore(body: HTMLElement, token: string, lastId: number) {
+    const more = body.querySelector<HTMLButtonElement>('#admin-log-more');
+    if (!more) return;
+    let last = lastId;
+    more.addEventListener('click', async () => {
+      try {
+        const next = await api.adminLogs(token, last);
+        const list = body.querySelector('.admin-log-list');
+        if (list && next.logs.length) {
+          list.insertAdjacentHTML(
+            'beforeend',
+            next.logs
+              .map(
+                (l) =>
+                  `<div class="log-row"><span class="log-time">${formatDateTime(l.createdAt)}</span><span class="log-user">${l.username ? escapeHtml(l.username) : t('admin.guest')}</span><span class="log-ua">${escapeHtml(truncateUa(l.ua))}</span></div>`,
+              )
+              .join(''),
+          );
+        }
+        if (next.logs.length) last = next.logs[next.logs.length - 1].id;
+        if (next.logs.length === 0 || next.logs.length < 50) more.style.display = 'none';
+      } catch {
+        /* 忽略 */
+      }
+    });
   }
 
   // ---------- 公告管理 ----------

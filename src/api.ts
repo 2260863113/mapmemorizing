@@ -50,10 +50,17 @@ export interface AccessLogEntry {
   createdAt: number;
 }
 
-/** 访问量统计（按天/小时）。 */
+/** 流量看板的一个桶（`label` 由服务端按粒度生成，如 `2026-09-16` / `2026-09-16 14:00`）。 */
+export interface TrafficPoint {
+  label: string;
+  count: number;
+}
+
+/** 访问量序列（服务端已按范围补满零桶，见 functions/_lib/statsWindow.ts）。 */
 export interface AccessStats {
-  days: { day: string; count: number }[];
-  hours: { hour: string; count: number }[];
+  range: string;
+  unit: 'hour' | 'day';
+  points: TrafficPoint[];
 }
 
 /** 统一 fetch 封装：部署后与 Pages Functions 同源（相对路径 /api）；本地 dev 由 vite 代理转发。 */
@@ -153,7 +160,7 @@ export const api = {
   // ---------- 管理员 ----------
   adminUsers: (token: string) => request<{ users: AdminUser[] }>('/admin/users', { token }),
   adminLogs: (token: string, before = 0) => request<{ logs: AccessLogEntry[] }>(`/admin/logs?view=logs&before=${before}`, { token }),
-  adminStats: (token: string) => request<AccessStats>('/admin/logs?view=stats', { token }),
+  adminStats: (token: string, range: string) => request<AccessStats>(`/admin/logs?view=stats&range=${encodeURIComponent(range)}`, { token }),
   createAnnouncement: (token: string, body: { title: string; content: string; pinned?: boolean }) =>
     request<{ announcement: Announcement }>('/admin/announcements', { method: 'POST', token, body }),
   updateAnnouncement: (token: string, id: number, body: { title: string; content: string; pinned?: boolean }) =>

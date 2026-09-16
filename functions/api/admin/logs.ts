@@ -1,5 +1,14 @@
 import { json, handle } from '../../_lib/http';
 import { requireAdmin } from '../../_lib/guard';
+import {
+  buildStatsPoints,
+  normalizeStatsRange,
+  SITE_TZ_OFFSET_SECONDS,
+  STATS_RANGE_SPECS,
+  statsWindow,
+  type StatsBucketRow,
+  type StatsUnit,
+} from '../../_lib/statsWindow';
 
 interface LogRow {
   id: number;
@@ -8,19 +17,30 @@ interface LogRow {
   created_at: number;
 }
 
-interface DayStatRow {
-  day: string;
-  count: number;
-}
-
-interface HourStatRow {
-  hour: string;
-  count: number;
-}
-
 const PAGE_SIZE = 50;
 
-/** 管理员：访问日志明细（分页） + 按天/小时统计。 */
+/**
+ * 分桶统计 SQL。两条**常量**语句而不是拼接格式串：格式化串虽然来自 `statsWindow` 的字面量
+ * 表，但「SQL 里出现模板字符串」本身就该避免，读的人不该去追它到底安不安全。
+ *
+ * ⚠ 桶标签**不用** SQLite 的 `'localtime'`：D1 没有 tzdata，`'localtime'` 一律按 UTC 解析，
+ * 而 Worker 的 `Date` 在本地 dev 下跟宿主时区 —— 两边会差整整 8 个小时桶（标签写 14:00、
+ * 计数却来自 UTC 14:00）。这里统一用**站点时区偏移**：`created_at / 1000 + ?2` 再用
+ * `'unixepoch'` 渲染，`?2` 绑定 `SITE_TZ_OFFSET_SECONDS`，与 JS 侧 `statsWindow` 的标签
+ * 是同一个变换（详见 `_lib/statsWindow.ts` 文件头）。
+ */
+const STAT_SQL: Record<StatsUnit, string> = {
+  hour: `SELECT strftime('%Y-%m-%d %H:00', created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
+         FROM access_logs
+         WHERE created_at >= ?1
+         GROUP BY label`,
+  day: `SELECT strftime('%Y-%m-%d', created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
+        FROM access_logs
+        WHERE created_at >= ?1
+        GROUP BY label`,
+};
+
+/** 管理员：访问日志明细（分页） + 流量看板（按范围内的粒度分桶、缺桶补 0 的连续序列）。 */
 export const onRequestGet = handle(
   requireAdmin(async (context) => {
     const env = context.env;
@@ -28,34 +48,15 @@ export const onRequestGet = handle(
     const view = url.searchParams.get('view') ?? 'logs';
 
     if (view === 'stats') {
-      // 按天统计（最近 14 天）
-      const dayRows = await env.DB.prepare(
-        `SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS count
-         FROM access_logs
-         WHERE created_at >= ?1
-         GROUP BY day
-         ORDER BY day DESC
-         LIMIT 14`,
-      )
-        .bind(Date.now() - 14 * 86_400_000)
-        .all<DayStatRow>();
+      const range = normalizeStatsRange(url.searchParams.get('range'));
+      const spec = STATS_RANGE_SPECS[range];
+      const { labels, start } = statsWindow(spec.unit, spec.points, Date.now());
 
-      // 按小时统计（最近 24 小时）
-      const hourRows = await env.DB.prepare(
-        `SELECT strftime('%Y-%m-%d %H:00', created_at / 1000, 'unixepoch', 'localtime') AS hour, COUNT(*) AS count
-         FROM access_logs
-         WHERE created_at >= ?1
-         GROUP BY hour
-         ORDER BY hour DESC
-         LIMIT 24`,
-      )
-        .bind(Date.now() - 24 * 3_600_000)
-        .all<HourStatRow>();
+      const rows = await env.DB.prepare(STAT_SQL[spec.unit]).bind(start, SITE_TZ_OFFSET_SECONDS).all<StatsBucketRow>();
+      // 服务端补齐零桶（见 _lib/statsWindow.ts 的说明）：前端拿到的永远是 spec.points 个点
+      const points = buildStatsPoints(labels, rows.results ?? []);
 
-      return json({
-        days: (dayRows.results ?? []).map((r) => ({ day: r.day, count: r.count })),
-        hours: (hourRows.results ?? []).map((r) => ({ hour: r.hour, count: r.count })),
-      });
+      return json({ range, unit: spec.unit, points });
     }
 
     // 日志明细：分页（before 为日志 id，倒序）

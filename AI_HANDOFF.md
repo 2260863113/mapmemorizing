@@ -1,5 +1,93 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：两处口径微调（范围外灰更贴近空白 + 红显 1.5s → 1.1s）
+
+用户口径（原话）：「**下钻后非考试范围的灰色再向空白颜色靠近一些**」「**打错红色警告出现时间由 1.5 秒变成 1.1 秒**」。
+
+### 1. `MapTheme.inactiveFill` 换值（第 1 条）
+
+| 主题 | 空白底色 | 初版 | **现值** | 亮度差（初版 → 现） |
+|---|---|---|---|---|
+| 明 | `#d1d5db` | `#b0b5bd` | **`#c2c6cd`** | 32.1 → **14.9** |
+| 暗 | `#374151` | `#2b3441` | **`#303948`** | 13.0 → **7.8** |
+
+- 亮度＝`0.299R+0.587G+0.114B`（与验收脚本同款）；ΔE76 明 11.7 → 5.4、暗 6.1 → 3.6（JND ≈ 2.3，仍在可辨之上）；**相对亮度差**明 15.1% → 7.0%、暗 20.4% → **12.2%**（暗主题绝对差更小但相对差更大，这是它仍分得开的依据）。
+- **只动一个令牌**：可见性（透明/浅灰）与可交互性（恒 `silent`）的口径一律不变，练习范围/出题池/排行榜不受影响（见 DESIGN §18 与 §20.1）。
+- 新增口径闸门：`layers.test.ts` 的"浅灰比底色更深"改为**遍历明暗两主题、锁亮度差在 (5, 20) 开区间**（下界=分得开，上界=防止再漂回差 ≈ 32 的大灰）。
+- 同步改的文档/脚本：`theme.ts`（两行 + 接口文档注释）、`CONTEXT.md`「下钻后隐藏无关地区」、`DESIGN.md` §18.1 表格 / §18.2 亮度差段、`README.md` 功能清单、`scripts/verify-drill-scope.mjs`（两处硬编码色值 + 像素直方图分类键，并新增"亮度差"输出）。
+
+### 2. `ROLLBACK_RED_MS`：1500 → 1100（第 2 条）
+
+- `src/modes/mapQuizMode.ts`：`1500` → **`1100`**，注释写明沿革 700 → 1500（ADR 0005 那轮）→ 1100（本轮）。
+- ⚠ **ADR 0005 是历史决策记录，保留 1500ms 不改写**；现行口径以常量注释与 `CONTEXT.md`「错误回滚」词条为准（词条与示例对话都已改成 1.1 秒）。
+- 探针 `src/probe/quizProbe.ts` 直接 `import { ROLLBACK_RED_MS }`（等待 `ROLLBACK_RED_MS + 350`），故实现与断言不会漂移；`scripts/verify-round2.mjs` 的期望值与文案同步改成 1100。
+- 全仓 `1500` 复查结论：**只剩这三类**——① 与本题无关的 `sleep(1500)` / adcode `150000` / `formatElapsedSeconds(1500)`（`build-flag-thumbs.mjs`、`verify-puzzle.mjs`、`province-abbr.json` 等，**不要动**）；② ADR 0005 的历史记录（**不要动**）；③ 本轮已改掉的口径引用（`mapQuizMode.ts`、`verify-round2.mjs`、`README.md`、`CONTEXT.md`）。
+
+### 建议验证
+
+1. `npm run check`（typecheck + lint + 单测）与 `npm run build`；
+2. `node scripts/verify-drill-scope.mjs` → 34/34（看"灰是「比空白底色更深一档的浅灰」"那条的 `亮度差` 字段）、`node scripts/verify-round2.mjs` → 38/38（"红显时长为 1100ms"）；
+3. 手工目测：关掉「下钻后隐藏无关地区」下钻某省 —— 范围外那片灰应当**比上一版更接近空白、但仍一眼看得出是"范围外的地区"**；暗主题同样看一眼。⚠ 这一条**只能靠人眼定稿**：脚本能证明的是"比其他空白更深且色差在区间内"，证明不了"顺眼"。
+
+## 本轮（2026-09）：管理端流量看板改成折线图 + 时间范围选择
+
+用户口径（原话）：「将管理员用户管理的流量看板做成折线图（鼠标挪到标记点显示当天或小时的访问量），而且可以选择，近一天，近7天，近一个月的时间范围。」
+
+### 1. 口径与形状
+
+- **位置不变**：仍在管理员面板的「**日志记录**」子视图里（没新开 tab、没挪去用户管理）；下方访问明细与「加载更多」原样保留，图表排在明细之前。
+- **时间范围**：三个范围按钮「近一天 / 近七天 / 近一个月」，样式复用项目既有的分段按钮 `.mode-segmented`（卡片里去掉玻璃态投影、高度降到 32px，见 `src/styles.css` 的 `.admin-traffic` 段）。**默认近七天**。
+- **粒度**：近一天 = 按小时 **24 个点**；近七天 = 按天 **7 个点**；近一个月 = 按天 **30 个点**。
+- **tooltip**：`trigger: 'axis'` + `appendToBody`（面板容器可滚动，挂容器里会被裁），文案 `9月16日 · 34 次访问` / `9月16日 14:00 · 12 次访问`（同一个文案键 `admin.trafficTooltip`，日期/小时的差别在标签格式化里）。
+- **空态**：整段窗口一次访问都没有 → 图表**照画**（时间窗口与粒度仍然可见），下方多一行 `admin.noStats`（暂无统计数据）。
+- **切范围只刷新图表**：不重建 `#admin-body`（因此不丢滚动位置、不闪一下），按钮只切 `.active` + 换个 series。
+
+### 2. 后端：窗口由服务端生成，缺桶服务端补 0
+
+`functions/api/admin/logs.ts` 的 `?view=stats&range=day|week|month`（**旧的 `days`/`hours` 两个字段已删除**，全仓唯一消费者是 `src/api.ts` 的 `adminStats`，已同步）。响应统一成 `{ range, unit: 'hour'|'day', points: [{ label, count }] }`，**升序**、长度恒等于该范围的桶数。
+
+纯逻辑抽到 `functions/_lib/statsWindow.ts`（17 条单测）：
+
+- `statsWindow(unit, points, now)` → 桶标签序列 + 窗口起点。按天用**日期算术**（跨夏令时不会算成 23/25 小时），按小时用整点步进；
+- `buildStatsPoints(labels, rows)` → **以窗口为准**逐个取值、缺桶补 0、窗口外的行丢弃。⚠ 反过来（拿 SQL 结果直接画）会得到一条时间**不等距**的折线：3 天前的记录会被画在昨天的位置上 —— 这是本轮最需要防的错；
+- `normalizeStatsRange(value)` → 非法值回落 `week`（**绝不为非法参数报 4xx/500**）。
+
+⚠ **时区口径（本轮已修的一处真实缺陷，别再退回 `'localtime'`）**：最初用 `strftime(..., 'localtime')` 分组、`statsWindow()` 用宿主时区 `Date` 造标签，两者在本地 dev 下**实测差整整 8 个小时桶**——D1 没有 tzdata，`'localtime'` 一律按 UTC 解析（与 `'utc'` 的分桶逐桶相同，32/32），而 `wrangler pages dev` 里 Worker 的 `Date` 跟宿主时区（本机 +08）。症状是标签写 14:00、计数来自 UTC 14:00，折线整条错位却"看着有数据"（纯函数单测各自都对，所以单测抓不到）。
+现行做法：**两侧用同一个显式偏移**（`SITE_TZ_OFFSET_SECONDS` = 北京时间 UTC+8）——SQL 绑 `created_at / 1000 + ?2`、JS 侧加同一偏移后用 `getUTC*` 渲染；改一个常数就同时改两边。口径与验收见 [ADR 0008](docs/adr/0008-traffic-buckets-use-explicit-site-timezone.md)，集成验证脚本是仓库外的 `地图记忆-seed/local-backend-check.mjs`（真 `wrangler pages dev` + 独立 `--persist-to` 的本地 D1，把接口返回的桶与独立算出的期望值逐桶比对）。
+
+### 3. 前端：三层拆分（沿用地图渲染的分法）
+
+| 文件 | 职责 | 为什么不塞一起 |
+|---|---|---|
+| `src/ui/trafficSeries.ts` | **纯逻辑**：范围→粒度/桶数、桶标签解析/格式化、tooltip 与轴文案、y 轴整齐上界、配色、option 构造 | 全是"错了也看不出来"的换算（桶顺序、粒度文案），31 条单测直接对着 option 与文案断言 |
+| `src/ui/trafficChart.ts` | ECharts 实例**生命周期**（建/更新/resize/读回/销毁）+ `convertToPixel`（探针取标记点像素） | 与 `map/inset.ts` 同一手法：面板每次重建 `#admin-body` 都会换掉容器元素，谁建谁销 |
+| `src/ui/adminPanel.ts` | 装配：范围按钮、请求、空态、把实例与 DOM 生命周期对上 | 面板只管编排 |
+
+三点硬要求（都踩过）：
+
+1. **必须 dispose**：`render()` 与 `renderBody()` 都会重建 DOM，两处都在最前面调 `disposeTraffic()`；切走子视图（去用户管理）也销毁。验收脚本用「反复切 tab 3 轮后 canvas 数不增长」+「切走后 `mounted === false`」两条锁住。
+2. **容器高度固定 `240px`**：ECharts 在 0 高容器里画成 0×0；`TrafficChart` 另挂 ResizeObserver，容器从隐藏转显示时自动 resize。
+3. **配色只用既有色**：折线取 CSS 变量 `--accent`（明 `#10b981` / 暗 `#34d399`，跟随 `body.theme-dark`）、轴线 `--muted`、网格线 `--panel-border`、标记点描边 `--panel-bg`；tooltip 三色取 `MAP_THEMES` 的既有令牌。**没有新造一套颜色** —— 因此暗色模式不需要第二份颜色表，但**主题切换后要重画一次**：`AdminPanel.applyTheme()` 接在 `appController.toggleTheme()` 与设置面板保存两处。
+
+### 4. 验收
+
+- 单测 **577**（+48）：`src/ui/trafficSeries.test.ts` 31 条（范围口径 / 标签互逆 / 防御性补桶 / 文案逐字 / niceMax / 配色回落 / option 与 tooltip formatter）、`functions/_lib/statsWindow.test.ts` 12 条（窗口边界 / 跨月 / 跨天 / 补 0 / 脏数据）；
+- 运行时新增 `scripts/verify-admin-traffic.mjs`（**38/38**，截图 `docs/shots/admin-traffic-1..7-*.png`）；
+- 回归：`verify-round3` 54/54、`verify-drill-scope` 34/34（两者都覆盖主题切换路径，本轮动过）。
+
+### 5. 验收脚本的两个环境难点（可复用）
+
+1. **本地静态服没有 Pages Functions**：用 `Page.addScriptToEvaluateOnNewDocument` 在**页面脚本之前**替换 `window.fetch`，`/api/**` 返回打桩数据、**其余请求（`data/*.json` 等地图数据）转发真网络** —— 少了这一步应用根本起不来（地图数据也会被打桩吃掉）。
+2. **管理端要管理员登录态**：同一时机写 `localStorage['china-admin-session-v1'] = { token, user: { isAdmin: true, … } }`（键见 `src/authStore.ts`），然后**真实点击** `#user-center` → 菜单里的「日志记录」。
+3. 打桩数据刻意做成**确定性公式**（近一天第 i 点 = `(i+1)×3`、近七天 ×7、近一月 ×11，标签固定到 2026-09-1x），于是 tooltip 可以**逐字比对**：hover 近七天第 5 个点必须得到 `9月14日 · 35 次访问`、近一天第 4 个点必须得到 `9月15日 18:00 · 12 次访问`。这比"包含某个数字"强得多。
+4. 标记点像素由探针 `adminTrafficPointPixel(i)` 给出（面板诊断视图 → `TrafficChart.convertToPixel({ seriesIndex: 0 }, [i, count])`），脚本再派发真实 `Input.dispatchMouseEvent`；**另外数了一遍画布上的绿色像素**（8778 个）证明折线与面积真的画出来了，而不只是"配置写对了"。
+
+### 建议验证
+
+1. `npm run check`（typecheck + lint + 577 单测）与 `npm run build`；
+2. `node scripts/verify-admin-traffic.mjs` → `38/38 通过`，刷新 `docs/shots/admin-traffic-*.png`；
+3. 手工：登录管理员 → 右上角头像 →「日志记录」→ 看折线（默认近七天），点三个范围按钮（点数 24/7/30 与 x 轴刻度跟着变），鼠标在标记点上停一下看 tooltip，切到用户管理再切回来确认图还在、没多出画布。
+
 ## 本轮（2026-09）：全局设置「下钻后隐藏无关地区」
 
 用户口径（一次说清，无追问）：全局设置里加开关，**默认打开**；打开 = 现在的样子；关闭后下钻到次级区域**依然显示其他地区**，但**无法交互**，填充为**比空白底色更深一档的浅灰**；关闭时下钻到省份**依然保持五级精细度分段**。
@@ -8,7 +96,7 @@
 
 | 作用点 | 开（默认） | 关 |
 |---|---|---|
-| 范围外的面可见性 | 透明 | 浅灰 `#b0b5bd`（暗 `#2b3441`） |
+| 范围外的面可见性 | 透明 | 浅灰 `#c2c6cd`（暗 `#303948`；2026-09 由 `#b0b5bd`/`#2b3441` 向空白靠近一档） |
 | 范围外的面可交互性 | `silent` | **同样 `silent`（刻意不变）** |
 | 下钻时的省界线 | 只画本省 | 邻省省界照画 |
 | 下钻时的精细度档 | 强制 lossless | 按 zoom 走五档 |
@@ -28,7 +116,7 @@
 ### 3. 改动的文件
 
 - `types.ts`（`Settings.hideUnrelatedOnDrill` + 长注释）、`store.ts`（默认 true + 旧档回落/脏值归一）、`index.html`（新增「地图下钻」分区与 `#set-hide-unrelated-drill`）、`ui/settingsPanel.ts`（读写该开关）；
-- `map/theme.ts`（新令牌 `inactiveFill`：明 `#b0b5bd` / 暗 `#2b3441`，比 `background` 深一档）；
+- `map/theme.ts`（新令牌 `inactiveFill`：明 `#c2c6cd` / 暗 `#303948`，比 `background` 深一档里较轻的那一档；初版为 `#b0b5bd` / `#2b3441`，2026-09 用户要求"再向空白靠近一些"）；
 - `map/layers.ts`（`LayerInput.hideUnrelatedOnDrill` + `outOfScopeFill()`；地级分支把"范围外"判定挪到金币色**之前**，世界分支范围外照画国界）；
 - `map/tiers.ts`（`drillForcesLossless()`）；`map/renderer.ts`（字段 + `setHideUnrelatedOnDrill()` + `layerInput()` + `activeTier()` + `buildLineData()` 保留邻省 + 诊断视图新增 `hideUnrelatedOnDrill`/`activeTier`/`provinceLineAdcodes`/`dataToPixel`）；
 - `appController.ts`（建渲染器时与保存设置时各灌一次）；
@@ -54,7 +142,7 @@
 ### 5. 注意事项（给下次改动）
 
 - **不要**把范围外面改成非 `silent`：那是"能不能点"的口径变更，会连带 `wireChartClick` / `wireChartHover` / tooltip 三处守卫与"点空白退回上一层"的出口（理由见第 1 条）。
-- **颜色只有一处来源**：`MapTheme.inactiveFill`。验收脚本里另写了一份 `#b0b5bd` 的期望值（刻意的独立重述）——改颜色时脚本会红，那正是提醒你复核观感并同步改脚本。
+- **颜色只有一处来源**：`MapTheme.inactiveFill`。验收脚本里另写了一份色值期望（刻意的独立重述）——改颜色时脚本会红，那正是提醒你复核观感并同步改脚本。**这条剧本已经真的发生过一次**：2026-09 用户要求"灰色再向空白靠近一些"，把 `#b0b5bd` → `#c2c6cd`（暗 `#2b3441` → `#303948`）时，红的正是 `verify-drill-scope.mjs` 的两处硬编码色值与像素直方图的分类键（直方图按**精确 RGB** 分类，所以两个颜色变近也不会被归成一类）。
 - **`buildLineData()` 有副作用**：它顺手写 `lineBoxes`（逐帧裁剪用）与 `lineAdcodes`（探针用），两者必须与返回的折线逐项对齐；这轮把过滤结果先算成 `kept` 再同时喂给三处，就是为了不让三个数组漂移。
 - 「惰性面」在 `CONTEXT.md` 里现在明确写成"可见性与可交互性正交"，下次再有人问"灰的能不能点"，答案是**不能**。
 

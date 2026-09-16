@@ -14,12 +14,14 @@
  *   quizProbe.ts     —— 测验（输入·点击）：错误回滚 / 顺序范围 / 排行榜联动 / 范围快照
  *   puzzleProbe.ts   —— 拼图：两阶段、磁吸、难度、获胜
  *   uiProbe.ts       —— 外壳 UI：主题 / 边界深浅 / 标签显隐 / 粒度能力位
+ *   adminProbe.ts    —— 管理端：日志记录子视图的流量折线图
  *
  * 私有状态一律经由生产类自己提供的诊断视图读取（`AppController.diagnostics()` 等），
  * 因此本目录**没有任何 `as unknown as` 强转**：成员改名会让 `tsc` 在生产文件里报错。
  */
 import type { AppController } from '../appController';
 import { probeInternals } from './internals';
+import { adminProbe } from './adminProbe';
 import { mapProbe } from './mapProbe';
 import { puzzleProbe } from './puzzleProbe';
 import { quizProbe } from './quizProbe';
@@ -36,6 +38,7 @@ export function installProbe(app: AppController) {
     ...quizProbe(diag),
     ...puzzleProbe(diag),
     ...uiProbe(diag),
+    ...adminProbe(diag),
   };
 
   (window as unknown as { __probe?: typeof probe }).__probe = probe;

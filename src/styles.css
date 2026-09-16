@@ -1387,20 +1387,23 @@ body.theme-dark .leaderboard-row {
   font-weight: 700;
 }
 
-.admin-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.stat-panel {
+/* 流量看板：范围分段按钮 + 折线图（高度固定：ECharts 在 0 高的容器里会画成 0×0） */
+.admin-traffic {
   display: grid;
-  gap: 4px;
-  padding: 12px;
+  gap: 10px;
+  padding: 12px 14px 6px;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   background: var(--panel-bg);
-  max-height: 320px;
-  overflow-y: auto;
 }
-.stat-panel-title { font-size: 13px; font-weight: 700; color: var(--control-text); }
-.stat-row { display: flex; justify-content: space-between; color: var(--text); font-size: 13px; padding: 2px 0; }
-.stat-count { color: var(--muted-strong); font-variant-numeric: tabular-nums; }
+.admin-traffic-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 分段按钮在实色卡片上不需要玻璃态投影：容器底/描边跟随卡片（沿用 .mode-segmented 的几何与选中态） */
+.admin-traffic .mode-segmented { height: 32px; background: var(--control-bg); border-color: var(--panel-border); box-shadow: none; backdrop-filter: none; }
+.admin-traffic .mode-segmented button { min-width: 0; padding: 0 12px; font-size: 13px; border-radius: 7px; }
+.admin-traffic .mode-segmented button:hover { background: var(--control-hover); }
+.admin-traffic-unit { color: var(--muted); font-size: 12px; }
+.admin-traffic-chart { height: 240px; width: 100%; }
+.admin-traffic-empty { padding: 6px 0 10px; text-align: left; }
 
 .admin-log-list { display: grid; gap: 6px; }
 .log-row {

@@ -229,13 +229,19 @@ describe('buildWorldRegionData', () => {
       expect(regionOf(regions, '法国').itemStyle?.areaColor).toBe(THEME.inactiveFill);
     });
 
-    it('浅灰比地图空白底色更深（用户口径：要让"看得到但不能动"和"这里本来就没内容"分开）', () => {
-      // 亮度加权近似（0.299R + 0.587G + 0.114B），只用来锁"更深"这个方向
+    it('浅灰比地图空白底色更深，但只深一档（用户口径：既要分开"看得到但不能动"与"这里本来就没内容"，又不能深到像另一类内容）', () => {
+      // 亮度加权近似（0.299R + 0.587G + 0.114B）
       const luma = (hex: string) => {
         const n = parseInt(hex.slice(1), 16);
         return 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
       };
-      expect(luma(THEME.inactiveFill)).toBeLessThan(luma(THEME.background));
+      for (const theme of [MAP_THEMES.light, MAP_THEMES.dark]) {
+        const gap = luma(theme.background) - luma(theme.inactiveFill);
+        // 下界 5：再近就分不出"范围外"与"空白"（明主题实测 14.9、暗主题 7.8）
+        // 上界 20：2026-09 用户口径「再向空白颜色靠近一些」后的上限，防止又漂回 #b0b5bd 那种深一档大灰（差 ≈ 32）
+        expect(gap).toBeGreaterThan(5);
+        expect(gap).toBeLessThan(20);
+      }
     });
   });
 });

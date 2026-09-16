@@ -111,7 +111,7 @@ export class AppController {
     this.announcementStore = new AnnouncementStore();
     this.announcementPanel = new AnnouncementPanel('announcement-panel', this.announcementStore);
     this.introCard = new IntroCard('intro-card', this.announcementStore);
-    this.adminPanel = new AdminPanel('admin', this.authStore, this.announcementStore, data);
+    this.adminPanel = new AdminPanel('admin', this.authStore, this.announcementStore, data, this.settings);
     this.adminMode = new AdminMode(this.adminPanel);
 
     this.sidePanel = new SidePanelController($('side-panel'), $('side-panel-toggle') as HTMLButtonElement);
@@ -246,6 +246,7 @@ export class AppController {
       data: this.data,
       settings: this.settings,
       sidePanel: this.sidePanel,
+      adminPanel: this.adminPanel,
       get current() { return self.current; },
       syncModeChrome: () => self.syncModeChrome(),
     };
@@ -364,6 +365,7 @@ export class AppController {
     saveSettings(this.settings);
     applyTheme(this.settings.darkMode);
     this.renderer.setDarkMode(this.settings.darkMode);
+    this.adminPanel.applyTheme(); // 管理端流量看板：暗色模式的 tooltip 配色要跟着重画
     this.syncThemeButton();
   }
 
@@ -825,6 +827,7 @@ export class AppController {
         applyTheme(this.settings.darkMode);
         this.syncThemeButton();
         this.renderer.setDarkMode(this.settings.darkMode);
+        this.adminPanel.applyTheme(); // 同上：管理端流量看板跟随明暗主题
         this.renderer.setBoundaryTones(this.settings.cityBoundaryTone, this.settings.provinceBoundaryTone, this.settings.worldBoundaryTone);
         // 下钻范围设置：立即重绘（当前若正停在下钻视图里，观感当场跟着变，无需重进）
         this.renderer.setHideUnrelatedOnDrill(this.settings.hideUnrelatedOnDrill);

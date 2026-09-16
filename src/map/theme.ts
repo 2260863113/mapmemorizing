@@ -8,8 +8,9 @@ export type MapTheme = {
    * **范围外惰性面**的填充色：关闭全局设置「下钻后隐藏无关地区」时，下钻范围之外的面
    * （其他省 / 其他洲的国家）画成这个颜色 —— 看得见，但不可交互。
    *
-   * 取「比地图空白底色（`background`）更深一档的浅灰」：两者必须能一眼分开，
-   * 否则用户分不清"这块是练习范围外的地区"还是"这里本来就没有内容"（用户口径 2026-09）。
+   * 取「比地图空白底色（`background`）更深一档、且只深**一档里较轻的那一档**」的浅灰：
+   * 两者必须能一眼分开，否则用户分不清"这块是练习范围外的地区"还是"这里本来就没有内容"；
+   * 但也不能差太多，否则"范围外"看着像另一类内容（2026-09 用户口径：比初版再向空白靠近一些）。
    */
   inactiveFill: string;
   emphasis: Record<UnitColor, string>;
@@ -46,7 +47,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#dc9292',
       scoreRedDark: '#bd5d5d',
     },
-    inactiveFill: '#b0b5bd', // 比底色 #d1d5db 深一档的浅灰
+    inactiveFill: '#c2c6cd', // 比底色 #d1d5db 深一档里较轻的那一档（亮度差 ≈ 15；初版是 #b0b5bd，差 ≈ 32）
     emphasis: {
       green: '#93cfa0',
       blue: '#83b7e3',
@@ -98,7 +99,7 @@ export const MAP_THEMES: Record<ThemeName, MapTheme> = {
       scoreRedMedium: '#a23737',
       scoreRedDark: '#991b1b',
     },
-    inactiveFill: '#2b3441', // 比底色 #374151 深一档（暗主题没有"浅灰"，对应关系与明主题一致）
+    inactiveFill: '#303948', // 比底色 #374151 深一档里较轻的那一档（暗主题没有"浅灰"，对应关系与明主题一致；初版 #2b3441）
     emphasis: {
       green: '#15803d',
       blue: '#2563eb',

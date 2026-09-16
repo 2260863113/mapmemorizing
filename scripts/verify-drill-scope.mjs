@@ -302,7 +302,7 @@ try {
   await sleep(250);
   const onInPixel = inHit ? await patchColor(inHit.cx, inHit.cy) : null;
   const onHist = await histogram();
-  check('打开时：整幅地图上**一格浅灰都没有**（其他地区完全不可见）', (onHist['#b0b5bd'] ?? 0) === 0, { 浅灰格: onHist['#b0b5bd'] ?? 0, 空白格: onHist['#d1d5db'] ?? 0 });
+  check('打开时：整幅地图上**一格浅灰都没有**（其他地区完全不可见）', (onHist['#c2c6cd'] ?? 0) === 0, { 浅灰格: onHist['#c2c6cd'] ?? 0, 空白格: onHist['#d1d5db'] ?? 0 });
   check('打开时：本省面画的是自己的颜色（不是空白底色）', !!onInPixel && toHex(onInPixel.color) !== '#d1d5db', onInPixel);
 
   console.log('\n=== 3. 关闭：依然显示其他地区（浅灰、不可交互）===');
@@ -310,12 +310,15 @@ try {
   const off = await shade();
   check('保存后立即持久化到设置档', (await storedSetting()) === false);
   check('范围外的面不再透明（看得见其他地区）', !isTransparent(off.outScope.areaColor), off.outScope);
-  // 本轮口径的**独立重述**（不引用源码常量）：浅灰 #b0b5bd，地图空白底色 #d1d5db。
+  // 本轮口径的**独立重述**（不引用源码常量）：浅灰 #c2c6cd，地图空白底色 #d1d5db。
   // 颜色被人有意改动时这里会红，正好逼着一起改口径并复核观感。
-  check('灰是「比空白底色更深一档的浅灰」', off.outScope.areaColor === '#b0b5bd' && luma('#b0b5bd') < luma('#d1d5db'), {
+  // 2026-09 用户口径：「非考试范围的灰色再向空白颜色靠近一些」→ 初版 #b0b5bd（亮度差 ≈ 32）
+  // 改为 #c2c6cd（亮度差 ≈ 15）；仍必须比空白更深，否则"范围外"与"本来没内容"就分不开了。
+  check('灰是「比空白底色更深一档的浅灰」', off.outScope.areaColor === '#c2c6cd' && luma('#c2c6cd') < luma('#d1d5db'), {
     fill: off.outScope.areaColor,
     空白底色: '#d1d5db',
     亮度: [+luma(off.outScope.areaColor).toFixed(1), +luma('#d1d5db').toFixed(1)],
+    亮度差: +(luma('#d1d5db') - luma(off.outScope.areaColor)).toFixed(1),
   });
   check('范围外的面**仍然不可交互**（silent：不响应悬停与点击）', off.outScope.silent === true, off.outScope);
   check('范围外照画省界（邻省省界还在，否则整片灰看不出分界）', off.provinceLineProvinces.length > 1 && off.provinceLineProvinces.includes(PROVINCE), { provinces: off.provinceLineProvinces.length, count: off.provinceLineCount });
@@ -328,7 +331,7 @@ try {
   const offHist = await histogram();
   const onBlank = onHist['#d1d5db'] ?? 0;
   const offBlank = offHist['#d1d5db'] ?? 0;
-  const offGray = offHist['#b0b5bd'] ?? 0;
+  const offGray = offHist['#c2c6cd'] ?? 0;
   check('像素级：关闭后地图上出现一大片浅灰（用户看得见的"其他地区"）', offGray > 100, { 浅灰格: offGray, 空白格: offBlank });
   check(
     '像素级：多出来的浅灰 ≈ 少掉的空白（同一片区域只是换了颜色，不是凭空多画了一块）',

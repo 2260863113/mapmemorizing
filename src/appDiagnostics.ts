@@ -17,6 +17,7 @@ import type { InputMode } from './modes/input';
 import type { PuzzleMode } from './modes/puzzle';
 import type { ModeController } from './modes/types';
 import type { QuizSessionDiagnostics } from './modes/quizDiagnostics';
+import type { AdminPanel } from './ui/adminPanel';
 import type { SidePanelController } from './ui/sidePanelController';
 
 /**
@@ -34,6 +35,8 @@ export interface AppDiagnostics {
   data: AppData;
   settings: Settings;
   sidePanel: SidePanelController;
+  /** 管理端面板（流量看板的运行时验收探针用；`diagnostics()` 是只读视图）。 */
+  adminPanel: AdminPanel;
   /** 当前模式。切换模式会变，故实现为活值 getter。 */
   current: ProbeableMode | null;
   /** 重算外壳 chrome（按钮 / 分段行显隐）。 */
