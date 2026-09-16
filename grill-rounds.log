@@ -776,3 +776,15 @@ src/data.ts 把 data/world_v2.topojson 换回 data/world.geojson 即可（无需
 - ⚠ 测试抓到的真坏味道：省级三档曾共用 labelName(id,data,naming) 并按 naming.province 分支 → "full 档的函数"配 abbr 口径会算出简称（拿错档也不报错）；改成每档只认自己那一档的取值 + 不变量（同一档在多种组合下文本必须一致）。另一处：testButtonsVisible 第一版把"无尽闯关有没有重置"写反了，是单测把原语义纠正回来（已逐模式钉住）。
 - 验收：npm run check exit 0（44 文件/514 用例；本轮 +39）；运行时 verify-naming 47/47、verify-round3 54/54、verify-round2 38/38、verify-puzzle 75/75 = 214/214（后三个同时是渲染器拆分的回归闸门）。
 - ⚠ 留给下次（P2）：appController 748 行（要拆就跟模式目录一起动）；ModeController 12/37 可选方法（再加 2 个模式就该换判别联合/能力位）；留言板/管理端的 #mode-actions 容器会显示但里面没有按钮（既有小怪癖）。
+================================================================
+2026-09-16 21:00  排行榜随范围切换 + 拼图成绩范围放开 + 困难档容差例外 + 碎片视觉/手感
+- 用户三条反馈（四轮 grill 定稿）：① 切换模式/下钻/返回顶级时排行榜有时候不切换；② 拼图拼完没有「提交成绩」按钮、排行榜空白；③ 困难档下港澳台海南进入可吸附范围时要保留绿描边（随后改口径）。追加：困难档改为**不给描边、只把未成组时的判定范围放宽到 15px**（成组回 5px）；简单档去掉辉光、描边 2.5→2px；港澳等微小碎片永远最后出现；世界档同样处理岛国/极小国；吸附后的碎片之间不要阴影、只留组最外层。
+- ① 根因（真缺陷）：`MapQuizMode.syncScopeView()` 省级全国分支里 `renderer.setProvinceMode(true,…)` 自己清掉下钻省且**不发 onViewChange**，紧跟的 `if (currentProvince()) backToNation()` 永远为假 → 省级档钻省返回顶级时侧栏停在下钻那个省的榜上（市级档/世界档正常，所以是"有时候"；省级是默认档）。修法：新增 `MapRenderer.notifyViewChange()` + 提前取 `wasDrilled` 事后补发；`backToNationFromMap()` 两个分支末尾一律刷新侧栏兜底。
+- ① 侧栏重写（src/leaderboardStore.ts + ui/leaderboardPanel.ts）：旧实现把 Promise 永久缓存（不重取 + 一个卡住的请求让该范围整个会话刷不出来）。改后：快照只服务显示、并发合并、请求带超时且迟到响应丢弃、2s 新鲜期；面板"有快照立刻渲染 + 后台重取，无快照立刻换标题并显示「加载中」"，不再把上一个范围的名单留在屏上。⚠ 这两个文件此前**零测试**，本轮补 13 例（新文件 leaderboardStore.test.ts / ui/leaderboardPanel.test.ts）。
+- ② 拼图成绩范围放开（ADR 0009）：原因不是"没做"——默认落在**省级全国**而那一档不可提交（`collectResult()` 返回 null + 服务端 PUZZLE_SCOPES 不收，线上实测该范围返回 entries:[]）。改为**所有合法范围都可提交**，范围合法性统一复用 `normalizeScope()`（删掉前后端两份手写名单）；顺带修 `PuzzleMode.scope` 硬编码为省级全国、与本地记住的档位不一致（"地图是世界/市级、榜却按省级全国查"）。⚠ **服务端白名单改了，必须重新部署 Cloudflare Functions**。
+- ③ 困难档容差例外（ADR 0010）：新增 src/puzzle/specialUnits.ts，孤悬/极小 = 面积 ≤ 0.1614 度² ∪ 当前范围内无陆地邻居 ∪ 另算岛国名单（英/爱/印尼/多米尼加/海地/巴新/东帝汶/文莱）。困难档下未成组时 15px、成组回 5px、判定取两方较宽；**提示照旧一个都不给**。实测省级全国=港澳台海南 4 个、世界全国=51/194。`PuzzleState` 容差由单一数值改为按组算（`PuzzleSnapOptions`），并顺带修掉"拼完→改难度→再来一局仍沿用旧容差"。
+- 视觉/手感：简单档提示 stroke-width 2.5→2、删掉绿色辉光；删掉每片包装上的 drop-shadow（吸附后会在接缝处露阴影），改为拖动时在最底层插一层整组轮廓副本做一次 drop-shadow（取联合轮廓，只有外围有阴影）；`supplyOrder()` 把「极小」碎片排到池尾（港澳最后才出现）。
+- 邻接兜底修正：`bboxGap` 改为经度环形处理，新增 `pieceGap()`（逐多边形最小间距）替换兜底与搭桥里的整片 bbox 间距——实测原实现把冰岛配到俄罗斯、马尔代夫配到中国、新西兰配到南非、塞浦路斯配到挪威；并修掉 `connectComponents` "注释说最近片、实现却把边加在两个块的首个成员上"（世界档的桥全落在 AFG）。
+- 验收：npm run check 全绿（tsc 前后端 + eslint 0 error + **615** 用例，本轮 +25）；verify-puzzle **84/84**（原 75）；verify-round2 38/38、verify-round3 54/54、verify-naming 47/47、verify-drill-scope 34/34、verify-admin-traffic 38/38。文档同步：CONTEXT.md（拼图吸附/难度/排行榜/邻接 + 新增孤悬·极小单位、卡槽供应顺序、拼图投影三个词条 + 两段对话）、README、docs/specs/puzzle-operations.md、ADR 0009/0010、AI_HANDOFF。
+- ⚠ 踩坑：`scripts/verify-puzzle.mjs` 的 `resetClick()` 只点两次「重置」，范围放开后省级档下已拼 ≥ 2 会弹结算卡片（从前不进榜必定直接回开始卡片），脚本卡在"卡片盖住开始卡片、难度按钮为 null"；已给 resetClick 补一步"卡片在就关掉"。
+- ⚠ 顺手发现但**本轮刻意不修**（用户选择不动）：答题模式「次区域榜」实际按用时排序，与 CONTEXT.md（应与世界全国同语义：答对题数优先）矛盾——`functions/api/leaderboard.ts:17` 漏了 `isSubregionScope`；拼图不受影响（按 mode 先行判断）。

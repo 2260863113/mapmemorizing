@@ -122,12 +122,24 @@ try {
     const r = await json(`(function(){ var r = document.getElementById('map').getBoundingClientRect(); return { left:r.left, top:r.top, width:r.width, height:r.height }; })()`);
     return { x: r.left + r.width * fx, y: r.top + r.height * fy };
   };
-  /** 「重置」是二次确认按钮：第一次变成「确认」，第二次才真的重置。 */
+  /**
+   * 「重置」是二次确认按钮：第一次变成「确认」，第二次才真的重置。
+   *
+   * 2026-09-16 起**所有范围都可提交拼图成绩**，于是省级档下已拼 ≥ 2 时重置会弹结算卡片
+   * （从前省级全国不进榜，重置必定直接回开始卡片）。这里顺手把卡片关掉，让调用方总能回到开始卡片；
+   * 世界档的提交门槛另有专门断言，不走这个快捷入口。
+   */
   const resetClick = async () => {
     await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
     await sleep(150);
     await ev(`(() => { document.getElementById('btn-reset').click(); return true })()`);
     await sleep(700);
+    await ev(`(function(){
+      var s = document.getElementById('settlement');
+      if (s && !s.classList.contains('hidden')) document.getElementById('settlement-close').click();
+      return true;
+    })()`);
+    await sleep(400);
   };
 
   for (let i = 0; i < 90; i++) {
@@ -149,7 +161,7 @@ try {
   check('画布还没有碎片、也没有卡槽，先出「开始」卡片、进度行隐藏',
     scope1.pieces === 0 && scope1.slots === 0 && scope1.startCard && scope1.statusHidden, scope1);
   check('开始卡片写明范围：「全国 34 个省级单位」', scope1.subtitle === '把全国 34 个省级单位拼成一幅完整的地图', scope1.subtitle);
-  check('选范围阶段：粒度行（省级选中）与难度行都可见，侧栏不出现（拼图榜只在世界/全国市级两档）', scope1.granularityVisible && scope1.granularityActive === '省级' && (await difficultyUI()).visible, scope1);
+  check('选范围阶段：粒度行（省级选中）与难度行都可见，侧栏排行榜照常显示（所有范围都进榜）', scope1.granularityVisible && scope1.granularityActive === '省级' && (await difficultyUI()).visible, scope1);
   const map1xProvince = await mapUnitScale();
   check('省级全国地图 zoom=1 的比例可读（拼图 1x 的比对标尺）', typeof map1xProvince === 'number' && map1xProvince > 5, { map1xProvince });
   await shot('puzzle-1-scope.png');
@@ -417,16 +429,23 @@ try {
     var target = lit.length ? lit[0].querySelector('path') : null;
     // 参照"普通灰面"用被拖拽的那片（它只会加绿边、不加填充），此时台湾还在卡槽里、DOM 里没有它
     var idle = document.querySelector('#puzzle path[data-adcode="130000"]');
+    var shadow = document.querySelector('#puzzle .puzzle-drag-shadow');
+    var anyPieceWrap = document.querySelector('#puzzle .puzzle-piece-wrap');
     return {
       lit: lit.length,
       selfLit: self.length,
       stroke: target ? getComputedStyle(target).stroke : null,
       width: target ? getComputedStyle(target).strokeWidth : null,
-      // 边界荧光：目标片的 filter 里有 drop-shadow；且**不能有整片面积的填充**（fill 保持普通灰面）
+      // 2026-09-16 起提示**不带辉光**：目标片包装的 filter 必须是 none（有 drop-shadow 就算失败）
       glow: target ? getComputedStyle(target.parentNode).filter : null,
       fill: target ? getComputedStyle(target).fill : null,
       fillOpacity: target ? getComputedStyle(target).fillOpacity : null,
       idleFill: idle ? getComputedStyle(idle).fill : null,
+      // 碎片默认不投影；拖动中才临时插一层整组轮廓阴影
+      idleWrapFilter: anyPieceWrap ? getComputedStyle(anyPieceWrap).filter : null,
+      dragShadow: document.querySelectorAll('#puzzle .puzzle-drag-shadow').length,
+      dragShadowFilter: shadow ? getComputedStyle(shadow).filter : null,
+      dragShadowPieces: shadow ? shadow.querySelectorAll('path').length : 0,
     };
   })()`);
 
@@ -458,12 +477,20 @@ try {
   };
 
   const hintEasy = await checkSnapHint('easy', 'puzzle-3b-snap-hint.png');
-  check('简单难度：拖到可吸附范围时给出绿色**边界**提示（目标组绿边 + 绿辉光、手里那块也加绿边）',
-    !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) >= 2 &&
-      hintEasy.stroke !== 'none' && /drop-shadow/.test(hintEasy.glow ?? ''),
+  check('简单难度：拖到可吸附范围时给出绿色**边界**提示（目标组 2px 绿边、手里那块也加绿边）',
+    !!hintEasy && hintEasy.lit >= 1 && hintEasy.selfLit >= 1 && parseFloat(hintEasy.width) === 2 &&
+      hintEasy.stroke !== 'none',
     hintEasy);
-  check('简单难度的提示**只有边界荧光**：目标片没有整片面积的绿色填充',
+  check('简单难度的提示**没有辉光**（2026-09-16 口径：去掉 drop-shadow 荧光）',
+    !!hintEasy && !/drop-shadow/.test(hintEasy.glow ?? ''), hintEasy);
+  check('简单难度的提示**只有边界**：目标片没有整片面积的绿色填充',
     !!hintEasy && hintEasy.lit >= 1 && hintEasy.fill === hintEasy.idleFill, hintEasy);
+  check('碎片**默认不投影**（静态时包装的 filter 为 none）',
+    !!hintEasy && hintEasy.idleWrapFilter === 'none', hintEasy);
+  check('拖动中整组外围有一层较深的阴影（最底层 .puzzle-drag-shadow + drop-shadow，组内接缝不投影）',
+    !!hintEasy && hintEasy.dragShadow === 1 && /drop-shadow/.test(hintEasy.dragShadowFilter ?? '') &&
+      hintEasy.dragShadowPieces >= 1,
+    hintEasy);
   const hintHard = await checkSnapHint('hard', 'puzzle-3c-snap-hint-hard.png');
   check('困难难度：**完全不给任何吸附提示**（目标不亮、手里那块也不加描边，避免靠提示撞运气）',
     !!hintHard && hintHard.lit === 0 && hintHard.selfLit === 0,
@@ -492,6 +519,48 @@ try {
     hard8.merged === 0 && hard8.groups === 2, hard8);
   const hard4 = await toleranceProbe('hard', 4);
   check('困难档容差 5px：偏移差 4px → 吸上', hard4.merged === 1 && hard4.groups === 1, hard4);
+
+  // ============ 困难档：孤悬/极小单位放宽到 15px（成组后回到 5px） ============
+  /** 摆一串 [adcode, dx, dy]：相对真值位置偏移若干像素后放下，返回每步吸到的组数。 */
+  const relaxRun = async (difficulty, steps) => {
+    await resetClick();
+    await ev(`(() => { document.getElementById('puzzle-${difficulty}').click(); return true })()`);
+    await sleep(200);
+    await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+    await sleep(500);
+    const merged = [];
+    for (const [adcode, dx, dy] of steps) {
+      const p = await json(`window.__probe.puzzleTruePosition('${adcode}')`);
+      const res = await json(`window.__probe.puzzlePlaceAt('${adcode}', ${p.x + dx}, ${p.y + dy})`);
+      merged.push(res ? res.mergedGroups : null);
+    }
+    const after = await puzzle();
+    return { merged, groups: after.groups.length, placed: after.placed, snap: after.snap };
+  };
+
+  const provincialSpecial = await relaxRun('hard', [['110000', 0, 0]]);
+  check('省级全国：港澳台海南 4 个进入放宽名单，且困难档放宽值 = 15px（简单档为 null）',
+    provincialSpecial.snap.relaxedPx === 15 &&
+      ['460000', '710000', '810000', '820000'].every((a) => provincialSpecial.snap.specialUnits.includes(a)) &&
+      provincialSpecial.snap.specialUnits.length === 4,
+    provincialSpecial.snap);
+
+  const hardHainan8 = await relaxRun('hard', [['460000', 0, 0], ['440000', 8, 0]]);
+  check('困难档：孤悬的海南与广东差 8px → **吸得上**（放宽到 15px；同样 8px 的北京/河北在困难档不吸）',
+    hardHainan8.merged[1] === 1 && hardHainan8.groups === 1, hardHainan8);
+
+  const easyHainan12 = await relaxRun('easy', [['460000', 0, 0], ['440000', 12, 0]]);
+  check('简单档**不**放开：海南与广东差 12px → 简单档基础 10px，不吸（放宽只属于困难档）',
+    easyHainan12.snap.relaxedPx === null && easyHainan12.merged[1] === 0 && easyHainan12.groups === 2, easyHainan12);
+
+  const hardRegroup = await relaxRun('hard', [['460000', 0, 0], ['440000', 4, 0], ['450000', 8, 0]]);
+  check('孤悬片**成组之后回到 5px**：海南吸上广东后，广西离这一组 8px → 不吸',
+    hardRegroup.merged[1] === 1 && hardRegroup.merged[2] === 0 && hardRegroup.groups === 2, hardRegroup);
+  await resetClick();
+  await ev(`(() => { document.getElementById('puzzle-hard').click(); return true })()`);
+  await sleep(200);
+  await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+  await sleep(500);
 
   // ==================== 暂停：停表 + 遮罩 ====================
   const elapsedBefore = (await puzzle()).elapsedMs;
@@ -530,7 +599,8 @@ try {
   check('获胜后弹完成卡片：标题「拼图完成」+ 显示用时 + 「再来一局」',
     winDom.summaryVisible && /拼图完成/.test(winDom.body) && /用时/.test(winDom.body) && winDom.restartLabel === '再来一局', winDom);
   check('获胜后自动补上三沙等远海岛礁（归入海南所在组）', winDom.seaIslets >= 1, { seaIslets: winDom.seaIslets });
-  check('省级全国不是可提交范围 → 完成卡片上没有「提交成绩」', winDom.submitHidden === true, winDom);
+  check('省级全国**也是**可提交范围（2026-09-16 扩大口径）→ 完成卡片上有「提交成绩」',
+    winDom.submitHidden === false, winDom);
   check('一局结束后「简单/困难」分段按钮重新显现（之前运行的盘面会收起它们）',
     winDom.difficultyVisible === true, winDom);
   await shot('puzzle-6-win.png');
@@ -557,6 +627,11 @@ try {
   check('世界档开局：194 片、地图隐藏、卡槽三片、进度行写 已拼 1/194',
     worldBoard.total === 194 && worldBoard.started === true && (await ev(`document.getElementById('puzzle-status').textContent`)).includes('已拼 1/194'),
     { total: worldBoard.total });
+  check('世界档：孤悬/极小国家 51 个进入放宽名单（39 个无陆地邻国 + 4 个欧洲微国家 + 8 个另算岛国）',
+    worldBoard.snap.specialUnits.length === 51 && worldBoard.snap.specialUnits.includes('AUS') &&
+      worldBoard.snap.specialUnits.includes('GBR') && worldBoard.snap.specialUnits.includes('MCO') &&
+      !worldBoard.snap.specialUnits.includes('CHN'),
+    { count: worldBoard.snap.specialUnits.length });
   const worldPuzzleScale = (await json(`window.__probe.puzzleTruePosition('CHN')`)).scale;
   check('拼图 1x 的比例 = 地图 1x 的比例（世界族）',
     Math.abs(worldPuzzleScale - map1xWorld) / map1xWorld < 0.02, { puzzle: worldPuzzleScale, map: map1xWorld });
@@ -661,6 +736,28 @@ try {
     { total: cityNation.total, ...cityNationDom });
   await shot('puzzle-10-board-city.png');
   await resetClick();
+
+  // ============ 卡槽供应顺序：极小片（港澳）永远排到最后 ============
+  await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);
+  await sleep(500);
+  await ev(`(() => { document.getElementById('puzzle-start').click(); return true })()`);
+  await sleep(700);
+  {
+    const supply = [];
+    for (let i = 0; i < 34; i += 1) {
+      const snap = await puzzle();
+      const next = snap.slots[0];
+      if (!next) break;
+      supply.push(next);
+      // 各片摆到互不相邻的错开位置：既不吸合、也不触发"拼完"，供应顺序不会被扰动
+      await ev(`window.__probe.puzzlePlaceAt('${next}', ${40 + i * 60}, 40)`);
+      await sleep(20);
+    }
+    check('卡槽供应顺序：极小片（澳门 820000 / 香港 810000）排在**最后**才出现（防止拿出来就找不到）',
+      supply.length === 34 && supply.slice(-2).sort().join(',') === '810000,820000',
+      { count: supply.length, last3: supply.slice(-3) });
+    await resetClick();
+  }
 
   // ==================== 难度分段按钮的选中样式（与其它模式一致） ====================
   await ev(`(() => { document.getElementById('granularity-province').click(); return true })()`);

@@ -14,8 +14,10 @@
  * 大洲哨兵 / 次区域哨兵 / 省 adcode），于是大洲与次区域两行分段按钮、`isNationLikeScope` 等
  * 现成逻辑直接可用。
  *
- * 不提交排行榜（服务端白名单仍是 self/click/endless）；难度（简单/困难）只影响是否显示名称，
- * 运行中收起且不允许切换。
+ * **成绩进「拼图排行榜」**（2026-09 扩大口径）：**所有范围都可提交**，各自按范围哨兵独立成行
+ * （世界全国 / 省级全国 / 全国市级 / 大洲 / 次区域 / 下钻某省互不覆盖；服务端白名单见
+ * `functions/_lib/validate.ts`）。难度（简单/困难）影响是否显示名称、吸附容差，以及困难档对
+ * 「孤悬/极小」单位的放宽；运行中收起且不允许切换。
  */
 import type { AppData, Continent, Mode, RoundResult, SubregionId } from '../types';
 import { CONTINENTS } from '../types';
@@ -39,8 +41,9 @@ import {
 import { hasSubregions } from '../subregions';
 import { MAP_THEMES } from '../map/theme';
 import { buildPieces, countScopePieces, familyOf, type PuzzlePieceDef, type PuzzleScope } from '../puzzle/pieces';
-import { buildPuzzleAdjacency } from '../puzzle/adjacency';
+import { buildPuzzleGraph } from '../puzzle/adjacency';
 import { PuzzleState, SNAP_TOLERANCE_PX, type DropResult } from '../puzzle/state';
+import { SNAP_RELAXED_PX, specialUnitsOf, tinyUnitsOf } from '../puzzle/specialUnits';
 import { PuzzleView, type PuzzleThemeColors } from '../puzzle/view';
 import { project, unitScale, type PuzzleFamily } from '../puzzle/projection';
 import { loadPuzzleDifficulty, savePuzzleDifficulty, type ModeSettingsPanel } from '../modeSettings';
@@ -57,12 +60,21 @@ export type PuzzlePhase = 'scope' | 'board';
 const TICK_MS = 200;
 
 /**
- * 拼图排行榜：**只有这两个范围可提交**（用户口径）——
- * 世界全国（194 国）与市级全国（340 个地级单位）。其余范围（省级全国、大洲、次区域、下钻某省）
- * 中途退出不弹结算、也不进榜。
+ * 拼图成绩的**可提交范围**：全部合法范围（用户口径 2026-09-16 扩大）。
+ *
+ * 之前只放开「世界全国」与「全国市级」两档。问题在于**默认进入拼图模式落在「省级全国」**
+ * （`granularity` 首访默认省级）：那一档既没有「提交成绩」入口（`collectResult()` 返回 null），
+ * 服务端的榜也永远是空的——用户报的「拼完没有成绩提交按钮、排行榜空白」就是这条。
+ *
+ * 现在省级全国、大洲、次区域、下钻某省都按同一套语义进榜：各自一个**范围哨兵**、独立成行，
+ * 排名一律「已拼个数优先、同数比用时」，门槛仍是 `PUZZLE_MIN_SUBMIT`。
+ * 判定与后端 `normalizeScope()` 的白名单保持一致（null / 空串 / 三个全国哨兵 / 6 位省 adcode）。
  */
 export function isPuzzleLeaderboardScope(scope: string | null): boolean {
-  return scope === null || scope === WORLD_NATION_SCOPE;
+  if (scope === null || scope === '' || scope === PROVINCE_NATION_SCOPE || scope === WORLD_NATION_SCOPE) {
+    return true;
+  }
+  return continentFromScope(scope) !== null || subregionFromScope(scope) !== null || /^\d{6}$/.test(scope);
 }
 
 /**
@@ -90,6 +102,16 @@ export class PuzzleMode extends BaseMode {
   private view: PuzzleView | null = null;
   /** 视图绑定的 state 实例：范围/开局会新建 state，视图必须跟着重建。 */
   private viewState: PuzzleState | null = null;
+  /**
+   * 当前 state 是按哪个「难度 | 粒度 | 范围」装配的。
+   *
+   * 难度会改两件事：基础容差、以及「孤悬/极小」放宽是否生效。运行中难度锁死，但**拼完之后**
+   * 可以改（完成卡片上还留着「再来一局」）——旧实现只在 `state` 为 null 时重建，
+   * 于是"拼完 → 改成困难 → 再来一局"会沿用旧的 10px 容差。用这个 key 兜住。
+   */
+  private stateKey: string | null = null;
+  /** 本范围的「孤悬/极小」单位（探针/验收用）。 */
+  private specialUnits: Set<string> = new Set();
   private difficulty: PuzzleDifficulty = loadPuzzleDifficulty();
 
   private granularity: Granularity = this.loadGranularity();
@@ -97,8 +119,13 @@ export class PuzzleMode extends BaseMode {
    * 当前范围哨兵（与点击模式同一套编码）：
    * 省级档 = `PROVINCE_NATION_SCOPE`；世界档 = 世界/大洲/次区域哨兵；
    * 市级档 = null（全国）或省 adcode（下钻该省的地级市）。
+   *
+   * ⚠ **必须由粒度推出**，不能写死。粒度是本地记住的（`granularityStore`），
+   * 而范围只在会话内有效：写死成省级全国会造出"地图画的是世界/市级、范围却还是省级全国"
+   * 的不一致——地图对了、排行榜查的是另一档（那一档的榜本来就是空的），
+   * 市级档下开始卡片还会把 `__province_nation__` 这串内部字符串直接印给用户。
    */
-  private scope: string | null = PROVINCE_NATION_SCOPE;
+  private scope: string | null = this.nationScopeFor(this.loadGranularity());
 
   /** 一局进行中（开始 → 获胜/重置）。 */
   private started = false;
@@ -440,6 +467,9 @@ export class PuzzleMode extends BaseMode {
 
   /** 完成卡片的「再来一局」：同范围内重新打乱并立刻开跑。 */
   private restartRun() {
+    // 先按当前难度确认 state 是最新的：拼完之后难度仍可改，而容差与「孤悬/极小」放宽都跟难度有关。
+    // 难度没变时 `ensureState()` 是 no-op（接着只重新打乱），不会有额外开销。
+    this.ensureState();
     this.state?.start();
     this.started = true;
     this.finished = false;
@@ -516,7 +546,12 @@ export class PuzzleMode extends BaseMode {
     };
   }
 
-  /** 当前是否处于「可提交排行榜」的范围（外壳据此决定「重置」要不要弹结算卡片）。 */
+  /**
+   * 当前是否处于「可提交排行榜」的范围。
+   *
+   * 外壳用它决定「重置」要不要弹结算卡片（`appController.showSettlementCard`）。口径扩大后
+   * 合法范围一律为真，所以**所有范围**的中途终止都会经过结算卡片（已拼 ≥ 2 才真的能提交）。
+   */
   isRankedScope(): boolean {
     return isPuzzleLeaderboardScope(this.scope);
   }
@@ -614,9 +649,12 @@ export class PuzzleMode extends BaseMode {
     return { fill: map.fill.gray, stroke: map.boundary[tone], label: map.labelNeutral, halo: map.labelBg };
   }
 
-  /** 建碎片与邻接（范围变化或开局时调用一次）。 */
+  /** 建碎片与邻接（范围变化或开局时调用一次；难度变了也会重建，见 `stateKey`）。 */
   private ensureState() {
-    if (this.state) return;
+    const key = `${this.difficulty}|${this.granularity}|${this.scope ?? ''}`;
+    if (this.state && this.stateKey === key) return;
+    this.state = null;
+    this.stateKey = null;
     const scope = this.puzzleScope();
     const pieces = buildPieces(this.ctx.data, scope);
     if (!pieces.length) {
@@ -624,10 +662,21 @@ export class PuzzleMode extends BaseMode {
       return;
     }
     this.pieces = pieces;
-    const adjacency = buildPuzzleAdjacency(pieces, (adcode) => this.neighboursOf(adcode, scope));
-    // 磁吸容差按难度取（简单 10px / 困难 5px）：难度在运行中锁定，故开局建一次就够
-    this.state = new PuzzleState(pieces, adjacency, SNAP_TOLERANCE_PX[this.difficulty]);
+    const graph = buildPuzzleGraph(pieces, (adcode) => this.neighboursOf(adcode, scope));
+    // 「孤悬/极小」判定要两份集合，别合并：
+    //   special = 极小 ∪ 孤悬 ∪ 另算岛国 → 困难档放宽容差；
+    //   tiny    = 仅极小（海岛不算）    → 卡槽供应顺序排到最后。
+    this.specialUnits = specialUnitsOf(pieces, graph.landConnected);
+    const tiny = tinyUnitsOf(pieces);
+    this.state = new PuzzleState(pieces, graph.adjacency, {
+      basePx: SNAP_TOLERANCE_PX[this.difficulty],
+      // 只在困难档放宽：简单档本来就有绿色预告，10px 对它够用（用户口径）
+      relaxedPx: this.difficulty === 'hard' ? SNAP_RELAXED_PX : null,
+      isSpecial: (adcode) => this.specialUnits.has(adcode),
+      isTiny: (adcode) => tiny.has(adcode),
+    });
     this.state.start();
+    this.stateKey = key;
   }
 
   /** 某片的陆地邻居（按范围取不同来源：国家 / 省聚合 / 地级单位）。 */
@@ -746,6 +795,12 @@ export class PuzzleMode extends BaseMode {
       })),
       complete: this.state?.isComplete() ?? false,
       elapsedMs: Math.round(this.elapsed()),
+      /** 基础容差 + 本范围的「孤悬/极小」名单（困难档对它们放宽到 15px）。 */
+      snap: {
+        basePx: this.state?.tolerancePx() ?? SNAP_TOLERANCE_PX[this.difficulty],
+        relaxedPx: this.difficulty === 'hard' ? SNAP_RELAXED_PX : null,
+        specialUnits: [...this.specialUnits].sort(),
+      },
       view: this.view?.debugState() ?? null,
     };
   }

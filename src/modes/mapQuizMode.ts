@@ -585,8 +585,16 @@ export abstract class MapQuizMode extends BaseMode {
     try {
       if (this.isProvinceNation()) {
         // 省级全国：省级地图视图，不渲染地级；含港澳放大框；不下钻
+        //
+        // ⚠ 顺序要紧：`setProvinceMode(true, …)` 会**自己**把下钻省清掉（renderer 内部的
+        //   `else if (this.viewProvince)` 分支）并且**不发** onViewChange，所以在它之后再问
+        //   `currentProvince()` 永远是 null —— 原先那行 `if (currentProvince()) backToNation()`
+        //   因此从不执行：从省级档钻省返回顶级时既不补发视图变化、也不刷新侧栏，
+        //   排行榜就一直停在下钻那个省的榜上（实测缺陷）。故提前取值、事后显式补发一次。
+        //   补发时 `syncingScope` 仍为 true，模式自己的 onViewChange 会早退，不会重入。
+        const wasDrilled = this.ctx.renderer.currentProvince() !== null;
         this.ctx.renderer.setProvinceMode(true, { inset: true, allowDrill: false });
-        if (this.ctx.renderer.currentProvince()) this.ctx.renderer.backToNation();
+        if (wasDrilled) this.ctx.renderer.notifyViewChange();
         return;
       }
       if (this.isWorldNation()) {

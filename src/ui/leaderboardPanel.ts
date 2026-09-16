@@ -17,14 +17,33 @@ export class LeaderboardPanel {
     this.el = document.getElementById(containerId) as HTMLElement;
   }
 
+  /**
+   * 刷新侧栏（**唯一的渲染入口**）。
+   *
+   * 渲染策略（用户口径：到了哪个范围就尽快显示哪个范围的榜）：
+   *   1. 该范围**已有快照** → 立刻按快照渲染，同时在后台重新取一次，回来再替换；
+   *   2. 没有快照 → 立刻把标题换成新范围并显示「加载中」。
+   * 两种情况下屏幕上都不会继续留着**上一个范围**的名单——旧实现是把上一份名单原样留在
+   * 屏上直到新数据回来，范围切换不跟手、还容易把别的范围的成绩误认成当前范围的。
+   *
+   * `renderSeq` 是「过期渲染守卫」：只有最后一次调用有资格写 DOM，快速连续切换时先发的、
+   * 后到的响应一律丢弃（这也是这条链路上唯一需要的并发保护——数据本身由 store 合并）。
+   */
   async refresh(mode: LeaderboardMode, scopeProvince: string | null, scopeLabel: string) {
     const seq = ++this.renderSeq;
     const title = t('leaderboard.title', { mode: modeLabel(mode), scope: scopeLabel });
+    const cached = this.store.peek(mode, scopeProvince);
+    if (cached) this.render(title, cached.slice(0, 10), scopeProvince);
+    else this.renderLoading(title);
+
     let rows: LeaderboardEntry[];
     try {
       rows = await this.store.ensure(mode, scopeProvince);
     } catch {
-      if (seq === this.renderSeq) this.renderError(title);
+      if (seq !== this.renderSeq) return; // 已过期，丢弃
+      // 后台刷新失败时，有快照就静默保留旧数据（把已有内容顶成错误页是净损失）。
+      if (cached) this.render(title, cached.slice(0, 10), scopeProvince);
+      else this.renderError(title);
       return;
     }
     if (seq !== this.renderSeq) return; // 已过期，丢弃
@@ -48,6 +67,11 @@ export class LeaderboardPanel {
         return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${avatar} ${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
       })
       .join('')}</div>`;
+  }
+
+  /** 该范围没看过时的占位：标题已经是新范围，名单位置明确写着「加载中」。 */
+  private renderLoading(title: string) {
+    this.el.innerHTML = `<div class="leaderboard-title">${escapeHtml(title)}</div><div class="leaderboard-empty">${t('leaderboard.loading')}</div>`;
   }
 
   private renderError(title: string) {

@@ -83,11 +83,12 @@ export function normalizePasswordHash(value: unknown): PasswordHashPayload {
 const MODES = new Set(['self', 'click', 'endless', 'puzzle']);
 
 /**
- * 拼图榜只接受这两个范围（与前端 `isPuzzleLeaderboardScope` 一致）：
- * 市级全国（''）与 世界全国（`__world_nation__`）。
- * 省级全国 / 大洲 / 次区域 / 单省（6 位 adcode）的拼图成绩一律拒绝 —— 那些范围界面不提供提交。
+ * 拼图榜接受**所有合法范围**（与前端 `isPuzzleLeaderboardScope` 一致，2026-09-16 扩大口径）：
+ * 市级全国（''）、省级全国、世界全国、大洲、次区域、单省（6 位 adcode）各自独立成行。
+ *
+ * scope 本身的合法性已经由 `normalizeScope()`（下面的白名单）把关，这里不再另开一份名单 ——
+ * 两份手写的名单一旦漂移就会出现"前端能交、后端拒绝"的静默失败（旧实现正是这么写的）。
  */
-const PUZZLE_SCOPES = new Set(['', WORLD_NATION_SCOPE]);
 
 /** 拼图成绩的下限：至少吸上过一片（前端「已拼」口径 = 1 + 吸附次数，故 ≥ 2）。 */
 export const PUZZLE_MIN_SUBMIT = 2;
@@ -157,7 +158,7 @@ function readScoreNumbers(row: Partial<ScorePayload>) {
 /**
  * 提交资格（复刻前端 canSubmit）：
  *   ·无尽的 endless 需有金币（不统计题数，totalUnits 恒 0），通过时就地补 coins/level；
- *   ·拼图只有市级全国与世界全国两个范围，且「已拼」≥2、不得超过总片数、没有答错；
+ *   ·拼图**所有合法范围**都可提交，且「已拼」≥2、不得超过总片数、没有答错；
  *   ·全国 self/click（null）、世界全国、大洲、次区域允许未答完（已答全对即可）；
  *   ·省级（含省级全国哨兵）维持全对。
  */
@@ -171,7 +172,7 @@ function assertSubmittable(payload: ScorePayload, row: Partial<ScorePayload>): v
     return;
   }
   if (payload.mode === 'puzzle') {
-    if (!PUZZLE_SCOPES.has(payload.scopeProvince ?? '')) throw new ApiError(400, 'invalid_scope', '该范围不支持拼图成绩');
+    // 范围合法性已由 normalizeScope() 把关（所有合法范围都可提交拼图成绩）
     if (payload.totalUnits < PUZZLE_MIN_SUBMIT) throw new ApiError(400, 'invalid_score', '无效的总片数');
     if (payload.wrong !== 0) throw new ApiError(400, 'invalid_score', '拼图成绩不含答错数');
     if (payload.correct < PUZZLE_MIN_SUBMIT || payload.correct > payload.totalUnits) {

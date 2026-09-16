@@ -889,20 +889,28 @@ main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidd
   vector-effect: non-scaling-stroke; /* 描边恒定 1px，不随缩放变粗 */
   cursor: grab;
 }
-/* 每片一个包装 `<g>`（便于全局按面积排序决定上下覆盖），投影落在包装上 */
+/* 碎片**默认不投影**（用户口径 2026-09-16）。包装 `<g>` 只为"按面积排序决定上下覆盖"而存在。
+   从前每片包装上挂了一条 drop-shadow，吸附成组后组内是多个同级 `<g>`，于是每片的投影都落在
+   **接缝处**，看起来像"拼上了还有缝"。现在默认一律不投影，只有拖动中的那一组有较深的投影
+   （见下面的 .puzzle-drag-shadow）。 */
 #puzzle .puzzle-piece-wrap {
-  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22));
+  filter: none;
 }
-/* 可吸附提示（**只有简单档**）：目标片加粗绿边 + 绿色边界辉光；手里那块同时加绿边表示
-   "现在松手就会吸上去"。用户口径 2026-09-14：**不要整片面积的幽灵荧光，只要边界荧光** ——
-   曾经给目标片铺过 0.35 不透明度的绿色填充，那会让整块碎片发绿、盖住底下的边界。 */
-#puzzle .puzzle-piece-wrap.can-snap {
-  filter: drop-shadow(0 0 5px rgba(16, 185, 129, 0.85));
-}
+/* 可吸附提示（**只有简单档**）：目标片与手里那块都换成 2px 绿边。
+   用户口径 2026-09-16：**去掉绿色辉光、描边变细**（原为 2.5px + drop-shadow 辉光）。
+   更早一轮（2026-09-14）已定过"不要整片面积的幽灵荧光，只要边界"——曾经给目标片铺过
+   0.35 不透明度的绿色填充，那会让整块碎片发绿、盖住底下的边界。 */
 #puzzle .puzzle-piece-wrap.can-snap .puzzle-piece,
 #puzzle .puzzle-piece-wrap.can-snap-self .puzzle-piece {
   stroke: var(--accent);
-  stroke-width: 2.5;
+  stroke-width: 2;
+}
+/* 拖动中的"抬起来"投影：一层整组轮廓副本（画在最底层），对**整层**做一次 drop-shadow。
+   SVG 的 filter 作用在整层上、取的是联合轮廓，所以只有外围有投影、组内接缝干净 ——
+   这就是"碎片相互吸附后只保留组最外层阴影"的实现方式（见 view.updateDragShadow）。 */
+#puzzle .puzzle-drag-shadow {
+  filter: drop-shadow(0 12px 18px rgba(15, 23, 42, 0.42));
+  pointer-events: none;
 }
 #puzzle .puzzle-label {
   font-size: calc(14px / var(--pz, 1)); /* 屏幕字号恒定（不随缩放变粗），与地图页省名同档 */

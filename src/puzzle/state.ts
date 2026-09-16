@@ -19,11 +19,30 @@ export const SLOT_COUNT = 3;
  * 简单 10px、困难 5px。两档都比最初的统一 15px 更严，困难档最严（5px 只有指甲盖大小）。
  *
  * 提示与容差是两件事：简单档有可吸附预告但要求更准，困难档没有预告、容差更小。
+ * **困难档对「孤悬/极小」单位另有一档放宽**（见 `PuzzleSnapOptions.relaxedPx`）。
  */
 export const SNAP_TOLERANCE_PX: Record<'easy' | 'hard', number> = { easy: 10, hard: 5 };
 
 /** 之前的统一容差（仅作历史记录/文档引用，代码里不再使用）。 */
 export const LEGACY_SNAP_TOLERANCE_PX = 15;
+
+/** 磁吸判定与卡槽供应顺序的可调项（由 `PuzzleMode.ensureState()` 按难度与范围装配）。 */
+export interface PuzzleSnapOptions {
+  /** 基础容差：简单 10px / 困难 5px。 */
+  basePx: number;
+  /**
+   * 「孤悬/极小」单位**还是独立一片（未成组）**时的放宽容差（困难档 15px）。
+   * `null` / 省略 = 不放开（简单档就是这种：它本来就有绿色预告，10px 也够）。
+   */
+  relaxedPx?: number | null;
+  /** 该片是否属于「孤悬/极小」集合（未成组时才享受放宽）。 */
+  isSpecial?: (adcode: string) => boolean;
+  /**
+   * 该片是否属于「极小」（**只按面积**，海岛不算）：这类碎片在卡槽供应顺序里排到最后，
+   * 免得用户早早把它们拿出来、放下后就再也找不到（澳门在 1x 下不到 1px）。
+   */
+  isTiny?: (adcode: string) => boolean;
+}
 
 export interface PuzzleGroup {
   id: number;
@@ -43,6 +62,10 @@ export interface DropResult {
 export class PuzzleState {
   private readonly byAdcode = new Map<string, PuzzlePieceDef>();
   private readonly all: string[];
+  private readonly basePx: number;
+  private readonly relaxedPx: number | null;
+  private readonly isSpecial: (adcode: string) => boolean;
+  private readonly isTiny: (adcode: string) => boolean;
   /** 尚未进过卡槽的碎片（已打乱的抽取池）。 */
   private pool: string[] = [];
   slots: string[] = [];
@@ -54,9 +77,13 @@ export class PuzzleState {
   constructor(
     pieces: PuzzlePieceDef[],
     private readonly adjacency: Set<string>,
-    private readonly tolerance = SNAP_TOLERANCE_PX.easy,
+    options: PuzzleSnapOptions = { basePx: SNAP_TOLERANCE_PX.easy },
     private readonly rng: () => number = Math.random,
   ) {
+    this.basePx = options.basePx;
+    this.relaxedPx = options.relaxedPx ?? null;
+    this.isSpecial = options.isSpecial ?? (() => false);
+    this.isTiny = options.isTiny ?? (() => false);
     for (const p of pieces) this.byAdcode.set(p.adcode, p);
     this.all = pieces.map((p) => p.adcode);
   }
@@ -66,7 +93,7 @@ export class PuzzleState {
     this.groups = [];
     this.groupSeq = 1;
     this.absorbed = 0;
-    this.pool = shuffle(this.all, this.rng);
+    this.pool = supplyOrder(this.all, this.isTiny, this.rng);
     this.slots = [];
     this.refillSlots();
   }
@@ -145,9 +172,36 @@ export class PuzzleState {
     return sum;
   }
 
-  /** 本组当前可吸上的容差（供探针/验收读，避免测试重复写死数字）。 */
+  /** 基础容差（简单 10 / 困难 5），不含「孤悬/极小」的放宽。 */
   tolerancePx(): number {
-    return this.tolerance;
+    return this.basePx;
+  }
+
+  /**
+   * 某片**此刻**适用的容差（探针/验收用）：孤悬/极小的片还没成组时是放宽值，
+   * 已经吸进任何一组后回到基础容差。
+   */
+  toleranceForPiece(adcode: string): number {
+    const group = this.groupOf(adcode);
+    return this.toleranceOf(group ? group.pieces : [adcode]);
+  }
+
+  /**
+   * 某"片集合"适用的容差。
+   *
+   * 用户口径（2026-09-16）：孤悬/极小的单位**还是单独一片**时放宽到 15px；
+   * **一旦成了组就回到 5px**——放宽只是帮它"找到对象"，不是整局都变松。
+   */
+  private toleranceOf(pieces: string[]): number {
+    if (this.relaxedPx === null) return this.basePx;
+    if (pieces.length > 1) return this.basePx;
+    const only = pieces[0];
+    return only !== undefined && this.isSpecial(only) ? this.relaxedPx : this.basePx;
+  }
+
+  /** 两组判定取**较宽**的那个：拖广东靠近海南、或拖海南靠近广东都是 15px（用户口径）。 */
+  private pairTolerance(a: string[], b: string[]): number {
+    return Math.max(this.toleranceOf(a), this.toleranceOf(b));
   }
 
   /** 若此刻松手，哪些组会与本组吸上（拖动中高亮提示用，只读）。 */
@@ -165,7 +219,7 @@ export class PuzzleState {
   candidatesFor(dx: number, dy: number, pieces: string[]): PuzzleGroup[] {
     return this.groups.filter((other) => {
       if (other.pieces.some((p) => pieces.includes(p))) return false; // 同组不算
-      if (Math.hypot(other.dx - dx, other.dy - dy) > this.tolerance) return false;
+      if (Math.hypot(other.dx - dx, other.dy - dy) > this.pairTolerance(pieces, other.pieces)) return false;
       return pieces.some((pa) => other.pieces.some((pb) => this.adjacency.has(pairKey(pa, pb))));
     });
   }
@@ -205,7 +259,7 @@ export class PuzzleState {
 
   /** 两组的偏移差是否在容差内，且两组之间**存在相邻片对**。 */
   private pairWithinTolerance(a: PuzzleGroup, b: PuzzleGroup): boolean {
-    if (Math.hypot(a.dx - b.dx, a.dy - b.dy) > this.tolerance) return false;
+    if (Math.hypot(a.dx - b.dx, a.dy - b.dy) > this.pairTolerance(a.pieces, b.pieces)) return false;
     for (const pa of a.pieces) {
       for (const pb of b.pieces) {
         if (this.adjacency.has(pairKey(pa, pb))) return true;
@@ -227,4 +281,21 @@ export function shuffle<T>(items: T[], rng: () => number = Math.random): T[] {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
+}
+
+/**
+ * 卡槽供应顺序（用户口径 2026-09-16）：正常片打乱在前、**「极小」片一律排到最后**。
+ *
+ * 动机：澳门在 1x 下不到 1px、香港约 5px，早早从卡槽拿出来放到画布上，用户很可能再也找不到它。
+ * 排到最后意味着它们只在别的片都出完之后才出现——那时画布上已经没几片，好找、也好判断位置。
+ * 两组各自打乱，组内顺序仍是随机的（开局体验与以前一致）。
+ */
+export function supplyOrder(
+  all: string[],
+  isTiny: (adcode: string) => boolean,
+  rng: () => number = Math.random,
+): string[] {
+  const normal = all.filter((a) => !isTiny(a));
+  const tiny = all.filter((a) => isTiny(a));
+  return [...shuffle(normal, rng), ...shuffle(tiny, rng)];
 }

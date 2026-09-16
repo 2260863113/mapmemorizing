@@ -207,6 +207,7 @@
 
   "leaderboard.title": "{mode} {scope}排行榜",
   "leaderboard.empty": "暂无成绩",
+  "leaderboard.loading": "加载中…",
   "leaderboard.loadFailed": "排行榜加载失败",
   "leaderboard.endlessMeta": "{coins}￥ · 第{level}关",
   "leaderboard.nationMeta": "{correct} 个 · {time}",

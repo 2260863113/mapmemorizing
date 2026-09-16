@@ -86,6 +86,8 @@ export class PuzzleView {
   private world: SVGGElement | null = null;
   private slotsEl: HTMLElement | null = null;
   private ghost: SVGGElement | null = null;
+  /** 拖动中的整组阴影层（画在最底层，见 `updateDragShadow`）。 */
+  private dragShadow: SVGGElement | null = null;
   private paths = new Map<string, SVGPathElement>();
   private labelEls = new Map<string, SVGTextElement>();
   private builtScale = 0;
@@ -166,6 +168,8 @@ export class PuzzleView {
     this.svg = null;
     this.world = null;
     this.slotsEl = null;
+    // 阴影层随 container.innerHTML 一起消失，但引用要清掉：否则下次 mount 后 moveDragShadow 会写到已脱离文档的节点上
+    this.dragShadow = null;
     this.paths.clear();
     this.labelEls.clear();
   }
@@ -292,6 +296,8 @@ export class PuzzleView {
       world.appendChild(wrap);
     }
     if (this.selectedAdcode) this.updateGhost(this.selectedAdcode, this.lastClient.x, this.lastClient.y);
+    // world.innerHTML 刚被清空：拖动中的阴影层要一并重建，否则拖到一半重排就会丢失"抬起来"的投影
+    if (this.dragGroupId !== null) this.updateDragShadow(this.dragGroupId);
     this.applyTransform();
   }
 
@@ -399,6 +405,7 @@ export class PuzzleView {
       this.dragGroupId = group.id;
       this.dragStart = { x: e.clientX, y: e.clientY, dx: group.dx, dy: group.dy };
       this.dragMoved = false;
+      this.updateDragShadow(group.id); // 拿起来就"抬"起一层阴影
       return;
     }
 
@@ -482,6 +489,7 @@ export class PuzzleView {
     this.dragMoved = true;
     this.renderStructure();
     this.renderSlots();
+    this.updateDragShadow(group.id);
   }
 
   private dragMoveTo(clientX: number, clientY: number): void {
@@ -500,6 +508,7 @@ export class PuzzleView {
     this.dragGroupId = null;
     this.slotPointer = null;
     this.clearHighlights();
+    this.removeDragShadow();
     if (id === null) return;
     if (!this.dragMoved) return; // 只是点了一下碎片
     const result = this.opts.state.drop(id);
@@ -514,6 +523,7 @@ export class PuzzleView {
     this.panPointerId = null;
     this.selectedAdcode = null;
     this.clearHighlights();
+    this.removeDragShadow();
     this.updateGhost(null, 0, 0);
   }
 
@@ -669,14 +679,59 @@ export class PuzzleView {
     this.world?.querySelectorAll(`g[data-group="${groupId}"]`).forEach((g) => {
       g.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
     });
+    this.moveDragShadow(groupId);
+  }
+
+  /**
+   * 拖动中的"抬起来"投影：整组在**外围**一圈较深的阴影，组内接缝不投影。
+   *
+   * 用户口径（2026-09-16）：碎片**默认完全没有投影**，只有拖动某一片或某一组时才给较深的投影；
+   * 而且吸附成组之后"只保留组最外层的阴影"。
+   *
+   * 做法：在画布**最底层**临时插一层"该组所有片的轮廓副本"，对整层做一次 drop-shadow。
+   * SVG 的 filter 作用在整个 `<g>` 上、取的是其**联合轮廓**（已吸合的片之间没有缝），
+   * 于是天然只有外圈有投影。逐片加投影做不到这一点——吸附后组内是多个同级 `<g>`，
+   * 每片一条投影就会在接缝处露出阴影，正是用户要去掉的那种效果。
+   */
+  private updateDragShadow(groupId: number | null): void {
+    this.removeDragShadow();
+    const world = this.world;
+    if (!world || groupId === null) return;
+    const group = this.opts.state.groups.find((g) => g.id === groupId);
+    if (!group) return;
+    const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.setAttribute('class', 'puzzle-drag-shadow');
+    layer.setAttribute('data-group', String(group.id));
+    for (const adcode of group.pieces) {
+      const path = this.paths.get(adcode);
+      // 必须是副本：真实 path 已经挂在碎片包装里，一个节点不能同时出现在两处
+      if (path) layer.appendChild(path.cloneNode(true));
+    }
+    layer.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
+    world.insertBefore(layer, world.firstChild); // 最底层：阴影必须画在所有碎片之下
+    this.dragShadow = layer;
+  }
+
+  private moveDragShadow(groupId: number): void {
+    const layer = this.dragShadow;
+    if (!layer) return;
+    const group = this.opts.state.groups.find((g) => g.id === groupId);
+    if (!group) return;
+    layer.setAttribute('transform', `translate(${group.dx.toFixed(2)} ${group.dy.toFixed(2)})`);
+  }
+
+  private removeDragShadow(): void {
+    this.dragShadow?.remove();
+    this.dragShadow = null;
   }
 
   /**
    * 可吸附提示：把"若在此偏移放下就会拼上"的目标组描成绿色高亮，并给手里那块也加上高亮类。
    *
    * 拖动中与**点选→点放**的幽灵预览共用（后者还没有真正的组，只有"将要落下的偏移"）。
-   * 困难模式下所有碎片都是同一种灰面、又没有省名，提示必须足够显眼——故目标组除了加粗描边
-   * 还会带一层绿色辉光（见 styles.css 的 .can-snap / .can-snap-self）。
+   * 两档的差别只在**给不给**：困难档一个绿边都不亮（用户口径：不允许靠提示"撞运气"）；
+   * 简单档给，且**目标组与手里那块都换成 2px 绿边**（2026-09-16 去掉辉光、描边由 2.5px 变细）。
+   * 容差则由 `PuzzleState` 按"是不是孤悬/极小的片"算——困难档对那类片放宽到 15px，但仍不亮提示。
    */
   private applyHint(dx: number, dy: number, pieces: string[], selfGroupId: number | null): void {
     const world = this.world;

@@ -443,6 +443,10 @@ export class AppController {
       // 以前这里不调 syncSegments 也没问题——那时只有省级下钻会走这条路径，
       // 而省级下钻本来就会隐藏整组粒度按钮；现在次区域层是可见的答题层，不刷新就会「按钮说东亚、地图是世界」。
       this.syncSegments();
+      // 兜底：返回顶级有可能改变了范围**却不经 renderer 的 onViewChange**（省级档钻省后返回就是
+      // 这种情形——renderer 是在 setProvinceMode 内部悄悄退出下钻的）。范围变了，侧栏就必须换榜，
+      // 否则排行榜会一直停在下钻那个省上；这里不依赖任何单条路径，一律补一次刷新。
+      void this.refreshSidePanel();
       return;
     }
     this.current?.exit();
@@ -450,6 +454,8 @@ export class AppController {
     this.current?.enter();
     this.updateProgress();
     this.syncSegments();
+    // 同上：非 onBackToNation 的通用返回路径同样补一次，免得将来新增模式时又漏。
+    void this.refreshSidePanel();
   }
 
   // ==================== 帮助 / 悬停统计 ====================
@@ -567,7 +573,9 @@ export class AppController {
    * 结算卡片（中途终止提交成绩）。
    *
    * 点击/输入模式：全国范围进行中按「重置」触发；
-   * 拼图模式：**只有可提交的两个范围**（世界全国 / 市级全国）才弹，其余范围直接重置（用户口径）。
+   * 拼图模式：**所有范围**都一样（2026-09-16 扩大口径后没有"不可提交的范围"），
+   * 只是已拼 < 2 时 `collectResult()` 返回 null，于是直接重置、不弹卡片。服务端与排行榜的范围
+   * 白名单见 `functions/_lib/validate.ts`。已拼 < 2 时不会弹卡片的门槛见 `PUZZLE_MIN_SUBMIT`。
    */
   private showSettlementCard() {
     const mode = this.current?.id;

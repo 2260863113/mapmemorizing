@@ -32,10 +32,11 @@ describe('normalizePasswordHash', () => {
 });
 
 describe('validMode', () => {
-  it('accepts self/click/endless only', () => {
+  it('只接受四个已分配的模式 id：self/click/endless/puzzle（与前端 MODE_SPECS 同源）', () => {
     expect(validMode('self')).toBe(true);
     expect(validMode('click')).toBe(true);
     expect(validMode('endless')).toBe(true);
+    expect(validMode('puzzle')).toBe(true);
     expect(validMode('daily')).toBe(false);
     expect(validMode('bogus')).toBe(false);
   });
@@ -139,16 +140,25 @@ describe('validateScore', () => {
   });
 
   /**
-   * 拼图榜（2026-09）：只有市级全国（''）与世界全国（哨兵）两个范围，
+   * 拼图榜（2026-09，2026-09-16 扩大范围）：**所有合法范围**都可提交，
    * `correct` 存的是「已拼」个数（1 + 吸附次数），故至少 2；不含答错数。
    */
-  it('puzzle: 只接受市级全国与世界全国两个范围', () => {
+  it('puzzle: 接受全部合法范围（含省级全国 / 大洲 / 次区域 / 单省）', () => {
     expect(validateScore({ ...base, mode: 'puzzle', scopeProvince: '', totalUnits: 340, correct: 2 })).toMatchObject({ scopeProvince: null, correct: 2 });
     expect(
       validateScore({ ...base, mode: 'puzzle', scopeProvince: '__world_nation__', totalUnits: 194, correct: 194 }),
     ).toMatchObject({ scopeProvince: '__world_nation__', correct: 194 });
     for (const scope of ['__province_nation__', '__continent_AS__', '__subregion_EAS__', '130000']) {
-      expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: scope, totalUnits: 340, correct: 9 }), scope).toThrow(ApiError);
+      expect(
+        validateScore({ ...base, mode: 'puzzle', scopeProvince: scope, totalUnits: 34, correct: 9 }),
+        scope,
+      ).toMatchObject({ scopeProvince: scope, correct: 9 });
+    }
+  });
+
+  it('puzzle: 范围形状非法仍然拒绝（白名单仍是唯一入口）', () => {
+    for (const scope of ['随便一个字符串', '__continent_ZZ__', '__subregion_ZZZ__', '13000']) {
+      expect(() => validateScore({ ...base, mode: 'puzzle', scopeProvince: scope, totalUnits: 34, correct: 9 }), scope).toThrow(ApiError);
     }
   });
 

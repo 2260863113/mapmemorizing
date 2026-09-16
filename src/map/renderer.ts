@@ -1213,6 +1213,19 @@ export class MapRenderer {
     this.onViewChange?.();
   }
 
+  /**
+   * 手动补发一次「视图已变化」通知。
+   *
+   * 为什么需要它：`setProvinceMode()` 在离开「钻省」状态时会**自己**把 `viewProvince` 清掉并恢复相机
+   * （见它内部的 `else if (this.viewProvince)` 分支），但那条路径**刻意不发** `onViewChange` ——
+   * 否则每个调用点都会连带触发一轮模式刷新与重绘。
+   * 于是"从省级档钻省后返回顶级"这条路上出现过一个实测缺陷：视图确实回去了、事件却没人发，
+   * 侧栏的排行榜就一直停在下钻那个省的榜上。调用方明确知道"这次真的退出了下钻"，用这个方法补发一次。
+   */
+  notifyViewChange() {
+    this.onViewChange?.();
+  }
+
   backToNation() {
     if (this.worldMode) {
       // 世界无下钻概念：回到默认世界视野

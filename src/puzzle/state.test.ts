@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PuzzleState, SLOT_COUNT, SNAP_TOLERANCE_PX, shuffle } from './state';
 import { pairKey } from './adjacency';
+import { SNAP_RELAXED_PX } from './specialUnits';
 import type { PuzzlePieceDef } from './pieces';
 
 /** 造最简碎片：只要 adcode（几何/bbox 由状态机之外的地方使用）。 */
@@ -23,7 +24,7 @@ function makeState(tolerance = 15) {
   const pieces = ['A', 'B', 'C', 'D'].map(piece);
   const adjacency = new Set([pairKey('A', 'B'), pairKey('B', 'C')]);
   // 固定 rng：抽取顺序恒为 A,B,C,D
-  const state = new PuzzleState(pieces, adjacency, tolerance, () => 0.999);
+  const state = new PuzzleState(pieces, adjacency, { basePx: tolerance }, () => 0.999);
   return state;
 }
 
@@ -209,7 +210,7 @@ describe('PuzzleState', () => {
     // 于是它们各自独立成组，直到 C 落进容差里把两块都吸过来。
     const pieces = ['A', 'B', 'C', 'D'].map(piece);
     const adjacency = new Set([pairKey('A', 'C'), pairKey('B', 'C')]);
-    const state = new PuzzleState(pieces, adjacency, 15, () => 0.999);
+    const state = new PuzzleState(pieces, adjacency, { basePx: 15 }, () => 0.999);
     state.start();
     const a = state.take('A')!;
     state.moveGroup(a.id, 0, 0);
@@ -253,7 +254,7 @@ describe('PuzzleState', () => {
   it('全部放下且都在容差内 → 一整块 = 完成', () => {
     const pieces = ['A', 'B', 'C'].map(piece);
     const adjacency = new Set([pairKey('A', 'B'), pairKey('B', 'C')]);
-    const state = new PuzzleState(pieces, adjacency, 15, () => 0.999);
+    const state = new PuzzleState(pieces, adjacency, { basePx: 15 }, () => 0.999);
     state.start();
     for (const adcode of ['A', 'B', 'C']) {
       const group = state.take(adcode)!;
@@ -264,6 +265,139 @@ describe('PuzzleState', () => {
     expect(state.groups[0].pieces).toEqual(['A', 'B', 'C']);
     expect(state.placedCount()).toBe(3);
     expect(state.isComplete()).toBe(true);
+  });
+});
+
+describe('PuzzleState · 困难档对「孤悬/极小」的放宽', () => {
+  /** A(孤悬/极小) 与 B(普通) 相邻。困难档 = 基础 5px + 放宽 15px。 */
+  function hardState(specialAdcodes: string[], extra: string[] = []) {
+    const pieces = ['A', 'B', 'C', ...extra].map(piece);
+    const adjacency = new Set([pairKey('A', 'B'), pairKey('B', 'C')]);
+    return new PuzzleState(
+      pieces,
+      adjacency,
+      {
+        basePx: SNAP_TOLERANCE_PX.hard,
+        relaxedPx: SNAP_RELAXED_PX,
+        isSpecial: (a) => specialAdcodes.includes(a),
+      },
+      () => 0.999,
+    );
+  }
+
+  it('孤悬/极小的片还没成组时放宽到 15px：8px 这种"困难档吸不上"的距离也吸得上', () => {
+    const state = hardState(['A']);
+    state.start();
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 8, 0); // 8px：基础 5px 吸不上，放宽后吸得上
+    expect(state.drop(b.id).mergedGroups).toBe(1);
+  });
+
+  it('取两方中较宽的那个：普通片去够孤悬片也是 15px（另一边是特殊片就算）', () => {
+    const state = new PuzzleState(
+      ['A', 'B', 'C'].map(piece),
+      new Set([pairKey('A', 'B')]),
+      { basePx: SNAP_TOLERANCE_PX.hard, relaxedPx: SNAP_RELAXED_PX, isSpecial: (a) => a === 'A' },
+      () => 0.999,
+    );
+    state.start();
+    const b = state.take('B')!; // 先放普通片
+    state.moveGroup(b.id, 0, 0);
+    state.drop(b.id);
+    const a = state.take('A')!; // 再拖孤悬片过去，差 8px
+    state.moveGroup(a.id, 8, 0);
+    expect(state.drop(a.id).mergedGroups).toBe(1);
+  });
+
+  it('放宽不外溢：两片都是普通片时仍是 5px', () => {
+    const state = new PuzzleState(
+      ['A', 'B', 'C'].map(piece),
+      new Set([pairKey('A', 'B')]),
+      { basePx: SNAP_TOLERANCE_PX.hard, relaxedPx: SNAP_RELAXED_PX, isSpecial: () => false },
+      () => 0.999,
+    );
+    state.start();
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 8, 0);
+    expect(state.drop(b.id).mergedGroups).toBe(0);
+    expect(state.toleranceForPiece('A')).toBe(SNAP_TOLERANCE_PX.hard);
+  });
+
+  it('孤悬片一旦成组就回到 5px（放宽只帮它找到对象，不是整局都松）', () => {
+    const state = hardState(['A'], ['D']);
+    state.start();
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    expect(state.toleranceForPiece('A')).toBe(SNAP_RELAXED_PX); // 还是单片：放宽
+
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 4, 0);
+    state.drop(b.id); // A+B 成组
+    expect(state.toleranceForPiece('A')).toBe(SNAP_TOLERANCE_PX.hard);
+    expect(state.toleranceForPiece('B')).toBe(SNAP_TOLERANCE_PX.hard);
+  });
+
+  it('简单档不放开：relaxedPx 为 null 时就是基础容差', () => {
+    const state = new PuzzleState(
+      ['A', 'B'].map(piece),
+      new Set([pairKey('A', 'B')]),
+      { basePx: SNAP_TOLERANCE_PX.easy, relaxedPx: null, isSpecial: () => true },
+      () => 0.999,
+    );
+    state.start();
+    expect(state.toleranceForPiece('A')).toBe(SNAP_TOLERANCE_PX.easy);
+    const a = state.take('A')!;
+    state.moveGroup(a.id, 0, 0);
+    state.drop(a.id);
+    const b = state.take('B')!;
+    state.moveGroup(b.id, 12, 0); // 12px > 简单档 10px
+    expect(state.drop(b.id).mergedGroups).toBe(0);
+  });
+});
+
+describe('PuzzleState · 卡槽供应顺序', () => {
+  /** A–E 是正常片，X/Y 是「极小」片。 */
+  function tinyState() {
+    const pieces = ['A', 'B', 'C', 'D', 'E', 'X', 'Y'].map(piece);
+    const adjacency = new Set([pairKey('A', 'B')]);
+    return new PuzzleState(
+      pieces,
+      adjacency,
+      { basePx: SNAP_TOLERANCE_PX.easy, isTiny: (a) => a === 'X' || a === 'Y' },
+      () => 0.999,
+    );
+  }
+
+  it('极小片一律排在供应顺序的最后：正常片全出完才轮到它们', () => {
+    const state = tinyState();
+    state.start();
+    const order: string[] = [];
+    while (state.hasUnplaced()) {
+      const next = state.slots[0];
+      order.push(next);
+      state.take(next);
+    }
+    expect(order).toEqual(['A', 'B', 'C', 'D', 'E', 'X', 'Y']);
+    expect(order.slice(-2).sort()).toEqual(['X', 'Y']);
+  });
+
+  it('开局卡槽里只有正常片（只要正常片还有 3 个以上）', () => {
+    const state = tinyState();
+    state.start();
+    expect(state.slots).toEqual(['A', 'B', 'C']);
+  });
+
+  it('没有极小片时顺序与以前一致（默认 isTiny 恒为 false）', () => {
+    const state = makeState();
+    state.start();
+    expect(state.slots).toEqual(['A', 'B', 'C']);
   });
 });
 
