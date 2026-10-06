@@ -114,6 +114,14 @@ const STUB = `(function () {
       visitor: null, bot: false, createdAt: Date.UTC(2026, 8, 16, 12, 10) },
   ];
 
+  // 用户管理（2026-10 需求）：登录**之前**的游客号要显示出来，例：「游客号：1234」。
+  // 三行覆盖三种状态：有编号 / 编号查不到（老账号）/ 管理员且带编号。
+  var USERS = [
+    { id: 9, username: 'newuser', hometown: null, avatar: null, isAdmin: false, createdAt: Date.UTC(2026, 9, 6, 9, 0), visitor: '1234' },
+    { id: 4, username: 'rytll', hometown: null, avatar: null, isAdmin: true, createdAt: Date.UTC(2026, 7, 1, 9, 0), visitor: '4321' },
+    { id: 2, username: 'legacyuser', hometown: null, avatar: null, isAdmin: false, createdAt: Date.UTC(2026, 6, 1, 9, 0), visitor: null },
+  ];
+
   window.__apiCalls = [];
   window.__zeroRange = '';       // 置为某个范围名时，该范围的**访问**统计全为 0（验空态）
   window.__zeroPlayRange = '';   // 同上，作用于**游玩**统计
@@ -124,7 +132,7 @@ const STUB = `(function () {
     if (url.indexOf('/api/announcements') >= 0) return json({ announcements: [] });
     if (url.indexOf('/api/leaderboard') >= 0) return json({ entries: [] });
     if (url.indexOf('/api/board') >= 0) return json({ posts: [] });
-    if (url.indexOf('/api/admin/users') >= 0) return json({ users: [] });
+    if (url.indexOf('/api/admin/users') >= 0) return json({ users: USERS });
     // 注意：/api/admin/plays 必须排在 /api/play 之前（前者包含后者的前缀）
     if (url.indexOf('/api/admin/plays') >= 0) {
       if (url.indexOf('view=stats') >= 0) return json(statsOf(url, window.__zeroPlayRange));
@@ -629,6 +637,25 @@ try {
   const backToLogs = await traffic();
   const playsGone = await plays();
   check('切回日志视图后：日志图表重新挂上、游玩容器不再存在（实例随 DOM 一起销毁）', backToLogs.mounted === true && backToLogs.canvasCount >= 1 && playsGone.rect === null && playsGone.canvasCount === 0, { logs: backToLogs.canvasCount, playsRect: playsGone.rect });
+
+  // ==================== 10. 用户管理：登录前的游客号（2026-10 需求） ====================
+  console.log('\n=== 10. 用户管理：显示登录前的游客号 ===');
+  await clickTab('users');
+  const userRows = await json(`(function () {
+    return Array.prototype.map.call(document.querySelectorAll('.admin-user-row'), function (row) {
+      return {
+        name: (row.querySelector('.admin-user-name') || {}).textContent || '',
+        guest: (row.querySelector('.admin-user-guest') || {}).textContent || '',
+        admin: !!row.querySelector('.admin-badge-admin'),
+        text: row.textContent.replace(/\\s+/g, ' ').trim(),
+      };
+    });
+  })()`);
+  const byName = (n) => userRows.filter((r) => r.name === n)[0] || {};
+  check('用户管理列出三个用户（顺序原样来自服务端）', userRows.length === 3 && userRows.map((r) => r.name).join(',') === 'newuser,rytll,legacyuser', userRows.map((r) => r.name));
+  check('有登录前游客号的用户显示「游客号：1234」', byName('newuser').guest === '游客号：1234', byName('newuser'));
+  check('管理员那一行同样带自己的游客号（「游客号：4321」）', byName('rytll').guest === '游客号：4321' && byName('rytll').admin === true, byName('rytll'));
+  check('查不到编号的老账号整块不渲染（不写「游客号：—」占位）', byName('legacyuser').guest === '' && byName('legacyuser').text.indexOf('游客号') < 0, byName('legacyuser'));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n===== ${results.length - failed.length}/${results.length} 通过 =====`);

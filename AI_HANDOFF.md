@@ -46,15 +46,48 @@
 
 ⚠ 关键设计：**分数是派生值**。存储里只持久化 `correctCount` / `wrongCount`，分数每次读回现算（`loadScoreData` / `normalizeRecord` 都调 `practiceScore`）。所以改分值后**历史数据自动按新口径重算，不需要写迁移** —— 而写那种迁移必然漏掉一部分记录。代价是老用户的颜色会变，这是改规则的应有之义（一次答错现在等于三次答错的代价）。**色阶断点（−10/−5/−1/0/+1/+5/+10）没有改**，用户只要求改分值。
 
+### 3：用户管理显示"登录前的游客号"（用户追加需求）
+
+需求原话：「当用户登录之后，用户详情里面需要显示他登录之前的游客号：例如，游客号：1234」。
+落在**管理端「用户管理」的每一行**（`src/ui/adminPanel.ts#userRow` 里的 `.admin-user-guest` 胶囊；
+文案键 `admin.guestId = "游客号：{id}"`）。
+
+**数据来源**：`functions/api/admin/users.ts` 对每个用户做相关子查询
+
+    (SELECT l.visitor FROM access_logs l
+      WHERE l.user_id = u.id AND l.visitor IS NOT NULL
+      ORDER BY l.created_at ASC LIMIT 1) AS visitor
+
+两个要点：
+
+1. **不去猜"哪个匿名行后来变成了他"** —— 匿名行没有 user_id，无法归属；而游客编号由浏览器本地生成、
+   **登录前后不变**（`src/visitorId.ts`），所以"他自己行上最早的那个编号"就是"登录前那个号"。
+   取**最早**而不是最新：换过浏览器就会有多个编号，最早的才是登录前的身份。
+   `IS NOT NULL` 保证字段上线前的老行不会把真正有编号的行挡掉 —— 这两条都在本地 D1 上用两行数据逐个验证过
+   （早=7777 / 晚=8888 → 取 7777；把早行的编号清空 → 回落 8888；两行都清空 → null）。
+2. **新增索引** `idx_access_logs_user (user_id, created_at)`（migration `2026-10-07-access-logs-user-index.sql`）：
+   没有它，那个相关子查询会对 access_logs **全表扫描**，而 **D1 按读行数计费**，用户越多越贵。
+   复合顺序与 `ORDER BY created_at ASC LIMIT 1` 对齐。线上 `EXPLAIN QUERY PLAN` 已确认
+   `SEARCH l USING INDEX idx_access_logs_user`。
+
+⚠ **已知边界（不是 bug，是数据历史）**：`visitor` 列是上一轮才上线的，所以在那之前访问/注册过的老账号
+查不到编号 —— 线上 19 个真实用户里只有 2 个有（`rytll→5128`、`Nicky→6654`）。管理端对查不到的账号
+**整块不渲染**（不写「游客号：—」占位，避免每一行都堆噪音）。从本轮起新账号会自然带上。
+
+⚠ **需求措辞的一处判断**：「用户详情」实现为**管理端用户管理里的那一行**（那是唯一展示"别人账号详情"的地方）。
+若本意是**登录者自己的用户中心**，只需把 `visitorId()` 直接显示出来即可（客户端本来就有），改动很小。
+
 ### 验收
 
 - `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（1 条**既有** warning `src/testCtx.ts`）+ **59 文件 / 782 用例**。
 - `npm run build` 通过；真实浏览器**七套**验收脚本全绿（363 项断言）：新增 `verify-mobile-gate` **21/21**（CDP 模拟 iPhone UA + 移动端 metrics + 触屏：桌面不弹、手机弹「请用电脑端访问」、首屏即 `width=1280`、点「继续访问」后布局视口与地图画布都是 1280 宽、选择被记住、二次访问不再打扰、手机爬虫不弹），以及 `verify-admin-traffic` 85/85、`verify-round2` 38/38、`verify-round3` 54/54、`verify-naming` 47/47、`verify-drill-scope` 34/34、`verify-puzzle` 84/84。
+  （**后续追加**：修完 1b 与做完 3 之后，`verify-mobile-gate` 涨到 **24/24**、`verify-admin-traffic` 涨到 **89/89**，用例总数 783。）
 - 新增测试：`src/mobileGate.test.ts`（11：内联副本逐字一致 + `isPhoneClient` 三个条件）、`src/storeScore.test.ts`（6：三套熟练度都按新分值 + 存量数据重算）。
 
 ### ⚠ 本轮已知遗留
 
-1. **没有手机版布局，也不打算做** —— 门槛是刻意的替代方案。若将来要做手机版，门槛的判据（`isPhoneClient`）就是现成的开关点。2. 门槛生效期间应用仍在遮罩后面运行（首题已出、计时可能已开始）。键盘已让路（见上），但**触屏点击被遮罩挡住**是唯一保证 —— 若将来给门槛加"关闭(X)"之类会漏出交互入口，需要重新考虑。
+1. **没有手机版布局，也不打算做** —— 门槛是刻意的替代方案。若将来要做手机版，门槛的判据（`isPhoneClient`）就是现成的开关点。
+2. 门槛生效期间应用仍在遮罩后面运行（首题已出、计时可能已开始）。键盘已让路（见上），但**触屏点击被遮罩挡住**是唯一保证 —— 若将来给门槛加"关闭(X)"之类会漏出交互入口，需要重新考虑。
 3. `width=1280` 意味着手机上一屏会缩得比较小（约 0.3 倍），需要双指放大阅读。这是"电脑视图"的固有代价；若嫌小，改 `DESKTOP_VIEWPORT` 一个常量即可（会与 `mobileGate.test.ts` 一起生效）。
 4. 分值改动会让**老用户的熟练度颜色变化**（派生值重算），这是刻意的。
 

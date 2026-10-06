@@ -43,6 +43,8 @@ export interface AdminUser {
   avatar: string | null;
   isAdmin: boolean;
   createdAt: number;
+  /** 这个账号**登录之前**用过的游客编号（4 位数字）；查不到时为 null（老账号/无日志）。 */
+  visitor: string | null;
 }
 
 /** 访问日志条目。 */

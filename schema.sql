@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS access_logs (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at DESC);
+-- 管理端「用户管理」要显示每个账号登录前的游客号：按 (user_id, created_at) 取最早一条 visitor
+-- （见 functions/api/admin/users.ts）。没有这条索引时那个相关子查询会全表扫描，而 D1 按读行数计费。
+CREATE INDEX IF NOT EXISTS idx_access_logs_user ON access_logs(user_id, created_at);
 
 -- 游玩日志表：每次「开始一局」一条（点「开始」或按 Tab 快速重置），供管理端「游玩统计」。
 -- 与 access_logs 分开：访问次数与开始局数是两个口径，混一张表后任一侧加字段都会污染另一侧。

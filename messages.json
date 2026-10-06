@@ -275,6 +275,7 @@
   "admin.loadFailed": "加载失败，请稍后重试",
   "admin.loadMore": "加载更多",
   "admin.roleAdmin": "管理员",
+  "admin.guestId": "游客号：{id}",
   "admin.noStats": "暂无统计数据",
   "admin.noLogs": "暂无访问日志",
   "admin.statsTitle": "访问量统计",

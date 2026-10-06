@@ -1385,6 +1385,18 @@ body.theme-dark .leaderboard-row {
 }
 .admin-user-name { font-weight: 700; color: var(--control-text); font-size: 14px; min-width: 0; }
 .admin-user-loc { color: var(--muted); font-size: 12px; }
+/* 游客号：与"家乡"同属次要信息，但做成小胶囊 —— 它是**身份线索**（拿去和日志里的「游客1234」对照），
+   和纯展示的家乡不同，需要一眼可辨、可选中复制。 */
+.admin-user-guest {
+  padding: 2px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--page-bg);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  user-select: text;
+}
 .admin-user-date { margin-left: auto; color: var(--muted); font-size: 12px; }
 .admin-badge-admin {
   padding: 2px 8px;

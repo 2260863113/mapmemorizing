@@ -1,0 +1,11 @@
+-- 管理端「用户管理」要显示每个账号**登录前**的游客号（2026-10 需求）：
+--   SELECT visitor FROM access_logs WHERE user_id = ? AND visitor IS NOT NULL
+--   ORDER BY created_at ASC LIMIT 1
+-- 这是一个 **每行一个** 的相关子查询（用户数很少），但没有 user_id 索引时它会对 access_logs
+-- 做全表扫描 —— 而 D1 按**读行数**计费，用户越多代价越大。加这条复合索引让它变成索引点查。
+--
+-- 复合顺序 `(user_id, created_at)`：先按 user_id 等值定位，再按 created_at 取最早一条，
+-- 正好与上面的 `ORDER BY created_at ASC LIMIT 1` 对齐（覆盖索引，不需要回表排序）。
+--
+-- `IF NOT EXISTS` 让本文件可以重复执行（与 scripts/db-migrate.mjs 的"已迁移就跳过"一致）。
+CREATE INDEX IF NOT EXISTS idx_access_logs_user ON access_logs(user_id, created_at);

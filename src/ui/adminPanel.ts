@@ -307,11 +307,15 @@ export class AdminPanel {
 
   private userRow(user: AdminUser): string {
     const loc = this.hometownShort(user);
+    // 游客号（2026-10 需求）：让管理员把**这个账号**和**他登录前那个匿名访客**对上号。
+    // 没有编号就整块不渲染 —— 老账号查不到是正常状态，硬写「游客号：—」会在每一行上堆噪音。
+    const guest = user.visitor ? `<span class="admin-user-guest">${escapeHtml(t('admin.guestId', { id: user.visitor }))}</span>` : '';
     return `
       <div class="admin-user-row">
         ${avatarHtml({ username: user.username, avatar: user.avatar })}
         <span class="admin-user-name">${escapeHtml(user.username)}</span>
         ${loc ? `<span class="admin-user-loc">${escapeHtml(loc)}</span>` : ''}
+        ${guest}
         <span class="admin-user-date">${formatDate(user.createdAt)}</span>
         ${user.isAdmin ? `<span class="admin-badge-admin">${t('admin.roleAdmin')}</span>` : ''}
       </div>
