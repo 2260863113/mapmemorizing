@@ -17,6 +17,11 @@
  *
  * 用法：npm run build && node scripts/verify-mobile-gate.mjs
  *      node scripts/verify-mobile-gate.mjs --prod      # 直连线上（https://mapmemory.cn/），跳过本地静态服
+ *
+ * ⚠ `--prod` 需要一条**健康**的链路到 CDN：它要真下载 1.3MB 主包 + 约 1.5MB 数据。
+ *   若主包迟迟下不完，页面会一直停在 `readyState=interactive`、地图画布出不来，
+ *   最后两条"应用按桌面宽度铺开"的断言就会失败 —— 那是链路问题而不是站点问题
+ *   （判断方法：本地跑同一套 `node scripts/verify-mobile-gate.mjs` 是否全绿）。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -122,6 +127,7 @@ try {
         appVisibility: as ? as.visibility : '',
         viewport: meta ? meta.getAttribute('content') : '',
         clientWidth: html.clientWidth,
+        innerWidth: window.innerWidth,
         bodyWidth: document.body.clientWidth,
       };
     })()`);
@@ -171,7 +177,13 @@ try {
   check('桌面 UA 下没有门槛（html.mobile-gate 不存在）', desktop.hasClass === false, desktop.hasClass);
   check('桌面下 #app 正常可见', desktop.appVisibility === 'visible', desktop.appVisibility);
   check('桌面下 viewport 仍是 device-width（没有被改成桌面宽度）', desktop.viewport.includes('device-width'), desktop.viewport);
-  check('桌面下布局视口就是窗口宽度（1440）', desktop.clientWidth === 1440, desktop.clientWidth);
+  // 不用"等于窗口宽 1440"当判据：有没有纵向滚动条会让 clientWidth 差 15px 左右（1440→1425），
+  // 那是环境差异而不是行为差异。真正要断的是「门槛没有把桌面 viewport 改小」。
+  check(
+    '桌面下布局视口就是窗口宽度（不受门槛影响，容许滚动条占位）',
+    Math.abs(desktop.clientWidth - desktop.innerWidth) <= 20 && desktop.clientWidth > 900,
+    { clientWidth: desktop.clientWidth, innerWidth: desktop.innerWidth },
+  );
 
   // ==================== 2. 手机首次访问：门槛在首屏弹出、且已经按电脑视图排版 ====================
   console.log('\n=== 2. 手机首次访问：门槛弹出 + 电脑 viewport + 加载完成前就能点 ===');
