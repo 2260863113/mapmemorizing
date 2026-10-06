@@ -7,7 +7,6 @@ import {
   loadSelfAutoFollow,
   loadSelfErrorRollback,
   loadSelfRequireEnter,
-  SELF_FOLLOW_ZOOM,
   saveSelfAutoFollow,
   saveSelfErrorRollback,
   saveSelfRequireEnter,
@@ -16,6 +15,7 @@ import {
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { modeTitle } from './capabilities';
 import { activeChoiceOf } from './naming';
+import { cityFollowExtraZoom, worldFollowExtraZoom } from './followBonus';
 import { MapQuizMode } from './mapQuizMode';
 import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
@@ -24,15 +24,25 @@ import { showStartCard } from '../ui/dom';
 
 /**
  * 输入模式（BFS 扩张）：
- * - 市级（全国/单省）：随机起点作为当前题目（蓝色）→ 输入名称；答对变绿，下一个题目 = 与上一个绿点相邻的单位（优先同省）；
- *   无相邻候选时回退最近的未测单位（岛屿等）；答错保持红色（错误标记）并继续扩张。
+ * - 市级（全国/单省）：随机起点作为当前题目（蓝色）→ 输入名称；答对变绿、答错标红，随后继续扩张。
+ *   顺序模式下出题走**严格广度优先**（bfsOrder.ts），且**优先选队列里与上一题相邻的地区**
+ *   （2026-09 需求 9）；随机/错题模式各按自己的口径选题。
  * - 省级（全国）：出题池为 34 个省级单元，BFS 在省-省邻接上扩张；省级答题只计入省级熟练度。
  * - 世界（全国）：出题池为 195 个国家单元，BFS 在国家-国家邻接上扩张；国家答题只计入国家熟练度。
+ * - 自动跟随（自由跟随）：出题后镜头聚焦该题，倍率 = 渲染器按省/面积算的基准 + 加成
+ *   （中国地级与世界普通国 +2x，非洲 +6x，2026-09 需求 8；见 followBonus.ts）。
  */
 export class InputMode extends MapQuizMode {
   readonly id: Mode = 'self';
   readonly title = modeTitle('self');
   private lastGreen: string | null = null;
+  /**
+   * 上一个**已作答**的单位（对错都算）——顺序模式「邻接优先」的参考点（2026-09 需求 9）。
+   *
+   * 为什么不用 `lastGreen`：它只在答对时更新，而「跟上一个输入的地区相邻」跟的是**用户刚答完的那题**
+   * ——答错也说明他此刻在那一带，若只在答对时更新，答错后的下一题会突然跳回上一次答对的地方。
+   */
+  private lastAnswered: string | null = null;
   private activeProvince: string | null = null;
   /** BFS 前沿队列（顺序模式）：队首是下一题，队尾是刚发现的邻居。 */
   private bfsQueue: string[] = [];
@@ -97,8 +107,22 @@ export class InputMode extends MapQuizMode {
     };
   }
 
+  /**
+   * 提交答案（按 Enter /「确定」）。
+   *
+   * 2026-09 需求 7：**空输入框按 Enter 也算一次提交**，按答错处理。
+   * 旧实现在这里 `!v.trim()` 早退（"空输入什么都没发生"），用户口径是要它明确地算错：
+   * 按下 Enter 是一个**动作**，动作就该有后果——否则玩家会以为 Enter 坏了（尤其是
+   * 想跳过不认识的地名时，他连点几次都没反应）。答案本身为空串，不参与匹配。
+   *
+   * 注意只改这一处：`onInput`（边打边匹配）仍然要求非空，否则每次清空输入框都会自动判错。
+   */
   onSubmit(v: string) {
-    if (this.paused || this.rollbacking || !this.question || !v.trim()) return;
+    if (this.paused || this.rollbacking || !this.question) return;
+    if (!v.trim()) {
+      this.answer(false, true); // 空 Enter = 明确提交一个空答案，计为答错
+      return;
+    }
     const best = this.matchInput(v);
     this.answer(!!best && best === this.question, true);
   }
@@ -163,11 +187,19 @@ export class InputMode extends MapQuizMode {
   ask(u: Unit) {
     this.question = u.adcode;
     this.refresh();
-    // 省级全国保持全国视野不聚焦；世界全国与世界市级都按面积决定缩放（越小的国家放得越大）；
-    // 其余（中国地级）用固定的 SELF_FOLLOW_ZOOM。
+    // 省级全国保持全国视野不聚焦；世界全国按面积决定缩放、中国地级按省标定阶梯，
+    // 两者再各自加一段**加成**（2026-09 需求 8：统一 +2x，非洲 +6x）。
+    //
+    // ⚠ 这个参数以前传的是「12」而渲染器根本不读它（参数名 `_zoom`），实际倍率是渲染器
+    //   内部按省/按面积算的。现在它是**货真价实的额外加成**：真倍率 = 基准 + extra，由
+    //   渲染器统一夹取（见 renderer.followZoomWithBonus）。
     if (this.autoFollow) {
-      if (this.isWorldNation()) this.ctx.renderer.focusWorldCountry(u.adcode);
-      else if (!this.isProvinceNation()) this.ctx.renderer.focusUnit(u.adcode, SELF_FOLLOW_ZOOM);
+      if (this.isWorldNation()) {
+        const continent = this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent;
+        this.ctx.renderer.focusWorldCountry(u.adcode, worldFollowExtraZoom(continent));
+      } else if (!this.isProvinceNation()) {
+        this.ctx.renderer.focusUnit(u.adcode, cityFollowExtraZoom());
+      }
     }
     this.ctx.search.clear();
     this.ctx.search.focus();
@@ -237,6 +269,7 @@ export class InputMode extends MapQuizMode {
 
   protected resetSessionSpecific() {
     this.lastGreen = null;
+    this.lastAnswered = null;
     this.activeProvince = this.scopeProvince;
     this.bfsQueue = [];
     this.bfsDomain = '';
@@ -245,7 +278,17 @@ export class InputMode extends MapQuizMode {
   protected onEntered() { this.ctx.search.clear(); }
   protected onScopeChanged() { this.activeProvince = this.scopeProvince; this.bfsQueue = []; this.bfsDomain = ''; }
   protected onDrill(provinceAdcode: string) { this.activeProvince = provinceAdcode; this.bfsQueue = []; this.bfsDomain = ''; }
-  protected onAnswerStart() { this.ctx.showTimer(null); }
+  /**
+   * 作答开始（`answer()` 第一步就打这里，此时 `this.question` 仍是刚答的那道题）：
+   * 记下「上一个已作答单位」供**邻接优先**使用（2026-09 需求 9）。
+   *
+   * 放在这里而不是 `onCorrect` 里：对错都要更新（见 lastAnswered 的说明），
+   * 而且这一处天然在判题**之前**——不会因为"先算对错、再忘了记"而漏更新。
+   */
+  protected onAnswerStart() {
+    this.lastAnswered = this.question;
+    this.ctx.showTimer(null);
+  }
   protected onCorrect(q: string) { this.lastGreen = q; }
   protected onRollbackRestored() { this.ctx.search.clear(); this.ctx.search.focus(); }
   protected onPause() { this.ctx.showTimer(null); }
@@ -261,6 +304,8 @@ export class InputMode extends MapQuizMode {
   protected persistExtra(): Record<string, unknown> {
     return {
       lastGreen: this.lastGreen,
+      // 邻接优先的参考点一并持久化：刷新后「上一题是谁」不丢，下一题不会突然跳走
+      lastAnswered: this.lastAnswered,
       activeProvince: this.activeProvince,
       wrongToastShown: this.wrongOrder.toastShown,
       // BFS 队列一并持久化：刷新后继续按同一顺序出题，而不是重新播种
@@ -270,6 +315,7 @@ export class InputMode extends MapQuizMode {
   }
   protected restoreSessionSpecific(record: Record<string, unknown>) {
     this.lastGreen = typeof record.lastGreen === 'string' && this.green.has(record.lastGreen) ? record.lastGreen : null;
+    this.lastAnswered = typeof record.lastAnswered === 'string' ? record.lastAnswered : null;
     this.activeProvince = typeof record.activeProvince === 'string' ? record.activeProvince : this.scopeProvince;
     // 旧存档没有这两个字段 → 空队列，bfsNext 会按 lastGreen 重新播种，不会出错
     this.bfsQueue = Array.isArray(record.bfsQueue) ? record.bfsQueue.filter((x): x is string => typeof x === 'string') : [];
@@ -281,8 +327,9 @@ export class InputMode extends MapQuizMode {
   /**
    * 顺序模式出题：**严格广度优先**（实现与「不可能出现空洞」的论证见 bfsOrder.ts）。
    *
-   * 这里只负责按分支选定「池」与「BFS 域」，真正的排队逻辑在纯函数 bfsStep 里
-   * （抽出去是为了让那条性质可被单测断言）。
+   * 2026-09 需求 9：在同一层里**优先选与上一题相邻的地区**（lastAnswered =
+   * 「上一个已作答单位」，对错都更新）。真正的挑选逻辑在纯函数 bfsStep 里，
+   * 这里只负责按分支选定「池」与「BFS 域」，并把参考点传下去。
    */
   private bfsNext(domain: string, pool: Unit[], seedRef: [number, number]): Unit {
     // 换域（世界 / 省级全国 / 某一个省）就丢弃旧队列：不同域的邻接图不可混用
@@ -298,6 +345,9 @@ export class InputMode extends MapQuizMode {
       queue: this.bfsQueue,
       seedRef,
       centerOf: (id) => byAdcode.get(id)?.center ?? seedRef,
+      // 邻接优先的参考点：注意即使 lastAnswered 已被换范围切出本池，neighborsOf(lastId)
+      // 仍能给出邻接关系（这正是「队列里有它的邻居就优先」需要的语义），bfsStep 只在队列里挑。
+      lastId: this.lastAnswered,
     });
     this.bfsQueue = step.queue;
     const u = step.next ? byAdcode.get(step.next) : undefined;
@@ -354,6 +404,8 @@ export class InputMode extends MapQuizMode {
     return {
       get lastGreen() { return self.lastGreen; },
       set lastGreen(v: string | null) { self.lastGreen = v; },
+      get lastAnswered() { return self.lastAnswered; },
+      set lastAnswered(v: string | null) { self.lastAnswered = v; },
       get bfsQueue() { return self.bfsQueue; },
       set bfsQueue(v: string[]) { self.bfsQueue = v; },
       get bfsDomain() { return self.bfsDomain; },

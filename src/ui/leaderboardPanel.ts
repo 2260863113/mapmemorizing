@@ -5,7 +5,6 @@ import { normalize, normalizeProvince } from '../matcher';
 import { avatarHtml } from './avatar';
 import { escapeHtml } from './html';
 import type { AppData } from '../types';
-import { isWorldScope } from '../province';
 import { t } from '../i18n';
 
 /** 侧栏：按当前测试模式和范围展示云端共享排行榜。 */
@@ -33,7 +32,7 @@ export class LeaderboardPanel {
     const seq = ++this.renderSeq;
     const title = t('leaderboard.title', { mode: modeLabel(mode), scope: scopeLabel });
     const cached = this.store.peek(mode, scopeProvince);
-    if (cached) this.render(title, cached.slice(0, 10), scopeProvince);
+    if (cached) this.render(title, cached.slice(0, 10));
     else this.renderLoading(title);
 
     let rows: LeaderboardEntry[];
@@ -42,15 +41,15 @@ export class LeaderboardPanel {
     } catch {
       if (seq !== this.renderSeq) return; // 已过期，丢弃
       // 后台刷新失败时，有快照就静默保留旧数据（把已有内容顶成错误页是净损失）。
-      if (cached) this.render(title, cached.slice(0, 10), scopeProvince);
+      if (cached) this.render(title, cached.slice(0, 10));
       else this.renderError(title);
       return;
     }
     if (seq !== this.renderSeq) return; // 已过期，丢弃
-    this.render(title, rows.slice(0, 10), scopeProvince);
+    this.render(title, rows.slice(0, 10));
   }
 
-  private render(title: string, rows: LeaderboardEntry[], scopeProvince: string | null) {
+  private render(title: string, rows: LeaderboardEntry[]) {
     if (!rows.length) {
       this.el.innerHTML = `<div class="leaderboard-title">${escapeHtml(title)}</div><div class="leaderboard-empty">${t('leaderboard.empty')}</div>`;
       return;
@@ -64,7 +63,7 @@ export class LeaderboardPanel {
         const locHtml = `<span class="leaderboard-loc">${escapeHtml(loc)}</span>`;
         const avatar = avatarHtml({ username: entry.username, avatar: entry.avatar });
         // 头像与用户名之间隔一个空格
-        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${avatar} ${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry, scopeProvince)}</span></div>`;
+        return `<div class="leaderboard-row${medalClass}"><span class="leaderboard-rank">${rank}.</span><span class="leaderboard-user">${avatar} ${escapeHtml(entry.username)}</span>${locHtml}<span class="leaderboard-time">${metaText(entry)}</span></div>`;
       })
       .join('')}</div>`;
   }
@@ -93,8 +92,15 @@ export class LeaderboardPanel {
   }
 }
 
-/** 行尾信息：endless 显示金币+关卡；拼图显示「已拼 X/Y ｜ 用时」；全国语义榜显示题数+时间，省级榜仅时间。 */
-function metaText(entry: LeaderboardEntry, scopeProvince: string | null) {
+/**
+ * 行尾信息：endless 显示金币+关卡；拼图显示「已拼 X/Y ｜ 用时」；
+ * 其余 self/click 榜（**不分范围**）一律显示「答对 X ｜ 用时」。
+ *
+ * 为什么省级/单省榜也从「只用时」改成与全国榜同款：本轮排名规则统一为
+ * 「先比答对个数、再比用时」，若省级榜只显示用时，用户会以为省级榜还在比谁快 ——
+ * 展示口径必须跟着排序口径走，否则规则看不见。
+ */
+function metaText(entry: LeaderboardEntry) {
   if (entry.mode === 'endless') {
     return t('leaderboard.endlessMeta', { coins: formatCoins(entry.coins ?? 0), level: entry.level ?? 1 });
   }
@@ -105,11 +111,7 @@ function metaText(entry: LeaderboardEntry, scopeProvince: string | null) {
       time: formatElapsedCentiseconds(entry.elapsedMs),
     });
   }
-  // 全国语义榜（市级全国 null / 世界全国 / 大洲榜 / 次区域榜哨兵）显示题数+时间，省级榜仅时间。
-  if (scopeProvince === null || isWorldScope(scopeProvince)) {
-    return t('leaderboard.nationMeta', { correct: entry.correct, time: formatElapsedCentiseconds(entry.elapsedMs) });
-  }
-  return formatElapsedCentiseconds(entry.elapsedMs);
+  return t('leaderboard.nationMeta', { correct: entry.correct, time: formatElapsedCentiseconds(entry.elapsedMs) });
 }
 
 function formatCoins(n: number) {

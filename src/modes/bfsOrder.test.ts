@@ -189,8 +189,7 @@ describe('bfsStep（顺序模式的严格广度优先）', () => {
   });
 });
 
-describe('真实数据：世界国家邻接图上的 BFS', () => {
-  const countries = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/data/countries.json'), 'utf8')).countries as {
+describe('真实数据：世界国家邻接图上的 BFS', () => {  const countries = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/data/countries.json'), 'utf8')).countries as {
     iso: string;
     center: [number, number];
     neighbors: string[];
@@ -230,5 +229,199 @@ describe('真实数据：世界国家邻接图上的 BFS', () => {
     expect(order).toHaveLength(194);
     expect(new Set(order).size).toBe(194);
     expect(order[0]).toBe('CHN');
+  });
+
+  it('邻接优先（lastId）在真实邻接图上同样无空洞、不重复、只出池内单位', () => {
+    const ids = countries.map((c) => c.iso);
+    const byIso = new Map(countries.map((c) => [c.iso, c]));
+    const neighborsOf = (id: string) => byIso.get(id)?.neighbors ?? [];
+    const centerOf = (id: string) => byIso.get(id)?.center ?? [0, 0];
+
+    const done = new Set<string>();
+    let queue: string[] = ['CHN'];
+    const order: string[] = [];
+    let adjacentHits = 0;
+    let lastAnswered: string | null = null;
+    for (let i = 0; i < ids.length + 5; i++) {
+      // 「邻接优先」的**精确**性质：只要队列里存在与上一题相邻的节点，选出来的下一题就必须与上一题相邻
+      const hadAdjacent = lastAnswered
+        ? queue.some((id) => neighborsOf(lastAnswered as string).includes(id))
+        : false;
+      const step = bfsStep({
+        ids,
+        neighborsOf,
+        isDone: (x) => done.has(x),
+        queue,
+        seedRef: centerOf('CHN'),
+        centerOf,
+        lastId: lastAnswered,
+      });
+      if (!step.next) break;
+      if (lastAnswered && neighborsOf(lastAnswered).includes(step.next)) adjacentHits += 1;
+      if (hadAdjacent && lastAnswered) {
+        expect(
+          neighborsOf(lastAnswered).includes(step.next),
+          `队列里有 ${lastAnswered} 的邻居，却出了 ${step.next}`,
+        ).toBe(true);
+      }
+      queue = step.queue;
+      done.add(step.next);
+      order.push(step.next);
+      lastAnswered = step.next;
+      // 「无空洞」的直接判据：没有哪个未作答、也不在前沿的节点，其邻居全都已作答
+      const frontier = new Set(queue);
+      for (const id of ids) {
+        if (done.has(id) || frontier.has(id)) continue;
+        const nbs = neighborsOf(id);
+        if (nbs.length && nbs.every((x) => done.has(x))) {
+          throw new Error(`${step.next} 这一步出现空洞：${id}`);
+        }
+      }
+    }
+    expect(order).toHaveLength(194);
+    expect(new Set(order).size).toBe(194);
+    // 邻接优先确实生效（否则这条需求等于没实现）；具体命中率由数据决定，不断言数值
+    expect(adjacentHits).toBeGreaterThan(100);
+  });
+});
+
+/**
+ * 邻接优先（2026-09 需求 9）的行为约束。
+ *
+ * 用户口径：顺序模式**除了广度优先，还要优先选队列中与上一个输入地区相邻的那个**。
+ * 这里逐条锁住「怎么选」以及「这么选仍然不出现空洞」。
+ */
+describe('bfsStep · 邻接优先（lastId）', () => {
+  /** 链式图 p—q—r—s—t：邻接关系即左右相邻。 */
+  const chain = ['p', 'q', 'r', 's', 't'];
+  const chainNeighbors = (id: string) => {
+    const i = chain.indexOf(id);
+    return [chain[i - 1], chain[i + 1]].filter((x) => x !== undefined);
+  };
+  const chainCenter = (id: string) => [chain.indexOf(id), 0] as [number, number];
+
+  it('队列里存在与 lastId 相邻的节点时，选它而不是队首', () => {
+    // 队首 p 与 lastId=r 不相邻；q 与 r 相邻 → 应选 q（队列顺序里第一个命中的）
+    const step = bfsStep({
+      ids: chain,
+      neighborsOf: chainNeighbors,
+      isDone: (id) => id === 'r', // r 刚答完（对错都算：这里就是"已作答"）
+      queue: ['p', 'q', 's'],
+      seedRef: [0, 0],
+      centerOf: chainCenter,
+      lastId: 'r',
+    });
+    expect(step.next).toBe('q');
+    // 未选中的元素留在队列里、顺序不变；s 仍在，p 也仍在
+    expect(step.queue).toEqual(['p', 's']);
+  });
+
+  it('多个相邻节点都在队列里时，取队列顺序里第一个（不是离得最近的、也不是最后一个）', () => {
+    // lastId=r 的邻居是 q/s；队列 [s, p, q] → 取 s（队序第一），不是队首？这里 s 恰好是队首，换个队列：
+    const step = bfsStep({
+      ids: chain,
+      neighborsOf: chainNeighbors,
+      isDone: (id) => id === 'r',
+      queue: ['p', 's', 'q'],
+      seedRef: [0, 0],
+      centerOf: chainCenter,
+      lastId: 'r',
+    });
+    expect(step.next).toBe('s');
+    // 未选中的 p/q 留下；s 的未作答邻居 t 照常压入队尾
+    expect(step.queue).toEqual(['p', 'q', 't']);
+  });
+
+  it('不存在相邻节点时回退队首（不报错、不空转）', () => {
+    const step = bfsStep({
+      ids: chain,
+      neighborsOf: chainNeighbors,
+      isDone: (id) => id === 't',
+      queue: ['p', 'q', 'r'],
+      seedRef: [0, 0],
+      centerOf: chainCenter,
+      lastId: 't', // t 的邻居 s 不在队列里（也不在池外的队列中）
+    });
+    expect(step.next).toBe('p');
+  });
+
+  it('lastId 为 null/undefined 时与旧行为逐字一致（取队首）', () => {
+    const base = {
+      ids: chain,
+      neighborsOf: chainNeighbors,
+      isDone: (id: string) => id === 'r',
+      queue: ['p', 'q', 's'],
+      seedRef: [0, 0] as [number, number],
+      centerOf: chainCenter,
+    };
+    expect(bfsStep({ ...base, lastId: null }).next).toBe('p');
+    expect(bfsStep({ ...base, lastId: undefined }).next).toBe('p');
+  });
+
+  it('lastId 是**已作答**（可能是答错）的单位也照样生效：邻接优先看的是"刚答过哪题"', () => {
+    // 同一队列、同一个 lastId：答对与答错在这层的输入完全相同（isDone 都是 true），选择必须一致
+    const run = (answered: boolean) =>
+      bfsStep({
+        ids: chain,
+        neighborsOf: chainNeighbors,
+        isDone: (id) => id === 'r' && answered,
+        queue: ['p', 'q', 's'],
+        seedRef: [0, 0],
+        centerOf: chainCenter,
+        lastId: 'r',
+      }).next;
+    expect(run(true)).toBe('q');
+    // 答错时 lastAnswered 也更新（见 InputMode.onAnswerStart），故同样能命中邻接优先
+    expect(run(true)).toBe(run(false));
+  });
+
+  it('邻接优先不破坏「无空洞」：每个未作答节点要么在队列里、要么与已作答集合不连通', () => {
+    for (const n of [5, 8, 12]) {
+      const { ids, neighborsOf, centerOf } = grid(n);
+      const done = new Set<string>();
+      let queue: string[] = ['0,0'];
+      let lastAnswered: string | null = null;
+      const emitted: string[] = [];
+      for (let i = 0; i < ids.length + 5; i++) {
+        const step = bfsStep({ ids, neighborsOf, isDone: (x) => done.has(x), queue, seedRef: [0, 0], centerOf, lastId: lastAnswered });
+        if (!step.next) break;
+        queue = step.queue;
+        done.add(step.next);
+        emitted.push(step.next);
+
+        const frontier = new Set(queue);
+        const answered = new Set(emitted);
+        for (const id of ids) {
+          if (answered.has(id)) continue;
+          if (frontier.has(id)) continue;
+          // 不在前沿的未作答节点：与已作答集合必须**不连通**（它的任何邻居都没被作答）
+          expect(
+            neighborsOf(id).some((nb) => answered.has(nb)),
+            `${n}×${n}：${id} 已作答邻居存在却不在前沿（空洞）`,
+          ).toBe(false);
+        }
+        lastAnswered = step.next;
+      }
+      expect(emitted).toHaveLength(n * n);
+      expect(new Set(emitted).size).toBe(n * n);
+    }
+  });
+
+  it('邻接优先不改变「无重复出题」与「池外邻居被忽略」两条既有性质', () => {
+    const { ids, neighborsOf, centerOf } = grid(6);
+    const done = new Set<string>();
+    let queue: string[] = ['0,0'];
+    let lastAnswered: string | null = null;
+    const emitted: string[] = [];
+    for (let i = 0; i < ids.length + 5; i++) {
+      const step = bfsStep({ ids, neighborsOf, isDone: (x) => done.has(x), queue, seedRef: [0, 0], centerOf, lastId: lastAnswered });
+      if (!step.next) break;
+      queue = step.queue;
+      done.add(step.next);
+      emitted.push(step.next);
+      lastAnswered = step.next;
+    }
+    expect(new Set(emitted).size).toBe(emitted.length);
+    expect(emitted).toHaveLength(36);
   });
 });

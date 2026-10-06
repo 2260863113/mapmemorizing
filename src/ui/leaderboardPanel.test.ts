@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { LeaderboardPanel } from './leaderboardPanel';
 import { makeAppData } from '../testFixture';
+import { formatElapsedCentiseconds } from './format';
+import { t } from '../i18n';
 import type { LeaderboardEntry, LeaderboardStore } from '../leaderboardStore';
 
 /**
@@ -163,5 +165,52 @@ describe('LeaderboardPanel · 范围切换时的渲染', () => {
     await panel.refresh('puzzle', '__province_nation__', '省级全国');
     expect(container.innerHTML).toContain('拼图模式 省级全国排行榜');
     expect(container.innerHTML).toContain('暂无成绩');
+  });
+});
+
+/**
+ * 行尾信息口径（2026-09：排名规则统一为「先比答对个数、再比用时」）。
+ *
+ * 展示必须跟着排序走：省级/单省榜原先只显示用时，用户看不出这一档也在比答对个数，
+ * 会以为省级榜还在比谁快。这里按「文案键 + 参数」断言而不是按字面文案，
+ * 这样文案本身（lead 拥有的 messages.json）怎么措辞都不会让口径回归的守卫失效。
+ */
+describe('LeaderboardPanel · 行尾信息', () => {
+  const TIME = formatElapsedCentiseconds(65_000); // 01:05.00
+  const row = (over: Partial<LeaderboardEntry>): LeaderboardEntry => ({ ...entry('linhao'), ...over });
+
+  it('省级/单省榜也显示「答对 X ｜ 用时」，不再只有用时', async () => {
+    const store = new FakeStore();
+    store.queue.push(() => Promise.resolve([row({ scopeProvince: '440000', scopeLabel: '广东' })]));
+    const panel = makePanel(store);
+
+    await panel.refresh('click', '440000', '广东');
+    expect(container.innerHTML).toContain(t('leaderboard.nationMeta', { correct: 12, time: TIME }));
+    // 旧口径下这里渲染的是赤裸的用时（`leaderboard-time">01:05.00<`），必须不复现
+    expect(container.innerHTML).not.toMatch(/leaderboard-time">\d{2}:\d{2}\.\d{2}</);
+  });
+
+  it('全国 / 世界榜同样显示「答对 X ｜ 用时」', async () => {
+    for (const [scope, label] of [[null, '全国'], ['__world_nation__', '世界']] as const) {
+      const store = new FakeStore();
+      store.queue.push(() => Promise.resolve([row({ scopeProvince: scope, scopeLabel: label })]));
+      const panel = makePanel(store);
+
+      await panel.refresh('click', scope, label);
+      expect(container.innerHTML, label).toContain(t('leaderboard.nationMeta', { correct: 12, time: TIME }));
+    }
+  });
+
+  it('endless / puzzle 两支展示不变', async () => {
+    const endlessStore = new FakeStore();
+    endlessStore.queue.push(() => Promise.resolve([row({ mode: 'endless', coins: 999, level: 7 })]));
+    await makePanel(endlessStore).refresh('endless', null, '全国');
+    expect(container.innerHTML).toContain(t('leaderboard.endlessMeta', { coins: 999, level: 7 }));
+    expect(container.innerHTML).not.toContain(t('leaderboard.nationMeta', { correct: 12, time: TIME }));
+
+    const puzzleStore = new FakeStore();
+    puzzleStore.queue.push(() => Promise.resolve([row({ mode: 'puzzle', correct: 12, totalUnits: 340 })]));
+    await makePanel(puzzleStore).refresh('puzzle', null, '全国');
+    expect(container.innerHTML).toContain(t('leaderboard.puzzleMeta', { placed: 12, total: 340, time: TIME }));
   });
 });

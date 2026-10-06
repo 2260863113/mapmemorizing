@@ -9,6 +9,7 @@ import {
   isAnalysisMode,
   isLeaderboardMode,
   isNonMapMode,
+  isTimedTestMode,
   isTwoPhaseMode,
   modeTitle,
   usesSettlementCard,
@@ -43,11 +44,15 @@ import { AnnouncementStore } from './announcementStore';
 import { AnnouncementPanel } from './ui/announcementPanel';
 import { IntroCard } from './ui/introCard';
 import { api } from './api';
+import { collectClientEnv } from './clientEnv';
+import { reportPlay } from './playLogger';
+import { labelOverride, setLabelOverride } from './map/labelVisibility';
 import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
 import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
 import { applyIgnoreTiny, ensureTinyCountries, ignoredIsos, loadTinyCountries } from './tinyCountries';
 import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
+import type { PlaySource } from './api';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode, QuestionNaming } from './modes/types';
 import type { AppDiagnostics } from './appDiagnostics';
 
@@ -203,6 +208,8 @@ export class AppController {
       syncChrome: () => this.syncModeChrome(),
       randomUnit: (pool: Unit[]) => pool[Math.floor(Math.random() * pool.length)],
       setTestRunning: (running: boolean) => this.setTestRunning(running),
+      // Alt 热切换的会话级覆盖读数（见 map/labelVisibility.ts）：模式侧读它决定要不要画全量地名
+      labelsOverride: () => labelOverride(),
     };
   }
 
@@ -266,7 +273,9 @@ export class AppController {
   /** 启动：后台会话恢复、访问日志、公告/管理员/介绍卡片入口，再接线 DOM 并进入默认模式。 */
   start() {
     void this.authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
-    void api.visit(this.authStore.sessionToken() ?? undefined).catch(() => {});
+    // 访问日志带**完整浏览器环境**（需求 3）：UA 可伪造、且不含屏幕/时区/核心数，
+    // 而管理端「日志记录」要按这些事实判爬虫。collectClientEnv 永不抛错，读不到的字段直接省略。
+    void api.visit(this.authStore.sessionToken() ?? undefined, collectClientEnv()).catch(() => {});
     $('btn-announcement').addEventListener('click', () => void this.announcementPanel.open());
     this.authPanel.onAdminAction = (view) => {
       this.adminMode.setView(view);
@@ -532,14 +541,25 @@ export class AppController {
     this.scoreSubmitter.submit(result, onDone);
   }
 
-  /** 无法提交时的提示文案（按模式区分）。 */
+  /**
+   * 无法提交时的提示文案（按模式区分）。
+   *
+   * 口径（2026-09）：**所有排行榜都允许未全对提交**，排序先比答对个数再比用时，
+   * 故这里只剩「一题都没答」这一种拦截（省级榜不再要求全对）。
+   */
   private rejectToast(result: RoundResult) {
     if (result.mode === 'endless') return t('main.rejectEndless');
     if (result.mode === 'puzzle') return t('main.rejectPuzzle');
-    return t('main.rejectNotAllCorrect');
+    return t('main.rejectNoAnswer');
   }
 
-  /** 提交资格：endless 需有金币；全国 self/click 允许未答完（已答全对即可）；省级维持全对。 */
+  /**
+   * 提交资格（唯一口径在 `scoreRules.canSubmitScore`）。
+   *
+   * 2026-09 本轮口径：**所有 self/click 榜都放开**，只要至少答过一题就能提交；
+   * 排名先比答对个数、再比用时。故这里不再有"省级必须全对"之类的前端附加条件 ——
+   * 前端只做转发，服务端与排行榜按同一份规则处理。
+   */
   private canSubmit(result: RoundResult) {
     return canSubmitScore(result);
   }
@@ -655,6 +675,7 @@ export class AppController {
     this.wireSettings();
     this.wireTestControls();
     this.wireStartActionLock();
+    this.wireKeyboard();
     this.wireSearch();
   }
 
@@ -869,8 +890,18 @@ export class AppController {
   /**
    * 「重置」确认后真正执行：可提交的范围先弹结算卡片，否则走模式自己的重置。
    * 从 39 行的内联 handler 里抽出来 —— 那是唯一一处把业务判断混进 DOM 接线的地方。
+   *
+   * 每次真正执行（即 `confirmAction` 的二次确认之后）**额外弹一条**「按下 tab 快速重置」
+   * （2026-09 需求 1）：重置是"慢路"，Tab 是"快路"，提示放在用户刚做完慢动作的时刻最有用。
+   * 放在函数最前面 —— 结算卡片分支、拼图分支、模式直接重置分支与熟练度分析分支全都经过这里，
+   * 一处覆盖全部按下重置的路径（结算卡片那条也算"按下了重置"，见需求口径）。
    */
   private onResetClicked() {
+    // 提示只在 Tab 真的能重开的模式里给（计时测验 / 两阶段）。熟练度分析的按钮是「重置熟练度」，
+    // 那个模式没有 quickRestart：给出「按下 tab 快速重置」既是错的，也会把紧随其后的
+    // 「已重置熟练度」顶掉（toast 只有一个元素，后写的覆盖先写的）。
+    const resetMode = this.current?.id;
+    if (isTimedTestMode(resetMode) || isTwoPhaseMode(resetMode)) toast(t('main.tabQuickResetHint'));
     if (this.current?.isPaused()) this.hidePauseOverlay();
 
     if (isAnalysisMode(this.current?.id)) {
@@ -916,14 +947,166 @@ export class AppController {
   }
 
   /**
+   * 上报一次「游玩开始」（管理端游玩统计按 source 区分两类来源）。
+   *
+   * 只有两个调用点，且**各自只上报一次**：
+   *   · `.start-action` 点击 → `source: 'start'`；
+   *   · Tab 即时重开 → `source: 'tab'`。
+   * 两者互斥的原因见 `wireStartActionLock` 与 `handleTabRestart` 的注释
+   * （Tab 路径不派发 click，click 路径也不经过键盘 handler）。
+   */
+  private reportPlayStart(source: PlaySource) {
+    const mode = this.current?.id;
+    if (!mode) return;
+    reportPlay(mode, source, this.authStore.sessionToken() ?? undefined);
+  }
+
+  /**
    * 「开始」按钮不经过 `switchMode`，所以「开始后锁定分段按钮」需要在这里补一次同步。
    * 用委托而非逐按钮接线：开始卡片是被模式动态重建的。
+   *
+   * 同一个委托顺带做**游玩上报**（`source: 'start'`）：
+   *   · 为什么用**冒泡**阶段：开始按钮的 onclick 挂在按钮自身，冒泡到 document 时它已经执行完，
+   *     于是可以 `isStarted()` 过滤掉「点了但没开起来」（例如模式正在暂停态）的情形，
+   *     只在真的开局后才记一条；
+   *   · 为什么不会与 Tab 重复：Tab 走 `quickRestart()`，从不派发 `.start-action` 的 click，
+   *     它只在键盘 handler 里上报 `source: 'tab'` —— 两条路径各上报一次、互不重叠。
+   *   · 为什么不会漏：四个有开始卡片的模式都通过 `ui/dom.showStartCard` 生成按钮（类名固定
+   *     `start-action`），新增模式只要用同一个骨架就自动被覆盖。
    */
   private wireStartActionLock() {
     document.addEventListener('click', (event) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest?.('.start-action')) this.syncSegments();
+      if (!target?.closest?.('.start-action')) return;
+      this.syncSegments();
+      if (this.current?.isStarted()) this.reportPlayStart('start');
     });
+  }
+
+  // ==================== 全局键盘：Tab 重开 / 空格暂停 / Alt 标签热切换 ====================
+
+  /**
+   * 全局键盘接线（2026-09 需求 1/6）。
+   *
+   * 挂在 `document` 而不是某个容器上：焦点常在搜索框、按钮，或**什么都没有**（点过地图空白后
+   * 焦点就在 body）——绑到地图容器会漏掉最常见的那种情形。
+   */
+  private wireKeyboard() {
+    document.addEventListener('keydown', (event) => this.onGlobalKeyDown(event));
+  }
+
+  /**
+   * 键盘总入口：三条守卫保证"只在该管的时候管"。
+   *   1. **非地图模式**（留言板/管理端）完全不抢键；
+   *   2. 事件目标落在 `#app` 之外时不管 —— 但 `body`/`documentElement` 例外：它们代表
+   *      "当前没有具体元素获得焦点"（点过地图空白就是这种），按页面级处理；否则 Tab 会时灵时不灵；
+   *   3. 已被别的 handler 处理过（`defaultPrevented`）时不再插手。
+   */
+  private onGlobalKeyDown(event: KeyboardEvent) {
+    if (isNonMapMode(this.current?.id)) return;
+    if (event.defaultPrevented) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target && target !== document.body && !$('app').contains(target)) return;
+    if (event.key === 'Tab') this.handleTabRestart(event);
+    else if (event.key === ' ') this.handleSpacePause(event);
+    else if (event.key === 'Alt') this.handleLabelToggle(event);
+  }
+
+  /**
+   * 设置浮层（全局设置 / 每模式设置）是否打开。
+   *
+   * 打开时 Tab 与空格的**游戏语义让路**：那两个面板里全是表单控件（下拉、复选框、关闭按钮），
+   * 此时 Tab 是"跳到下一个字段"、空格是"勾选/取消"——若照样拿去重开/暂停，
+   * 用户正在改的设置会被突然复位。地图上的其它浮层（结算卡片、完成卡片）**不在**此列：
+   * 在结算卡片上按 Tab 重开正是需求要支持的路径。
+   */
+  private settingsOverlayOpen(): boolean {
+    return !$('settings-panel').classList.contains('hidden') || !$('mode-settings-panel').classList.contains('hidden');
+  }
+
+  /**
+   * Tab：**即时重开**（需求 1）。仅计时测验（输入/点击/无尽）与两阶段（拼图）生效 ——
+   * 熟练度分析没有「开始」概念，Tab 在它里面保持浏览器默认行为（切换焦点）。
+   *
+   * 两个阶段都生效：开始卡片阶段按 Tab = 用当前范围直接开一局（"立刻重新即开始"），
+   * 进行中按 Tab = 丢掉这一局重开（**不提交成绩**、不弹结算卡片）。
+   */
+  private handleTabRestart(event: KeyboardEvent) {
+    const mode = this.current?.id;
+    if (!isTimedTestMode(mode) && !isTwoPhaseMode(mode)) return;
+    // 带修饰键的 Tab（Alt+Tab 切窗口、Ctrl+Tab / Cmd+Tab 切标签页、Shift+Tab 反向切焦点）
+    // 不是"重开"，交还系统 —— Shift+Tab 尤其重要：它是键盘用户往回退格焦点的常规手段。
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (this.settingsOverlayOpen()) return; // 正在设置面板里 Tab 走字段：别把测试重开
+    event.preventDefault(); // 阻止焦点跳到下一个控件（否则按一次 Tab 焦点乱跑）
+    hideSummary();
+    hideSettlement();
+    this.hidePauseOverlay();
+    if (this.current?.quickRestart?.() !== true) return;
+    this.reportPlayStart('tab'); // 只有真的开起来了才上报（见 quickRestart 的返回值说明）
+    this.syncModeChrome();
+    this.syncPauseOverlay();
+    this.updateProgress();
+    void this.refreshSidePanel();
+  }
+
+  /**
+   * 空格：游玩过程中**暂停 / 取消暂停**（需求 6）。未开始时不管（空格照旧滚动页面）。
+   *
+   * 关键反例：世界档要输入 "United States"、"Côte d'Ivoire" 这类**带空格**的地名。
+   * 若一律把空格当暂停，用户永远打不出完整名字；故焦点在文本输入里且**已经打了字**时，
+   * 空格属于用户输入（不 preventDefault、不暂停）。空输入框上的空格才当暂停。
+   */
+  private handleSpacePause(event: KeyboardEvent) {
+    if (event.repeat) return; // 长按空格不要反复暂停/恢复
+    const current = this.current;
+    if (!current?.isStarted()) return;
+    if (this.settingsOverlayOpen()) return; // 设置面板里的空格属于表单（勾选复选框/滚动列表）
+    if (this.isTypingNonEmptyText()) return;
+    event.preventDefault(); // 阻止页面滚动（空格的默认行为是翻页）
+    if (current.isPaused()) current.resume();
+    else current.pause();
+    this.syncPauseOverlay();
+    this.syncModeChrome();
+    this.updateProgress();
+  }
+
+  /**
+   * Alt：切换地图地名标签（**热切换**，需求 6）。
+   *
+   * `cur` 的算法与模式侧完全一致（`labelOverride() ?? (设置开关 && 非答题进行中)`），
+   * 故"提示的文案"永远是用户眼前正在发生的事：显示中→提示已隐藏，隐藏中→提示已显示。
+   *
+   * 写回的是**覆盖**而不是设置：Alt 是临时意图，刷新页面就回到用户自己的设置
+   * （理由见 map/labelVisibility.ts）。`preventDefault()` 用于阻止 Windows 浏览器把 Alt
+   * 抓去激活菜单栏 —— 否则焦点会跑进菜单，后续按键（含空格暂停）全部失效。
+   */
+  private handleLabelToggle(event: KeyboardEvent) {
+    if (event.repeat) return; // 按住 Alt 的自动重复会让标签来回闪
+    const current = this.current;
+    if (!current) return;
+    if (this.settingsOverlayOpen()) return; // 面板里那个「显示地图地名」复选框才是此刻该改的东西
+    event.preventDefault();
+    const cur = labelOverride() ?? (this.settings.showBrowseLabels && !current.isStarted());
+    setLabelOverride(!cur);
+    current.refresh();
+    toast(t(cur ? 'main.labelsHidden' : 'main.labelsShown'));
+  }
+
+  /**
+   * 焦点是否在**已经打了字**的文本输入里（此时空格属于用户输入，不能拿去当暂停）。
+   *
+   * 只认 input/textarea/contentEditable 且内容非空；其它控件（复选框、滑块）的值是 "on"/数字，
+   * 它们本来也不接收空格，故不参与判断 —— 空格在它们身上仍按暂停处理。
+   */
+  private isTypingNonEmptyText(): boolean {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    const isInput = el instanceof HTMLInputElement;
+    const isTextArea = el instanceof HTMLTextAreaElement;
+    if (!isInput && !isTextArea && !el.isContentEditable) return false;
+    const value = isInput || isTextArea ? (el as HTMLInputElement | HTMLTextAreaElement).value : el.textContent ?? '';
+    return value.length > 0;
   }
 
   /** 搜索框接线（无下拉联想）。 */

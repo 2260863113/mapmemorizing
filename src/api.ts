@@ -1,5 +1,8 @@
 import type { LeaderboardEntry } from './leaderboardStore';
+import type { ClientEnv } from './clientEnv';
 import type { RoundResult, UserProfile } from './types';
+
+export type { ClientEnv };
 
 /** 留言板帖子（含前 3 条预览回复）。 */
 export interface BoardPost {
@@ -46,7 +49,35 @@ export interface AdminUser {
 export interface AccessLogEntry {
   id: number;
   username: string | null;
+  /** 完整 User-Agent（**不截断**：管理端要显示完整浏览器环境）。 */
   ua: string;
+  /** 客户端 IP（Cloudflare 的 `CF-Connecting-IP`）；本地 dev 无该头时为 null。 */
+  ip: string | null;
+  /** 两位国家码（Cloudflare `request.cf.country`），无则 null。 */
+  country: string | null;
+  /** 一级行政区（`request.cf.region`），无则 null。 */
+  region: string | null;
+  /** 城市（`request.cf.city`），无则 null。 */
+  city: string | null;
+  /** 客户端自报的浏览器环境快照（见 `src/clientEnv.ts`）；爬虫/旧客户端为 null。 */
+  env: ClientEnv | null;
+  /** 服务端关键词判定：这条记录是否疑似爬虫/自动化客户端。 */
+  bot: boolean;
+  /** 判定的理由（本地化前的机器标签，前端映射成文案）。 */
+  botReasons: string[];
+  createdAt: number;
+}
+
+/** 游玩上报的来源：点「开始」按钮，或按 Tab 快速重置并立即开始。 */
+export type PlaySource = 'start' | 'tab';
+
+/** 游玩统计条目（管理端「游玩统计」列表）。 */
+export interface PlayLogEntry {
+  id: number;
+  username: string | null;
+  /** 模式 id（`self` / `click` / `endless` / `puzzle` …）。 */
+  mode: string;
+  source: PlaySource;
   createdAt: number;
 }
 
@@ -62,6 +93,9 @@ export interface AccessStats {
   unit: 'hour' | 'day';
   points: TrafficPoint[];
 }
+
+/** 游玩量序列（与 `AccessStats` 同形，只是数据源是 `play_logs`）。 */
+export type PlayStats = AccessStats;
 
 /** 统一 fetch 封装：部署后与 Pages Functions 同源（相对路径 /api）；本地 dev 由 vite 代理转发。 */
 
@@ -156,11 +190,17 @@ export const api = {
     request<{ ok: true }>(`/board/reply/${id}`, { method: 'DELETE', token }),
   // ---------- 公告 ----------
   announcements: () => request<{ announcements: Announcement[] }>('/announcements'),
-  visit: (token?: string) => request<{ ok: true }>('/visit', { method: 'POST', token }),
+  visit: (token?: string, env?: ClientEnv) =>
+    request<{ ok: true }>('/visit', { method: 'POST', token, body: env ? { env } : undefined }),
+  /** 游玩上报：用户开始一局（点「开始」或按 Tab 快速重开）时调用，带浏览器环境供管理端判定。 */
+  play: (body: { mode: string; source: PlaySource; env?: ClientEnv }, token?: string) =>
+    request<{ ok: true }>('/play', { method: 'POST', token, body }),
   // ---------- 管理员 ----------
   adminUsers: (token: string) => request<{ users: AdminUser[] }>('/admin/users', { token }),
   adminLogs: (token: string, before = 0) => request<{ logs: AccessLogEntry[] }>(`/admin/logs?view=logs&before=${before}`, { token }),
   adminStats: (token: string, range: string) => request<AccessStats>(`/admin/logs?view=stats&range=${encodeURIComponent(range)}`, { token }),
+  adminPlays: (token: string, before = 0) => request<{ plays: PlayLogEntry[] }>(`/admin/plays?before=${before}`, { token }),
+  adminPlayStats: (token: string, range: string) => request<PlayStats>(`/admin/plays?view=stats&range=${encodeURIComponent(range)}`, { token }),
   createAnnouncement: (token: string, body: { title: string; content: string; pinned?: boolean }) =>
     request<{ announcement: Announcement }>('/admin/announcements', { method: 'POST', token, body }),
   updateAnnouncement: (token: string, id: number, body: { title: string; content: string; pinned?: boolean }) =>

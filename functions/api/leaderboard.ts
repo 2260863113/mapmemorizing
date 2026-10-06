@@ -1,6 +1,6 @@
 import { json, handle } from '../_lib/http';
 import { toLeaderboardEntry, type LeaderboardRow } from '../_lib/rows';
-import { isContinentScope, validMode, WORLD_NATION_SCOPE } from '../_lib/validate';
+import { validMode } from '../_lib/validate';
 
 export const onRequestGet = handle(async (context) => {
   const env = context.env as { DB: import('@cloudflare/workers-types').D1Database };
@@ -14,12 +14,14 @@ export const onRequestGet = handle(async (context) => {
   let orderBy: string;
   if (modeParam === 'endless') {
     orderBy = 'l.coins DESC, l.level DESC, l.submitted_at ASC, u.username ASC';
-  } else if (modeParam === 'puzzle' || scope === '' || scope === WORLD_NATION_SCOPE || isContinentScope(scope)) {
-    // 市级全国（''）、世界全国与大洲榜（哨兵）同语义：答对题数优先、同数比用时；
-    // 拼图的 `correct` 列存的是「已拼」个数，排序规则同为「个数优先、同数比用时」（用户口径）。
-    orderBy = 'l.correct DESC, l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   } else {
-    orderBy = 'l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
+    // 除 endless（比金币 → 比关卡）外**所有** mode/scope 都用同一条排序：
+    // 先比答对个数（拼图榜的 correct 列存「已拼」个数）、同数比用时、再按提交时间与用户名定并列。
+    //
+    // 历史口径里省级榜（省级全国哨兵 / 单省 adcode）只按用时排序，本轮用户口径统一为
+    // 「先看正确个数，然后看时间快慢」；此处必须与 score.ts 的 ON CONFLICT ... WHERE、
+    // validate.ts 的 isBetter 同口径，否则榜上排名与「新成绩是否更优」会互相打架。
+    orderBy = 'l.correct DESC, l.elapsed_ms ASC, l.submitted_at ASC, u.username ASC';
   }
 
   const rows = await env.DB.prepare(

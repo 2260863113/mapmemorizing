@@ -1,5 +1,79 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-09）：九条需求（Tab 重开 / 排行榜口径 / 日志与爬虫判定 / 游玩统计 / 键盘与跟随 / BFS）
+
+用户一次给九条（原话编号即下文的 1–9）：
+
+1. 按下 tab 可以直接重来（自动默认不提交成绩，不需要用户点击「开始」，而是直接重新来，立刻重新即开始）；当用户按下重置这个按钮时，格外弹出一条 toast：「按下tab快速重置」。
+2. 对于所有排行榜，即便回答没有全对，也全部允许提交成绩，排行榜的排行规则为：先看正确个数，然后看时间快慢。
+3. 管理员的日志记录中，显示完整的浏览器环境和 ip 地址，然后对于境外 ip 和浏览器异常（版本过于落后，无头浏览器等爬虫爱用的浏览器）进行关键词匹配，日志显示不显示游客，而是显示「爬虫」，可以查看我目前网站的日志，判断哪些是爬虫浏览器。
+4. 管理员看板中添加「游玩统计」，样式和「日志记录」样式一致，包含曲线图和条目，只不过统计的用户点击「开始」的次数（包括 tab 次数）。
+5. 用户管理中，将越晚注册的用户排在前面，管理员顶置。
+6. 游玩过程中，按下空格键可以暂停或者取消暂停，按下 alt 键切换是否显示地图地名标签（热切换）。
+7. 输入模式下，即便输入栏是空白的，用户也可以点击 enter 确定。
+8. 输入模式自由跟随模式下，缩放统一添加 2x。对于非洲，缩放统一添加 6x。
+9. 输入模式下的顺序模式，除了要求广度优先搜索，还要求优先选择队列中那些与上一个输入地区相邻的地区。
+
+### 1 + 6 + 7：键盘与输入（`src/appController.ts` / `src/modes/`）
+
+- **Tab 快速重开**：`ModeController` 新增可选 `quickRestart?(): boolean`。`MapQuizMode` 借道 `exit()`（它会完整清 started/paused/settled/rollbacking、停秒表与回滚定时器、停国旗预取）再 `start(false)`（会 `clearSaved()` + `resetProgressState()` 并立刻出首题）；`EndlessMode` = `resetRun()` + `enter()` + `start()`；`PuzzleMode` = 复用「再来一局」那条 `restartRun()`；熟练度分析不实现（Tab 保持浏览器默认焦点切换）。外壳在 `document` 上挂 keydown（绑地图容器会漏掉"焦点在 body"这种最常见情形），**带修饰键的 Tab（Alt/Ctrl/Cmd/Shift）一律交还系统**，设置浮层打开时让路给表单。
+- **重置的 Tab 提示**：`onResetClicked()` 最前面弹 `main.tabQuickResetHint`，但**只在 Tab 真的能重开的模式里弹**（计时测验 + 拼图）。熟练度分析的按钮是「重置熟练度」、Tab 在它里面无效，弹了既是错的、也会把紧随其后的「已重置熟练度」顶掉（toast 只有一个元素）。
+- **空格暂停 / Alt 标签热切换**：新增 `src/map/labelVisibility.ts`（`null/true/false` 三态**会话级覆盖**，不写进全局设置 —— 临时意图与长期偏好必须分开存）。`ModeCtx.labelsOverride` 注入模式侧；**覆盖为 true 时答题进行中也显示全量地名**（这正是"热切换"的意义），覆盖为 false 时任何阶段都不显示。空格的**关键反例**：世界档要输入 `United States` 这类带空格的地名，故焦点在**非空**文本输入里时不抢（`isTypingNonEmptyText()`）。
+- **空 Enter**：`InputMode.onSubmit` 去掉 `!v.trim()` 早退，空串走 `answer(false, true)` 计为答错。`onInput`（边打边匹配）仍要求非空，否则每次清空输入框都会自动判错。
+
+### 2：排行榜口径（`src/scoreRules.ts` + `functions/_lib/validate.ts`）
+
+**资格**：self/click 的**六个范围全部**放开为「至少答过一题」（`totalUnits > 0 && correct <= totalUnits && correct + wrong > 0`）。旧的「全国须已答全对」「省级须全部答对」两条作废。endless 仍须有金币、puzzle 仍须已拼 ≥ 2。
+
+**排序/更优/写入三处必须同口径**（否则会出现"榜上排第 3、系统认为你不如第 5"）：`functions/api/leaderboard.ts` 的 orderBy、`functions/api/score.ts` 的 `ON CONFLICT … WHERE`、`functions/_lib/validate.ts` 的 `isBetter` 全部统一为 `correct DESC, elapsed_ms ASC`（endless 仍 coins → level）。顺带修掉了上一轮交接文档点名的遗留缺陷：**次区域榜此前按用时排序**（`leaderboard.ts` 漏了 `isSubregionScope`），现在与其余榜一致。`isNationScope()` 已无调用点，删除。
+
+**展示**：`metaText()` 不再对省级/单省榜只显示用时，一律「答对 X ｜ 用时」（`leaderboard.nationMeta` 文案同步改成这个形状）。
+
+### 3：日志的完整环境 / IP / 爬虫判定（`functions/`）
+
+- **先看了真实线上日志**（`wrangler d1 execute … --remote` 只读查询 `access_logs`，未做任何写操作），据此选关键词：线上真实出现过的爬虫是 `HeadlessChrome/*`（3 条）、`meta-externalagent/1.1`（27 次）、`bingbot/2.0`（7 次）、`Applebot/0.1`、`360Spider`、`WindowsPowerShell/5.1`；同时确认了**不能误伤**的真人 UA：Chrome/152-154 + Edg、iPhone Safari、微信 `XWEB`/`MicroMessenger`、`baiduboxapp`（内嵌 `Chrome/97`）、`BingSapphire`。
+- 新增 `functions/_lib/botDetect.ts`（纯函数，40 个关键词 + 版本过旧 + `navigator.webdriver`）：`bot` 只看「爬虫 / 自动化 / 浏览器异常」三类信号；**`overseas` 只标注、不判爬虫**（境外也有人），前端照样给它画标签。**内置浏览器外壳豁免版本过旧判定**（微信/百度/Bing/UC/夸克的内嵌 Chromium 必然落后，那是厂商打包节奏）。裸 `bot` 子串排除了 `CUBOT` 手机（真人）。
+- 新增 `functions/_lib/clientEnv.ts`：`sanitizeClientEnv()` 白名单 + 逐字段截断 + 整体 JSON ≤2000 字符 + **绝不抛错**；`clientIp()`（`CF-Connecting-IP` → `X-Forwarded-For` 首段）、`requestGeo()`（`request.cf`）供两个上报端点共用。前端采集器是 `src/clientEnv.ts` 的 `collectClientEnv()`（永不抛错），`AppController.start()` 的 `api.visit(…)` 已带上它。
+- **口径**：日志用户名位置按登录与判定二选一 —— 登录用户显示用户名；**未登录且有判定依据**显示「爬虫」，**未登录且无任何依据**显示「游客」（2026-09 用户二次确认；中间短暂采用过"未登录一律爬虫"，用户随后改掉，理由是那样「爬虫数」恒等于「未登录数」）。判定理由作为补充标签画在同一行。刻意**没有**扩大到游玩记录 —— 那里的未登录仍写「未登录」，因为一条开局流水是真人行为。实现上标签与判定同源：`src/ui/accessLog.ts` 的 `logUserName(entry)` / `showsBotLabel(entry)` 都读同一个 `isBotEntry`。
+- ⚠ **必须先跑数据库迁移**：`access_logs` 新增 7 列 + 新表 `play_logs`。见 `migrations/2026-09-28-access-logs-and-play-logs.sql` 与 `npm run db:migrate:remote`。**漏跑不报错、只静默不记录**（上报路径对写库失败只 `console.warn`，不让日志问题影响玩法）。
+
+### 4：游玩统计（`/api/play` + `src/ui/adminPanel.ts`）
+
+新增 `play_logs`（`user_id / mode / source / ua / ip / 地理 / env / bot / created_at`）与 `POST /api/play`（`source: 'start' | 'tab'`）；`GET /api/admin/plays` 同时提供分桶序列与分页明细，分桶**复用** `statsWindow`/`buildStatsPoints`（未改它）。前端 `src/playLogger.ts` 把「永不抛错 + 不产生未处理拒绝 + 带浏览器环境」三条约束收在一处，两个调用点各一行。
+
+**上报点为什么不会重复也不会漏**：`.start-action` 的点击走 document **冒泡**委托（按钮自己的 onclick 已执行完，于是能用 `isStarted()` 过滤掉"点了但没开起来"），Tab 路径调 `quickRestart()`、**从不派发 click**；四个有开始卡片的模式都经 `ui/dom.showStartCard` 生成按钮，类名固定。
+
+管理端「游玩统计」与「日志记录」用同一个 `BoardSpec` 规格对象收敛成一套渲染（首屏与「加载更多」共用同一个行渲染函数 —— 原先两处各抄一份模板）。logs 的 `#admin-traffic*` 三个 id 语义未变，plays 另用 `#admin-plays*`；`TrafficChart` 加了可选 tooltip 文案参数（量词「次访问」/「次游玩」）。
+
+### 5：用户管理排序
+
+`functions/api/admin/users.ts` 改为 `ORDER BY is_admin DESC, created_at DESC`（管理员置顶 + 越晚注册越靠前）。前端不做二次排序。
+
+### 8：输入模式自动跟随加成
+
+基准（中国按省阶梯 `followZoomFor`、世界按面积反比 `worldFollowZoom`）仍在渲染器；**加成由模式回答**（`src/modes/followBonus.ts`：世界普通国 +2、**非洲 +6**、中国地级 +2），渲染器 `followZoomWithBonus(base, extra)` 相加后**统一 `clampZoom`**。
+
+⚠ 顺手修掉一处长期隐患：`renderer.focusUnit(adcode, _zoom)` 的第二个参数**从前被完全忽略**（真实倍率来自按省阶梯），调用方以为传 12 就是 12x。现在它的语义是**额外加成**，调用点已同步（`endless` 传 0 = 无尽不加成、`probe/mapProbe` 传 0）。`focusWorldCountry(iso, extraZoom = 0)` 默认 0，故既有探针断言（`verify-round2`）逐字未变。
+
+### 9：顺序出题邻接优先
+
+`bfsStep` 新增 `lastId`：**仍从队列里取**（`queue.splice(idx, 1)`，未选中的留在原位），但优先取队列中**与上一个已作答单位相邻**的那一个（按队列顺序取第一个命中的），没有才取队首。因此「不可能出现空洞」这条性质与广度优先都不变 —— 若改成"lastId 的任一未作答邻居优先"，就退化成旧的贪心游走、空洞重现。`InputMode` 用新字段 `lastAnswered`（在 `onAnswerStart()` 里赋值，**对错都更新**；`lastGreen` 只在答对时更新，用它会让答错后的下一题跳回上一次答对的地方），并一并持久化/恢复/暴露给探针。
+
+### 验收
+
+- `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（仅 1 条**既有** warning `src/testCtx.ts` 函数 62 行 > 60，本轮无人改该文件）+ **56 文件 / 731 用例**（基线 49 / 615）。
+- `npm run build` 通过。
+- 真实浏览器验收（headless Edge + 真实指针事件，全部在最终改动之后重跑）：`verify-admin-traffic` **74/74**（原 38；含完整 UA 129 字一字不差、完整 IP/地理、环境详情逐字段、**未登录有依据→「爬虫」/ 无依据→「游客」两条路径**、匿名游客行无爬虫描边、翻页与首屏同构、游玩统计的曲线/条目/来源/空态/另一组容器 id/「次游玩」量词）、`verify-round2` **38/38**（含顺序模式 48/48 题 0 重复全覆盖）、`verify-round3` **54/54**、`verify-naming` **47/47**、`verify-drill-scope` **34/34**。
+- 基线在动工前用 `git worktree` 建在 `777b568` 上跑过一遍（49 文件 / 615 用例全绿），因此"新增的失败"与"既有的失败"不会混在一起。
+
+### ⚠ 本轮已知遗留（都**没有**动，供下一个 AI 判断）
+
+1. **提交资格不校验 `correct + wrong <= totalUnits`**，也没有服务端池子大小校验：`totalUnits` 本身由客户端上报，因此"答对数 > 题目总数"或谎报分母在理论上仍可提交。这是**改动前就存在**的口径（旧实现同样信任客户端的分母），本轮严格按需求只改「是否要求全对」。要真正收紧需在服务端按范围算池子大小，是一个独立的改动。
+2. **`DESIGN.md` 的 §17.5 与 §1 的老段落有历史口径残留**（"只有两个范围可提交"等），已在两处加了「口径更新」说明，但没有重写历史段落。
+3. **Alt 的会话级覆盖不随模式切换复位**（模块级单例，刷新才清）。这是刻意的（"这一局想不想看地名"是跨模式的会话意图），若用户口径改成"切模式即复位"，在 `switchMode` 里加一行 `setLabelOverride(null)` 即可。
+4. **无尽闯关与拼图的游玩中不显示全量地名**（无尽渲染的是金币标签、拼图盘面没有地名），因此 Alt 覆盖在它们的**开始卡片阶段**才改画面。这是玩法本身决定的，不是缺陷。
+5. **探针未新增键盘路径端点**：Tab/空格/Alt 三条路径有单测（`labelVisibility.test.ts`、`inputSubmit.test.ts` 等）与源码级守卫，但没有像"真实按键事件 → 画布变化"那样的运行时断言。若要补，`src/probe/uiProbe.ts` 是落点。
+
 ## 本轮（2026-09）：排行榜随范围切换 + 拼图成绩范围放开 + 困难档容差例外 + 碎片视觉
 
 用户报三条（原话）：「**切换模式/下钻/返回顶级时排行榜有时候不会切换**」「**拼图模式现在拼完之后没有成绩提交按钮，排行榜也为空白**」「**困难模式下港澳台与海南岛进入可吸附范围时要保留绿描边**」，随后一轮追加：「**改成困难档不给描边、只把判定范围放宽到 15px（未成组时），其余地区不变、成组后回到 5px**」「**简单档去掉辉光、描边变细到 2px**」「**港澳这些微小碎片永远最后出现**」「**世界范围也遵循同样规律**」「**吸附后的碎片之间不要阴影，只留组最外层**」。四轮 grill 定稿，问题与决定都记在 `grill-rounds.log`。

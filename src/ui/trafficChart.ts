@@ -8,7 +8,7 @@
  * 这个类把「建/销」成对地放在一起，面板只需在重建 DOM 前调一次 `dispose()`。
  */
 import * as echarts from 'echarts';
-import { buildTrafficOption, trafficPalette, type TrafficPoint, type TrafficUnit } from './trafficSeries';
+import { buildTrafficOption, trafficPalette, type TooltipTextFn, type TrafficPoint, type TrafficUnit } from './trafficSeries';
 
 /** option 的**读回**结果（探针用：断言真正画出来的点数、x 轴刻度与主题色，而不是"我们以为写进去的"）。 */
 export interface TrafficOptionReadback {
@@ -40,17 +40,24 @@ export class TrafficChart {
     }
   };
 
-  /** 是否已建实例（探针用：验证"离开面板/重建 DOM 时真的销毁了"）。 */
+  /**
+   * 是否已建实例（离开面板/重建 DOM 时该为 false）。
+   * 面板探针用它配合"当前是否在本子视图"判断看板是否真的挂着（见 `AdminPanel.diagnostics()`）。
+   */
   get mounted(): boolean {
     return this.chart !== null;
   }
 
-  /** 容器内的画布数量（探针用：反复切 tab 不该累积）。 */
+  /**
+   * 容器内的画布数量。
+   * 面板探针改按**容器**数 canvas（`container.querySelectorAll('canvas')`）：那样连"实例已销毁但
+   * DOM 残留"也能发现；这两个实例级读数留给需要区分实例与容器的调用方。
+   */
   canvasCount(): number {
     return this.el.querySelectorAll('canvas').length;
   }
 
-  /** 图表高度（像素）：验收脚本断言"没有塌成 0 高"。 */
+  /** 图表高度（像素）：容器塌成 0 高时 ECharts 会画成 0×0。 */
   height(): number {
     return this.el.clientHeight;
   }
@@ -70,10 +77,18 @@ export class TrafficChart {
     return chart;
   }
 
-  /** 按当前数据重绘（`notMerge`：切范围时整条 series 换掉，不做增量合并）。 */
-  render(points: readonly TrafficPoint[], unit: TrafficUnit, dark: boolean) {
+  /**
+   * 按当前数据重绘（`notMerge`：切范围时整条 series 换掉，不做增量合并）。
+   *
+   * `tooltipText` 透传给 option 构造（唯一的口径差异）：日志看板用访问量、游玩看板用游玩量，
+   * 两个看板共用这一个类与同一套几何，只有量词不同。
+   */
+  render(points: readonly TrafficPoint[], unit: TrafficUnit, dark: boolean, tooltipText?: TooltipTextFn) {
     const chart = this.ensure();
-    chart.setOption(buildTrafficOption({ points, unit, palette: trafficPalette(dark, this.readVar) }), true);
+    chart.setOption(
+      buildTrafficOption({ points, unit, palette: trafficPalette(dark, this.readVar), tooltipText }),
+      true,
+    );
     chart.resize();
   }
 

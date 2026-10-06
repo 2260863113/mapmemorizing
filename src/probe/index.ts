@@ -8,13 +8,13 @@
  * 生产路径不受影响：main.ts 只在 location.search 含 probe=1 时动态 import 本模块，
  * Vite 会把它切成独立 chunk，普通用户不会加载。
  *
- * 模块划分（`__probe` 的 29 个方法按域拆开，装配在下面）：
+ * 模块划分（`__probe` 的方法按域拆开，装配在下面）：
  *   internals.ts     —— 与应用之间的类型化入口（零强转）
  *   mapProbe.ts      —— 地图 / 镜头 / 世界面 / 跟随钳制
  *   quizProbe.ts     —— 测验（输入·点击）：错误回滚 / 顺序范围 / 排行榜联动 / 范围快照
  *   puzzleProbe.ts   —— 拼图：两阶段、磁吸、难度、获胜
  *   uiProbe.ts       —— 外壳 UI：主题 / 边界深浅 / 标签显隐 / 粒度能力位
- *   adminProbe.ts    —— 管理端：日志记录子视图的流量折线图
+ *   adminProbe.ts    —— 管理端：日志记录与游玩统计两个子视图的折线图
  *
  * 私有状态一律经由生产类自己提供的诊断视图读取（`AppController.diagnostics()` 等），
  * 因此本目录**没有任何 `as unknown as` 强转**：成员改名会让 `tsc` 在生产文件里报错。

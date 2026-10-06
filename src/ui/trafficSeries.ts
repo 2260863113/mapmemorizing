@@ -174,6 +174,19 @@ export function formatTooltipText(unit: TrafficUnit, label: string, count: numbe
   return t('admin.trafficTooltip', { label: formatPointLabel(unit, label), count });
 }
 
+/**
+ * tooltip 文案的可替换口径：`(已格式化的点标签, 计数) => 文本`。
+ *
+ * 为什么把「访问量」这一步做成可注入：同一张折线图要同时服务两个看板 —— 日志记录的
+ * 「访问量统计」和游玩统计的「游玩量统计」。两者的**图形完全一致**，只有 tooltip 的量词不同
+ * （`次访问` / `次游玩`）。若为此复制一份 option 构造，两边的桶解析/补 0/整齐上界就会各自演化，
+ * 迟早出现"图上点数一样但 tooltip 说错"的静默不一致。
+ */
+export type TooltipTextFn = (label: string, count: number) => string;
+
+/** 默认口径：访问量（`admin.trafficTooltip`）。 */
+export const defaultTooltipText: TooltipTextFn = (label, count) => t('admin.trafficTooltip', { label, count });
+
 // ==================== 数值 ====================
 
 /** 合计访问量。 */
@@ -271,6 +284,11 @@ export interface TrafficOptionInput {
   points: readonly TrafficPoint[];
   unit: TrafficUnit;
   palette: TrafficPalette;
+  /**
+   * tooltip 文案口径；缺省为访问量（`admin.trafficTooltip`）。
+   * 游玩统计传 `admin.playTooltip` 口径（见 `TooltipTextFn` 的说明）。
+   */
+  tooltipText?: TooltipTextFn;
 }
 
 /**
@@ -279,6 +297,7 @@ export interface TrafficOptionInput {
  */
 export function trafficTooltipOption(input: TrafficOptionInput): echarts.EChartsOption['tooltip'] {
   const { points, unit, palette } = input;
+  const text = input.tooltipText ?? defaultTooltipText;
   return {
     trigger: 'axis',
     // 挂到 body：面板容器本身可滚动，默认挂在容器里会被裁掉
@@ -291,7 +310,9 @@ export function trafficTooltipOption(input: TrafficOptionInput): echarts.ECharts
       const list = Array.isArray(params) ? (params as { dataIndex?: number }[]) : [params as { dataIndex?: number }];
       const index = typeof list[0]?.dataIndex === 'number' ? list[0].dataIndex : -1;
       const point = index >= 0 ? points[index] : undefined;
-      return point ? formatTooltipText(unit, point.label, point.count) : '';
+      // 传出去的 label 是**格式化后**的点标签（`9月16日`）：调用方拿到的就是最终要显示的那一段，
+      // 不必再知道粒度怎么拼 —— 这也是把格式化留在本模块的理由。
+      return point ? text(formatPointLabel(unit, point.label), point.count) : '';
     },
   };
 }

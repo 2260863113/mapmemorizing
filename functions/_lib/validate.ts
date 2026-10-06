@@ -156,11 +156,14 @@ function readScoreNumbers(row: Partial<ScorePayload>) {
 }
 
 /**
- * 提交资格（复刻前端 canSubmit）：
+ * 提交资格（复刻前端 canSubmitScore，两侧语义必须逐条一致）：
  *   ·无尽的 endless 需有金币（不统计题数，totalUnits 恒 0），通过时就地补 coins/level；
  *   ·拼图**所有合法范围**都可提交，且「已拼」≥2、不得超过总片数、没有答错；
- *   ·全国 self/click（null）、世界全国、大洲、次区域允许未答完（已答全对即可）；
- *   ·省级（含省级全国哨兵）维持全对。
+ *   ·self/click 的**所有**范围（市级全国 null、省级全国哨兵、世界全国、大洲、次区域、单省 adcode）
+ *     共用同一条门槛：至少答过一题（correct + wrong > 0），且 totalUnits > 0、correct <= totalUnits。
+ *
+ * 为什么省级榜也不再要求「全对/答完」：榜单排序已经是「先比答对个数、再比用时」，
+ * 答得少的名次自然靠后，再在入口卡全对只会让「全国榜能交、省级榜交不了」这种自相矛盾的口径出现。
  */
 function assertSubmittable(payload: ScorePayload, row: Partial<ScorePayload>): void {
   if (payload.mode === 'endless') {
@@ -182,14 +185,8 @@ function assertSubmittable(payload: ScorePayload, row: Partial<ScorePayload>): v
   }
   if (payload.totalUnits <= 0) throw new ApiError(400, 'invalid_score', '无效的题目总数');
   if (payload.correct > payload.totalUnits) throw new ApiError(400, 'invalid_score', '无效的答对数');
-  if (payload.scopeProvince === null || isWorldScope(payload.scopeProvince)) {
-    // 全国/世界/大洲/次区域榜：答过题即可（不强制全对，允许部分作答上榜）
-    if (!(payload.correct > 0 && payload.wrong === 0)) throw new ApiError(400, 'invalid_score', '全国榜需已答全对');
-    return;
-  }
-  if (!(payload.correct + payload.wrong === payload.totalUnits && payload.correct === payload.totalUnits && payload.wrong === 0)) {
-    throw new ApiError(400, 'invalid_score', '省级榜需全部答对');
-  }
+  // 所有范围同一门槛：答过题即可上榜（不强制全对、不强制答完）。0 题属于没答，不足以成成绩。
+  if (payload.correct + payload.wrong <= 0) throw new ApiError(400, 'invalid_score', '至少回答一题才能提交成绩');
 }
 
 /** 校验提交的成绩。三段式：scope 白名单 → 数值守卫 → 提交资格（各自成函数）。 */
@@ -215,21 +212,27 @@ export function validateScore(body: unknown): ScorePayload {
   return payload;
 }
 
-/** 是否“全国语义”作用域（市级全国 null、世界全国/大洲/次区域哨兵）：答对题数优先排序；其余省级语义按时间排序。 */
-export function isNationScope(scopeProvince: string | null): boolean {
-  return scopeProvince === null || isWorldScope(scopeProvince);
-}
+/**
+ * 为什么这里不再有 `isNationScope()`：旧实现用它区分「全国语义（答对题数优先）」与
+ * 「省级语义（仅比用时）」，本轮口径统一后**除 endless 外一律 correct 优先**，
+ * 该判定已无任何调用点（`score.ts` 的 upsert 分支与 `leaderboard.ts` 的 orderBy 同样统一），
+ * 保留一个永远为真的分支只会让后来者误以为还存在两套排序。世界范围的判定仍然可用 `isWorldScope()`。
+ */
 
-/** 新成绩是否比已有成绩更优（与前端 isBetter 对齐）。 */
+/**
+ * 新成绩是否比已有成绩更优（与前端及数据库排序共用同一条口径）。
+ *
+ * 除 endless（比金币 → 比关卡）外**一律「correct 降序、同数比用时升序」** ——
+ * 必须与 `leaderboard.ts` 的 orderBy、`score.ts` 的 ON CONFLICT ... WHERE 完全一致，
+ * 否则会出现「榜上按 correct 排序、但更优判断只比用时」的自相矛盾：
+ * 例如 5 题的旧成绩用时更短时，10 题的新成绩会被判「不如旧成绩」而被丢弃。
+ */
 export function isBetter(next: ScorePayload, existing: { coins: number | null; level: number | null; correct: number; elapsed_ms: number }): boolean {
   if (next.mode === 'endless') {
     const nextCoins = next.coins ?? 0;
     const existingCoins = existing.coins ?? 0;
     return nextCoins > existingCoins || (nextCoins === existingCoins && (next.level ?? 1) > (existing.level ?? 1));
   }
-  // 拼图：已拼个数优先、同数比用时（correct 列存已拼个数）
-  if (next.mode === 'puzzle' || isNationScope(next.scopeProvince)) {
-    return next.correct > existing.correct || (next.correct === existing.correct && next.elapsedMs < existing.elapsed_ms);
-  }
-  return next.elapsedMs < existing.elapsed_ms;
+  // 拼图的 correct 列存「已拼个数」，走的正是同一条「个数优先、同数比用时」规则。
+  return next.correct > existing.correct || (next.correct === existing.correct && next.elapsedMs < existing.elapsed_ms);
 }

@@ -58,6 +58,13 @@ export interface QuizSessionDiagnostics {
 export interface QuizOrderDiagnostics {
   /** BFS 前沿队列的种子（上一题答对的单位）。 */
   lastGreen: string | null;
+  /**
+   * 上一个**已作答**的单位（对错都算）——顺序模式「邻接优先」的参考点（2026-09 需求 9）。
+   *
+   * 与 `lastGreen` 的区别是「答错也更新」：邻接优先要跟的是**用户刚答完的那道题**，
+   * 哪怕答错也说明他此刻的位置感在那附近；只在答对时更新会让答错后的下一题乱跳。
+   */
+  lastAnswered: string | null;
   bfsQueue: string[];
   /** 队列所属范围签名：范围一变就丢弃队列重新播种。 */
   bfsDomain: string;

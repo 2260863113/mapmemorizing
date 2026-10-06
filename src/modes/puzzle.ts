@@ -137,6 +137,14 @@ export class PuzzleMode extends BaseMode {
   private elapsedMs = 0;
   private runStart = 0;
   private tickTimer: number | null = null;
+  /**
+   * 获胜收尾的两个延时器（见 `finish`：+260ms 取景、+900ms 弹完成卡片）。
+   *
+   * 为什么要存 id：它们在**延时期间**用户可能已经按了 Tab 重开（或点了重置）——
+   * 迟到的完成卡片会盖在新的盘面上，看起来像"Tab 没重开、还弹了上次的成绩"。
+   * 换局/重置时统一取消。
+   */
+  private finishTimers: number[] = [];
   private provinceAdjacencyCache: Map<string, string[]> | null = null;
 
   constructor(private ctx: ModeCtx) {
@@ -352,6 +360,7 @@ export class PuzzleMode extends BaseMode {
     this.entered = true;
     if (!this.boardPhase()) {
       // 选范围阶段：拆掉画布、丢弃上一局状态、显示地图与开始卡片
+      this.clearFinishTimers();
       this.teardownView();
       this.state = null;
       this.pieces = [];
@@ -444,6 +453,7 @@ export class PuzzleMode extends BaseMode {
 
   /** 点「开始」：按当前范围建碎片、隐藏地图、启动计时。 */
   private startRun() {
+    this.clearFinishTimers(); // 上一次获胜的收尾（迟到会盖住这一局）
     this.started = true;
     this.finished = false;
     this.paused = false;
@@ -467,6 +477,7 @@ export class PuzzleMode extends BaseMode {
 
   /** 完成卡片的「再来一局」：同范围内重新打乱并立刻开跑。 */
   private restartRun() {
+    this.clearFinishTimers(); // 同 startRun：换局时别让上一局的完成卡片迟到
     // 先按当前难度确认 state 是最新的：拼完之后难度仍可改，而容差与「孤悬/极小」放宽都跟难度有关。
     // 难度没变时 `ensureState()` 是 no-op（接着只重新打乱），不会有额外开销。
     this.ensureState();
@@ -484,6 +495,7 @@ export class PuzzleMode extends BaseMode {
 
   /** 「重置」= 回到开始卡片：清空画布、回到选范围阶段（地图重新出现）。 */
   private resetToStartCard() {
+    this.clearFinishTimers(); // 同上：迟到的完成卡片不该出现在开始卡片上
     this.started = false;
     this.finished = false;
     this.paused = false;
@@ -508,8 +520,9 @@ export class PuzzleMode extends BaseMode {
     this.ctx.setTestRunning?.(false); // 结束后展开排行榜侧栏
     this.view?.revealSeaIslets();
     // 补完三沙后取景要连带它们一起装进来（否则「自动补上」看不见），故允许比用户可操作的最小倍率更小
-    window.setTimeout(() => this.view?.fitAll(56, true, { includeSeaIslets: true, minZoom: 0.3 }), 260);
-    window.setTimeout(() => {
+    this.clearFinishTimers();
+    this.finishTimers.push(window.setTimeout(() => this.view?.fitAll(56, true, { includeSeaIslets: true, minZoom: 0.3 }), 260));
+    this.finishTimers.push(window.setTimeout(() => {
       this.ctx.showSummary(
         `<div class="puzzle-done-title">${t('puzzle.doneTitle')}</div>` +
           `<div class="sum-stats">${t('puzzle.doneTime', { time: formatClock(this.elapsedMs) })}</div>`,
@@ -517,7 +530,7 @@ export class PuzzleMode extends BaseMode {
         this.collectResult() ?? undefined, // 可提交范围：完成卡片上直接给「提交成绩」
         t('puzzle.again'),
       );
-    }, 900);
+    }, 900));
     this.renderStatus();
     this.ctx.syncChrome?.(); // 结束后难度按钮重新出现（运行中收起）
   }
@@ -584,6 +597,31 @@ export class PuzzleMode extends BaseMode {
     toast(t('puzzle.restarted'));
   }
 
+  /**
+   * Tab 即时重开（2026-09 需求 1）：**在当前范围立刻重开一局**。
+   *
+   * 为什么选「重开当前范围」而不是「回到选范围卡片」：拼图的「重置」按钮已经是回卡片了
+   * （见 onReset），而 Tab 的语义是「直接重新来，立刻重新即开始」——它要的是**同一范围的
+   * 新一局**（重新打乱碎片、计时归零、立刻可拼），也就是完成卡片上「再来一局」那条路径。
+   * 这样在两个阶段都说得通：选范围阶段按 Tab = 用当前范围开局，盘面/完成阶段按 Tab = 换一局。
+   *
+   * 复用 `restartRun()` 而不是自己摆一遍盘面：它内部会按当前难度 `ensureState()`、
+   * `state.start()` 重新打乱、`showBoard(true)` 复位视角并隐藏地图、重启计时——
+   * 这些顺序（先显盘面再量尺寸）是踩过坑的，抄一遍必然漏。
+   *
+   * 范围没有可拼碎片时（`ensureState` 失败）`restartRun` 会留在空盘面，故这里先判一次并退回选范围。
+   */
+  quickRestart(): boolean {
+    if (!this.entered) this.enter();
+    this.ensureState();
+    if (!this.state) {
+      this.resetToStartCard();
+      return false;
+    }
+    this.restartRun();
+    return true;
+  }
+
   isStarted() {
     return this.started;
   }
@@ -605,6 +643,12 @@ export class PuzzleMode extends BaseMode {
       window.clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+  }
+
+  /** 取消获胜收尾的两个延时器（换局/重置/回选范围时调用，防止迟到的完成卡片盖住新盘面）。 */
+  private clearFinishTimers() {
+    for (const timer of this.finishTimers) window.clearTimeout(timer);
+    this.finishTimers = [];
   }
 
   private startTimer() {

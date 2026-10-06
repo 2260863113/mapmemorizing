@@ -7,9 +7,10 @@ import { formatElapsedSeconds } from '../ui/format';
 import { clamp } from '../math';
 import { t } from '../i18n';
 import { modeTitle } from './capabilities';
-import { ENDLESS_FOLLOW_ZOOM, loadEndlessAutoFollow, loadEndlessHidePriceBg, loadEndlessHidePrices, saveEndlessAutoFollow, saveEndlessHidePriceBg, saveEndlessHidePrices, type ModeSettingsPanel } from '../modeSettings';
+import { loadEndlessAutoFollow, loadEndlessHidePriceBg, loadEndlessHidePrices, saveEndlessAutoFollow, saveEndlessHidePriceBg, saveEndlessHidePrices, type ModeSettingsPanel } from '../modeSettings';
 import { fbm, makePermutation } from './endlessNoise';
 import { browseLabelState } from './browseLabels';
+import { labelOverride, labelsVisibleWith } from '../map/labelVisibility';
 import { FOODS, ITEM_DEFS, ITEM_KEYS, pickInitialFoods, pickTokenChar, type FoodEntry, type ItemKey, type OwnedItem } from './endlessData';
 import {
   COIN_LABEL_ZOOM,
@@ -167,9 +168,12 @@ export class EndlessMode extends BaseMode {
     // 未开始（浏览态）：显示全量地级市名（自由模式并入后的口径）；开始后回到金币价格 / 已收集显示
     // —— 无尽的金币数字是玩法核心，故浏览标签只在开始卡片阶段占用地图。
     if (!this.started) {
+      // 可见性口径与测验模式一致（Alt 热切换优先）：这里 playing = started，恒为 false，
+      // 故覆盖为 true 时未开始的地名照旧显示、覆盖为 false 时强制隐藏（2026-09 需求 6）。
+      const override = this.ctx.labelsOverride?.() ?? labelOverride();
       this.ctx.renderer.render({
         colorOf: () => 'gray',
-        ...browseLabelState('city', this.ctx.settings.showBrowseLabels),
+        ...browseLabelState('city', labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, this.started)),
       });
       return;
     }
@@ -271,6 +275,29 @@ export class EndlessMode extends BaseMode {
     hideShop();
     this.resetRun();
     this.enter();
+  }
+
+  /**
+   * Tab 即时重开（2026-09 需求 1）：**立刻重开一局**，不需要再点一次开始卡片。
+   *
+   * 为什么走到 `start()` 而不是停在开始卡片：需求原文是「直接重新来，立刻重新即开始」。
+   * 无尽闯关的「重置」按钮本身就是重开一局（回到开始卡片，见 onReset），若 Tab 照抄，
+   * 用户按 Tab 后还要再点一次「开始」——那不是"立刻"。故这里是「重置 + 立即开始」的合成：
+   * `resetRun()` 清干净（金币/道具/计时/通关卡片），`enter()` 把地图与计时显示复位，
+   * 再 `start()` 直接开跑。
+   *
+   * 注：`start()` 自带 `started/paused/switching` 守卫，resetRun 之后三者均为 false，
+   * 因此一定会开起来。不提交任何成绩（无尽本来也没有结算卡片）。
+   */
+  quickRestart(): boolean {
+    this.countdown.stop();
+    this.ctx.showTimer(null);
+    hideLevelEnd();
+    hideShop();
+    this.resetRun();
+    this.enter();
+    this.start();
+    return this.started;
   }
 
   onViewChange() {
@@ -411,7 +438,7 @@ export class EndlessMode extends BaseMode {
     this.ctx.search.focus();
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
-    if (this.autoFollow) this.ctx.renderer.focusUnit(unit.adcode, ENDLESS_FOLLOW_ZOOM);
+    if (this.autoFollow) this.ctx.renderer.focusUnit(unit.adcode, 0); // 无尽闯关**不加成**（2026-09 需求 8 只覆盖输入模式），倍率走渲染器按省标定的阶梯
     const extras: string[] = [];
     if (bonus > 0) extras.push(t('endless.bonusCoins', { value: fmt(bonus) }));
     if (timeBonus > 0) extras.push(t('endless.timeBonus', { seconds: timeBonus }));

@@ -1,6 +1,6 @@
 import { json, readJson, handle } from '../_lib/http';
 import { requireSession } from '../_lib/guard';
-import { isBetter, isContinentScope, validateScore, WORLD_NATION_SCOPE } from '../_lib/validate';
+import { isBetter, validateScore } from '../_lib/validate';
 
 type ScoreMode = 'self' | 'click' | 'endless' | 'puzzle';
 
@@ -13,20 +13,20 @@ interface ExistingRow {
 }
 
 /** upsert 并发安全：ON CONFLICT 的 WHERE 复刻 isBetter，防止更差分覆盖更优分。统一 10 个占位符。
- *  冲突目标含 scope_province，因此冲突行 scope 恒等于本次插入 scope：全国语义（''=市级全国、
- *  __world_nation__=世界全国、__continent_XX__=某洲榜）比答对题数再比用时；
- *  拼图同样是"个数优先、同数比用时"（correct 列存已拼个数）；
- *  省级语义（省级全国哨兵/6 位省 adcode）仅比用时。 */
-function upsertSql(mode: ScoreMode, scope: string): string {
-  const nationLike = scope === '' || scope === WORLD_NATION_SCOPE || isContinentScope(scope);
+ *  冲突目标含 scope_province，因此冲突行的 mode/scope 与本次插入完全一致，分支只需看 mode：
+ *  endless 比金币 → 比关卡；**其余一律**「correct 降序、同数比用时」
+ *  （拼图的 correct 列存已拼个数，自然落在同一条规则里）。
+ *
+ *  历史口径里这里还按 scope 分「全国语义 / 省级语义」两支，省级只比用时；本轮用户口径统一为
+ *  「先看正确个数、再看时间快慢」，且 `leaderboard.ts` 的 orderBy 同步统一 ——
+ *  两处必须同口径，否则会出现「榜按 correct 排序、写入却只比用时」的错乱。 */
+function upsertSql(mode: ScoreMode): string {
   const conflict =
     mode === 'endless'
       ? `WHERE excluded.coins > leaderboard.coins
          OR (excluded.coins = leaderboard.coins AND COALESCE(excluded.level,1) > COALESCE(leaderboard.level,1))`
-      : mode === 'puzzle' || nationLike
-        ? `WHERE excluded.correct > leaderboard.correct
-           OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)`
-        : `WHERE excluded.elapsed_ms < leaderboard.elapsed_ms`;
+      : `WHERE excluded.correct > leaderboard.correct
+         OR (excluded.correct = leaderboard.correct AND excluded.elapsed_ms < leaderboard.elapsed_ms)`;
   return `INSERT INTO leaderboard
       (user_id, mode, scope_province, scope_label, total_units, correct, elapsed_ms, coins, level, submitted_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -62,7 +62,7 @@ export const onRequestPost = handle(
       return json({ status: 'kept' });
     }
 
-    const sql = upsertSql(score.mode, scope);
+    const sql = upsertSql(score.mode);
     await env.DB.prepare(sql)
       .bind(
         userId,

@@ -75,11 +75,41 @@ CREATE TABLE IF NOT EXISTS announcements (
   updated_at INTEGER NOT NULL
 );
 
--- 访问日志表：每次页面访问一条（不含 IP），user_id 可为 NULL（游客）
+-- 访问日志表：每次页面访问一条，user_id 可为 NULL（匿名访问；是游客还是爬虫由 bot 判定区分）
+-- 环境快照（env）与判定理由（bot_reason）都存 JSON 字符串：管理端只展示，不参与查询，
+-- 拆成列反而会让「以后要加一个环境字段」变成一次迁移。
 CREATE TABLE IF NOT EXISTS access_logs (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id    INTEGER,                               -- NULL = 游客
-  ua         TEXT,                                  -- User-Agent
+  user_id    INTEGER,                               -- NULL = 未登录
+  ua         TEXT,                                  -- 完整 User-Agent（不截断）
+  ip         TEXT,                                  -- CF-Connecting-IP
+  country    TEXT,                                  -- request.cf.country（ISO 3166-1 alpha-2）
+  region     TEXT,                                  -- request.cf.region
+  city       TEXT,                                  -- request.cf.city
+  env        TEXT,                                  -- 客户端环境快照 JSON（≤2000 字符，见 functions/_lib/clientEnv.ts）
+  bot        INTEGER NOT NULL DEFAULT 0,             -- 1 = 疑似爬虫/自动化
+  bot_reason TEXT,                                  -- 判定理由 JSON 数组字符串，如 ["overseas","keyword:headless"]
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at DESC);
+
+-- 游玩日志表：每次「开始一局」一条（点「开始」或按 Tab 快速重置），供管理端「游玩统计」。
+-- 与 access_logs 分开：访问次数与开始局数是两个口径，混一张表后任一侧加字段都会污染另一侧。
+-- 客户端环境同样记一份：管理员要能从游玩记录里判断"这些局是不是同一个人在刷"。
+CREATE TABLE IF NOT EXISTS play_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER,                               -- NULL = 未登录
+  mode       TEXT    NOT NULL,                      -- 'self' | 'click' | 'endless' | 'puzzle'
+  source     TEXT    NOT NULL,                      -- 'start' | 'tab'（Tab 快速重置也要计入统计）
+  ua         TEXT,
+  ip         TEXT,
+  country    TEXT,
+  region     TEXT,
+  city       TEXT,
+  env        TEXT,
+  bot        INTEGER NOT NULL DEFAULT 0,
+  bot_reason TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_play_logs_created ON play_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_play_logs_mode ON play_logs(mode, created_at DESC);

@@ -7,6 +7,7 @@ import { canDrillProvince, type Granularity } from '../province';
 import { hasSubregions, subregionById, subregionOfContinent, subregionOfIso } from '../subregions';
 import { CONTINENTS } from '../types';
 import { loadAnalysisHideLabels, saveAnalysisHideLabels, type ModeSettingsPanel } from '../modeSettings';
+import { labelOverride, labelsVisibleWith } from '../map/labelVisibility';
 
 /** 大洲 id → 中文名（侧栏「地图范围」说明用）。 */
 const CONTINENT_NAMES: Record<string, string> = Object.fromEntries(CONTINENTS.map((c) => [c.id, c.name]));
@@ -140,6 +141,11 @@ export class AnalysisMode extends BaseMode {
   }
 
   refresh() {
+    // Alt 热切换（2026-09 需求 6）在三档分析里同样生效：本模式没有「答题进行中」，
+    // playing 恒 false，故 effective = 会话覆盖 ?? 本模式设置（"隐藏地图标签"取反）。
+    // 覆盖为 false 时即使设置开着也不显示、为 true 时即使设置关着也显示 —— 与测验模式同一套语义。
+    const override = this.ctx.labelsOverride?.() ?? labelOverride();
+    const labelsOn = labelsVisibleWith(override, !this.hideLabels, false);
     if (this.granularity === 'world') {
       // 世界熟练度分析：世界地图，七档着色（同一套分界线），
       // 国名标签**默认常显**（worldLabelZoomThreshold=0 关掉「放大到 2.2x 才显示」的阈值）；
@@ -148,8 +154,8 @@ export class AnalysisMode extends BaseMode {
       this.ctx.renderer.render({
         colorOf: (iso) => worldColor(this.ctx.store, iso),
         disableTooltip: true,
-        hideLabels: this.hideLabels,
-        worldShowAllLabels: !this.hideLabels,
+        hideLabels: !labelsOn,
+        worldShowAllLabels: labelsOn,
         worldLabelZoomThreshold: 0,
       });
       // 侧栏聚合仍统计全世界（国家熟练度是共享分区），只加一行「地图范围」说明（Q29）
@@ -164,8 +170,8 @@ export class AnalysisMode extends BaseMode {
       this.ctx.renderer.render({
         colorOf: (adcode) => provinceColor(this.ctx.store, adcode),
         disableTooltip: true,
-        hideLabels: this.hideLabels,
-        showAllProvinceLabels: !this.hideLabels,
+        hideLabels: !labelsOn,
+        showAllProvinceLabels: labelsOn,
       });
       this.ctx.stats.refreshProvinceLevel();
       return;
@@ -175,8 +181,8 @@ export class AnalysisMode extends BaseMode {
     this.ctx.renderer.render({
       colorOf: (adcode) => scoreColor(this.ctx.store.getPractice(adcode).score),
       disableTooltip: true,
-      hideLabels: this.hideLabels,
-      showAllLabels: !this.hideLabels,
+      hideLabels: !labelsOn,
+      showAllLabels: labelsOn,
       labelZoomThreshold: 0,
     });
     this.ctx.stats.refresh(this.ctx.renderer.currentProvince());

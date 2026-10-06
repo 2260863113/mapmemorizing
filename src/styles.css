@@ -1413,20 +1413,76 @@ body.theme-dark .leaderboard-row {
 .admin-traffic-chart { height: 240px; width: 100%; }
 .admin-traffic-empty { padding: 6px 0 10px; text-align: left; }
 
+/* 条目行：时间 / 用户 / IP+地理 一行，UA 一行（可换行），判定标签一行，可折叠的环境详情。
+   为什么改成 grid + 多行：完整 UA 与完整环境字段本来就长，硬塞进一行只能靠截断（旧代码的
+   truncateUa 就是这么来的，恰好把爬虫判定依据的那段版本号截掉了）。 */
 .admin-log-list { display: grid; gap: 6px; }
 .log-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
+  display: grid;
+  gap: 5px;
   padding: 8px 12px;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--panel-bg);
   font-size: 12px;
 }
+/* 被判定为爬虫的行：整行描边跟随危险色（明暗主题各自的变量），管理员扫一眼就能挑出来 */
+.log-row-bot { border-color: var(--danger); }
+.log-main { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .log-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-user { color: var(--control-text); font-weight: 600; white-space: nowrap; }
-.log-ua { color: var(--muted-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-user-anon { color: var(--muted); }
+.log-ip { color: var(--muted-strong); word-break: break-all; }
+.log-ip-label { margin-right: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.log-ua-line { display: flex; align-items: baseline; gap: 6px; }
+.log-ua-label { flex: none; color: var(--muted); font-size: 11px; }
+/* 完整 UA 必须换行显示，不截断（word-break 让没有空格的长串也能断行） */
+.log-ua { color: var(--muted-strong); word-break: break-all; line-height: 1.5; }
+.log-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 爬虫徽标：用既有危险色变量（--timer-bg / --timer-text 是项目已有的红底红字一档），明暗主题都能看 */
+.log-bot {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--timer-bg);
+  color: var(--timer-text);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.log-bot-reason {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--control-bg);
+  color: var(--muted-strong);
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* 环境详情：原生 details，默认收起（不展开时行高与普通条目一致） */
+.log-env { color: var(--muted); }
+.log-env-summary { color: var(--accent); font-size: 12px; cursor: pointer; }
+.log-env-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--panel-border);
+}
+.log-env-key { color: var(--muted); white-space: nowrap; }
+.log-env-val { color: var(--muted-strong); word-break: break-all; }
+.log-env-empty { color: var(--muted); }
+/* 游玩条目：模式名与来源用同一套小徽标（与日志行的判定标签同款几何） */
+.log-mode,
+.log-source {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--control-bg);
+  color: var(--control-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
 
 .admin-ann-form {
   display: grid;

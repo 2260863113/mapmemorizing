@@ -34,6 +34,15 @@ export interface ModeCtx {
    * 结算/重置时自动打开。可选，未提供时不影响模式本身。
    */
   setTestRunning?: (running: boolean) => void;
+  /**
+   * 地图地名标签的**会话级覆盖**读数（Alt 热切换）。模式侧读它决定要不要画全量地名：
+   * `null` = 没有覆盖（走设置口径），`true`/`false` = 外壳强制显示/隐藏。
+   *
+   * 为什么要经 ctx 注入而不是模式直接 import 模块单例：单测能传任意覆盖值，
+   * 用例之间不会因为共享模块状态而互相污染（见 `map/labelVisibility.ts` 的说明）。
+   * 可选：未提供时模式侧回落到模块级单例，行为与外壳装配时一致。
+   */
+  labelsOverride?: () => boolean | null;
 }
 
 export type ProgressSegment = 'pending' | 'green' | 'red';
@@ -91,6 +100,15 @@ export interface ModeController {
   onEnd(): void;
   /** 重置会话（未实现 = 不支持重置）。 */
   onReset?(): void;
+  /**
+   * Tab **即时重开**（2026-09 需求 1）：不弹结算卡片、不提交成绩，直接开一局新的并立刻出首题。
+   * 返回是否已处理；未实现（熟练度分析）时为 undefined —— 外壳据此让 Tab 完全不管。
+   *
+   * 与 `onReset` 的分工：重置是「用户可见的结束」（全国范围还会先弹结算卡片），
+   * 即时重开是「连结算都不弹的重来」——两者的清理动作相似，但**成绩口径完全不同**，
+   * 故不合并成一个方法。
+   */
+  quickRestart?(): boolean;
   onViewChange(): void;
   /** 地图空白点击返回全国（从单省/省级全国下钻返回）：模式自定义返回目标粒度。缺省走通用返回（exit + renderer.backToNation + enter）。 */
   onBackToNation?(): void;

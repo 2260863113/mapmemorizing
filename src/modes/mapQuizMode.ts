@@ -5,6 +5,7 @@ import type { QuizSessionDiagnostics } from './quizDiagnostics';
 import { loadStoredGranularity, saveStoredGranularity } from './granularityStore';
 import { loadStoredNaming, saveStoredNaming } from './namingStore';
 import { browseLabelState, type BrowseLabelScope } from './browseLabels';
+import { labelOverride, labelsVisibleWith } from '../map/labelVisibility';
 import { activeChoiceOf, type NamingField } from './naming';
 import { preloadFlags, stopFlagPreload } from './flagPreload';
 import { BaseMode } from './baseMode';
@@ -371,14 +372,20 @@ export abstract class MapQuizMode extends BaseMode {
   /**
    * 浏览标签片段（喂给 `refresh()` 的渲染状态）。
    *
-   * 只在**未开始**或**已结算**时给全量地名；答题进行中返回空 —— 此时地图上只保留已作答的绿/红标签，
-   * 未作答的没有文字（用户口径：开始后标签清空，但答题反馈不退化）。
+   * 显示口径（2026-09）分三层，**优先看会话级覆盖**：
+   *   1. `ctx.labelsOverride()`（Alt 热切换）非 null 时它说了算 —— 覆盖为 true 时**答题进行中
+   *      也显示全量地名**（这正是"热切换"的意义：随手看一眼地图上的名字再按回去）；
+   *   2. 否则 = 「设置开关 `showBrowseLabels` && 非答题进行中」（`playing = started && !settled`）；
+   *   3. 答题进行中不显示全量，但**已作答的绿/红标签照旧**（那是答题反馈，由 provinceLabel/worldLabel 给）。
+   *
+   * 反例（曾经的实现）：只读设置开关 + 在此处写死 `if (started && !settled) return {}`。
+   * 那样 Alt 在答题中按下等于没反应，覆盖值形同虚设。
    */
   protected browseLabelState(): Partial<RenderState> {
-    if (this.started && !this.settled) return {};
-    return browseLabelState(this.browseLabelScope(), this.ctx.settings.showBrowseLabels, (id) =>
-      this.browseLabelContentOf(id),
-    );
+    const override = this.ctx.labelsOverride?.() ?? labelOverride();
+    const playing = this.started && !this.settled;
+    if (!labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, playing)) return {};
+    return browseLabelState(this.browseLabelScope(), true, (id) => this.browseLabelContentOf(id));
   }
 
   /**
@@ -492,6 +499,29 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   onEnd() { this.pause(); }
+
+  /**
+   * Tab **即时重开**（2026-09 需求 1）：不弹结算卡片、不提交成绩，直接开一局新的。
+   *
+   * 与「重置」的区别只有成绩口径：重置在全国范围会先弹结算卡片（让用户有机会提交），
+   * 而 Tab 的语义是「不记这一局了，重来」——故这里跳过 `showSettlementCard`，
+   * 也**不调用** `collectResult`/提交。
+   *
+   * 实现上借道 `exit()` 而不是自己逐个清字段：`exit()` 已经完整地停预取、
+   * 停秒表、清 started/paused/settled/rollbacking 与回滚定时器。照抄一遍必然漏（漏一处就是
+   * 「Tab 之后还停在暂停态、首题不出来」或者「回滚定时器稍后把上一局的题又标红一次」）。
+   * 随后 `start(false)`：`false` = 不续存档，内部 `clearSaved() + resetProgressState()`，
+   * 并立刻出首题（因此不需要在这里清 localStorage）。
+   *
+   * 守卫：`canStart()`（输入模式要求非暂停态）在 exit 之后必然成立；万一某子类将来收紧，
+   * `start()` 自己也会早退。返回值取「是否真的开起来了」——池子为空时 `start()` 会直接
+   * `finish()`（不出题），此时返回 false，外壳据此不上报一次「游玩」（免得统计里多一局空局）。
+   */
+  quickRestart(): boolean {
+    this.exit();
+    this.start(false);
+    return this.started;
+  }
 
   onReset() {
     this.stopwatch.stop();

@@ -176,6 +176,30 @@ describe('点击模式 · 开始后清空、结束后复现', () => {
     expect(last(states).worldShowAllLabels).toBe(true);
     vi.unstubAllGlobals();
   });
+
+  /**
+   * Alt 热切换（2026-09 需求 6）：外壳通过 `ctx.labelsOverride` 注入会话级覆盖。
+   * 覆盖为 true 时**答题进行中也显示全量**（这正是"热切换"的意义）；false 时任何情况都不显示。
+   */
+  it('会话覆盖 = true：答题进行中也显示全量标签', () => {
+    const { ctx, states } = makeCtx();
+    ctx.labelsOverride = () => true;
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.diagnostics().started = true; // 答题进行中
+    mode.refresh();
+    expect(last(states).worldShowAllLabels).toBe(true);
+    expect(last(states).worldLabelZoomThreshold).toBe(0);
+  });
+
+  it('会话覆盖 = false：即使未开始、设置开着也不显示', () => {
+    const { ctx, states } = makeCtx();
+    ctx.labelsOverride = () => false;
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.refresh();
+    expect(last(states).worldShowAllLabels).toBeUndefined();
+  });
 });
 
 describe('无尽闯关 · 未开始显示地名、开始后回到价格', () => {

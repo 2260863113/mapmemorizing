@@ -65,7 +65,7 @@ describe('validateScore', () => {
 
   it('rejects invalid scope (non-null, non-6-digit, non-sentinel)', () => {
     expect(() => validateScore({ ...base, scopeProvince: 'garbage' })).toThrow(ApiError);
-    expect(() => validateScore({ ...base, scopeProvince: '__province_nation__', totalUnits: 34, correct: 33 })).toThrow(ApiError);
+    expect(() => validateScore({ ...base, scopeProvince: '52000' })).toThrow(ApiError);
   });
 
   it('accepts continent scopes and treats them like world-nation', () => {
@@ -74,8 +74,10 @@ describe('validateScore', () => {
       expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 46, correct: 5, wrong: 0 })).toMatchObject({ scopeProvince: scope });
       expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 46, correct: 46, wrong: 0 })).toMatchObject({ scopeProvince: scope });
     }
-    // 与大洲榜同语义：不要求答完，但必须全对
-    expect(() => validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 5, wrong: 1 })).toThrow(ApiError);
+    // 新口径（2026-09）：不要求答完、也**不要求全对**，答错过照样能上榜（排名看答对个数）
+    expect(validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 5, wrong: 1 })).toMatchObject({ correct: 5 });
+    expect(validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 0, wrong: 3 })).toMatchObject({ wrong: 3 });
+    // 一题都没答仍然拒绝（唯一的门槛）
     expect(() => validateScore({ ...base, scopeProvince: '__continent_AS__', totalUnits: 46, correct: 0, wrong: 0 })).toThrow(ApiError);
   });
 
@@ -100,8 +102,8 @@ describe('validateScore', () => {
       const scope = `__subregion_${id}__`;
       expect(validateScore({ ...base, scopeProvince: scope, totalUnits: 11, correct: 3, wrong: 0 })).toMatchObject({ scopeProvince: scope });
     }
-    // 与世界/大洲榜同语义：不要求答完，但必须全对
-    expect(() => validateScore({ ...base, scopeProvince: '__subregion_EAS__', totalUnits: 5, correct: 3, wrong: 1 })).toThrow(ApiError);
+    // 与世界/大洲榜同语义（新口径）：不要求答完、不要求全对，答错也能提交
+    expect(validateScore({ ...base, scopeProvince: '__subregion_EAS__', totalUnits: 5, correct: 3, wrong: 1 })).toMatchObject({ correct: 3 });
     expect(() => validateScore({ ...base, scopeProvince: '__subregion_EAS__', totalUnits: 5, correct: 0, wrong: 0 })).toThrow(ApiError);
   });
 
@@ -132,6 +134,27 @@ describe('validateScore', () => {
 
   it('accepts 6-digit province scope fully correct', () => {
     expect(validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 9 })).toMatchObject({ scopeProvince: '520000' });
+  });
+
+  /**
+   * 2026-09 口径变更：`self`/`click` 的**所有范围**（含省级全国哨兵与单省 adcode）
+   * 都不再要求「全对/答完」，唯一门槛是至少答过一题（correct + wrong > 0）。
+   * 为什么：排名规则统一为「先比答对个数、再比用时」，答得少的名次自然靠后，
+   * 入口再卡全对会让「全国榜能交、省级榜交不了」自相矛盾。
+   */
+  it('省级全国 / 单省：部分作答（含答错）也可提交，0 题不可', () => {
+    // 单省 6 位 adcode：答 5 对 1 错 —— 旧口径要求全对，新口径允许
+    expect(validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 5, wrong: 1 })).toMatchObject({ correct: 5, wrong: 1 });
+    // 省级全国哨兵：答 33/34 —— 旧口径拒绝，新口径允许
+    expect(validateScore({ ...base, scopeProvince: '__province_nation__', totalUnits: 34, correct: 33 })).toMatchObject({ correct: 33 });
+    // 只答错也能提交（毕竟"答过题"了）
+    expect(validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 0, wrong: 2 })).toMatchObject({ wrong: 2 });
+    // 一题没答：拒绝
+    expect(() => validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 0, wrong: 0 })).toThrow(ApiError);
+    // 答对数超过题目总数：仍然拒绝（数据自洽性，与资格门槛无关）
+    expect(() => validateScore({ ...base, scopeProvince: '520000', totalUnits: 9, correct: 10, wrong: 0 })).toThrow(ApiError);
+    // 市级全国（null）同口径
+    expect(validateScore({ ...base, scopeProvince: null, totalUnits: 340, correct: 5, wrong: 2 })).toMatchObject({ correct: 5, wrong: 2 });
   });
 
   it('endless requires coins', () => {
@@ -191,9 +214,24 @@ describe('isBetter', () => {
     expect(isBetter({ mode: 'click', scopeProvince: '__world_nation__', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
   });
 
-  it('province: faster wins', () => {
+  /**
+   * 2026-09 口径变更：除 endless 外**所有** mode/scope 都是「correct 优先、同数比用时」。
+   * 旧口径里省级/单省只比用时（见上一版的 `province: faster wins`），
+   * 已随 `leaderboard.ts` 的 orderBy、`score.ts` 的 upsert WHERE 一起统一 —— 三处必须同口径，
+   * 否则会出现「榜上按 correct 排序、更优判断却只比用时」的自相矛盾。
+   */
+  it('province（单省 adcode）: correct 优先，同数再比用时', () => {
+    // 多答对一题即便慢得多也更优（旧口径会因用时更长判 false）
+    expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 6, elapsedMs: 9999 } as never, existing)).toBe(true);
     expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 5, elapsedMs: 999 } as never, existing)).toBe(true);
     expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
+    // 答对更少：再快也不更优
+    expect(isBetter({ mode: 'click', scopeProvince: '520000', correct: 4, elapsedMs: 1 } as never, existing)).toBe(false);
+  });
+
+  it('province-nation（省级全国哨兵）: 与单省同口径，correct 优先', () => {
+    expect(isBetter({ mode: 'self', scopeProvince: '__province_nation__', correct: 6, elapsedMs: 9999 } as never, existing)).toBe(true);
+    expect(isBetter({ mode: 'self', scopeProvince: '__province_nation__', correct: 5, elapsedMs: 1001 } as never, existing)).toBe(false);
   });
 
   it('puzzle: 已拼个数优先，同数比用时', () => {

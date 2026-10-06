@@ -4,6 +4,7 @@ import {
   buildTrafficOption,
   bucketStepMs,
   DEFAULT_TRAFFIC_RANGE,
+  defaultTooltipText,
   formatAxisLabel,
   formatBucketLabel,
   formatPointLabel,
@@ -307,6 +308,24 @@ describe('buildTrafficOption', () => {
     // 越界索引不产出文案（ECharts 在数据刷新瞬间可能给出旧索引）
     expect(dayFormatter([{ dataIndex: 99 }])).toBe('');
     expect(dayFormatter(undefined)).toBe('');
+  });
+
+  it('tooltip 口径可替换（游玩统计复用同一张图，只换量词）', () => {
+    const option = buildTrafficOption({
+      points,
+      unit: 'day',
+      palette,
+      tooltipText: (label, count) => `${label} · ${count} 次游玩`,
+    });
+    const tooltip = option.tooltip as { formatter: (params: unknown) => string };
+    // 传进文案函数的是**格式化后**的点标签（`9月16日`），不是服务端的桶标签
+    expect(tooltip.formatter([{ dataIndex: 2 }])).toBe('9月16日 · 34 次游玩');
+    expect(tooltip.formatter([{ dataIndex: 1 }])).toBe('9月15日 · 0 次游玩');
+    expect(tooltip.formatter([{ dataIndex: 99 }])).toBe('');
+    // 缺省口径仍是访问量（既有断言不动：见上一条用例）
+    const fallback = buildTrafficOption({ points, unit: 'day', palette }).tooltip as { formatter: (params: unknown) => string };
+    expect(fallback.formatter([{ dataIndex: 2 }])).toBe('9月16日 · 34 次访问');
+    expect(defaultTooltipText('9月16日', 34)).toBe('9月16日 · 34 次访问');
   });
 
   it('y 轴：从 0 起、整数刻度、上限取整齐上界', () => {

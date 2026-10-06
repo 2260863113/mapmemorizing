@@ -1,5 +1,7 @@
 import { json, handle } from '../../_lib/http';
 import { requireAdmin } from '../../_lib/guard';
+import { parseJson } from '../../_lib/rows';
+import { sanitizeClientEnv, type ClientEnv } from '../../_lib/clientEnv';
 import {
   buildStatsPoints,
   normalizeStatsRange,
@@ -14,10 +16,39 @@ interface LogRow {
   id: number;
   username: string | null;
   ua: string | null;
+  ip: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  env: string | null;
+  bot: number | null;
+  bot_reason: string | null;
   created_at: number;
 }
 
 const PAGE_SIZE = 50;
+
+/**
+ * 从 `bot_reason` 列解析理由标签。
+ *
+ * 该列存的是 JSON 数组字符串（写入端 = `JSON.stringify(classifyClient().reasons)`），但**读取端不做
+ * 假定**：手工执行过 SQL、或以后改了写入格式，坏值都只能退化成空数组 —— 解析失败不该让整个日志面板
+ * 打不开（这是管理端唯一能看到"到底发生了什么"的地方）。
+ */
+function parseBotReasons(raw: string | null): string[] {
+  const parsed = parseJson<unknown>(raw);
+  return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
+ * 把 `env` 列读回 `ClientEnv`。
+ *
+ * 读出来也过一遍 `sanitizeClientEnv`（而不是只 `parseJson`）：库里可能有旧版本写入的行或手工 INSERT
+ * 的行，形状不保证；白名单函数保证"给前端的永远是契约里的形状，且绝不抛错"。
+ */
+function parseClientEnv(raw: string | null): ClientEnv | null {
+  return sanitizeClientEnv(parseJson<unknown>(raw));
+}
 
 /**
  * 分桶统计 SQL。两条**常量**语句而不是拼接格式串：格式化串虽然来自 `statsWindow` 的字面量
@@ -63,7 +94,7 @@ export const onRequestGet = handle(
     const beforeParam = url.searchParams.get('before');
     const before = beforeParam && Number(beforeParam) > 0 ? Number(beforeParam) : 0;
     const rows = await env.DB.prepare(
-      `SELECT l.id, l.ua, l.created_at, u.username
+      `SELECT l.id, l.ua, l.ip, l.country, l.region, l.city, l.env, l.bot, l.bot_reason, l.created_at, u.username
        FROM access_logs l LEFT JOIN users u ON u.id = l.user_id
        WHERE ? = 0 OR l.id < ?
        ORDER BY l.id DESC
@@ -75,7 +106,15 @@ export const onRequestGet = handle(
     const logs = (rows.results ?? []).map((r) => ({
       id: r.id,
       username: r.username ?? null,
+      // UA 原样返回（**不截断**）：管理端要显示完整浏览器环境，截断会让"到底哪个版本"看不出答案
       ua: r.ua ?? '',
+      ip: r.ip ?? null,
+      country: r.country ?? null,
+      region: r.region ?? null,
+      city: r.city ?? null,
+      env: parseClientEnv(r.env),
+      bot: r.bot === 1,
+      botReasons: parseBotReasons(r.bot_reason),
       createdAt: r.created_at,
     }));
     return json({ logs });

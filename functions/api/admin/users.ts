@@ -11,7 +11,12 @@ interface AdminUserRow {
   created_at: number;
 }
 
-/** 管理员：用户列表（一个用户一行）。 */
+/**
+ * 管理员：用户列表（一个用户一行）。
+ *
+ * 排序（2026-09 调整）：管理员置顶，其余**越晚注册越靠前** —— 面板的日常用途是"看看刚注册的是谁"，
+ * 升序要翻到最后才能看到新用户，页数一多就等于看不到。
+ */
 export const onRequestGet = handle(
   requireAdmin(async (context) => {
     const env = context.env;
@@ -19,7 +24,7 @@ export const onRequestGet = handle(
     const rows = await env.DB.prepare(
       `SELECT id, username, hometown, avatar, is_admin, created_at
        FROM users
-       ORDER BY is_admin DESC, created_at ASC`,
+       ORDER BY is_admin DESC, created_at DESC`,
     ).all<AdminUserRow>();
 
     const users = (rows.results ?? []).map((r) => ({

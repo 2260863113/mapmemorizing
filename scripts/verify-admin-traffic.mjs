@@ -1,18 +1,22 @@
 /**
- * 本轮验收脚本（真实浏览器 + 真实指针事件）：管理端「日志记录」子视图的**流量折线图**与**时间范围选择**。
+ * 本轮验收脚本（真实浏览器 + 真实指针事件）：管理端「日志记录」与「游玩统计」两个子视图的
+ * **折线图 / 时间范围选择 / 条目列表**，以及日志条的完整 IP·UA·环境详情与爬虫标记。
  *
- * 需求口径（用户原话）：「将管理员用户管理的流量看板做成折线图（鼠标挪到标记点显示当天或小时的
- * 访问量），而且可以选择，近一天，近7天，近一个月的时间范围。」
+ * 需求口径（用户原话）：
+ *   · 日志记录要显示完整的浏览器环境与 IP，对境外 IP 与异常浏览器打关键词标签；
+ *     未登录的访问**有判定理由才显示「爬虫」**、**没有理由是「游客」**；
+ *   · 看板加「游玩统计」，样式与日志一致（曲线图 + 条目），统计点「开始」的次数（含 Tab 次数）。
  *
- * 为什么必须运行时验：单测只能覆盖 option 的构造（`trafficSeries.test.ts`），覆盖不到
- * 「ECharts 真的建了实例、容器真的非 0 高、鼠标挪到标记点真的弹出访问量、反复切 tab 没有累积实例」。
+ * 为什么必须运行时验：单测只能覆盖 option 的构造（`trafficSeries.test.ts`）与纯映射
+ * （`accessLog.test.ts`），覆盖不到「ECharts 真的建了实例、容器真的非 0 高、鼠标挪到标记点真的
+ * 弹出访问量、反复切 tab 没有累积实例、翻页追加的行与首屏同构」。
  *
  * 两个环境难点与对策：
  *   1. **本地静态服没有 Pages Functions** → 用 `Page.addScriptToEvaluateOnNewDocument` 在页面脚本
  *      执行前替换 `window.fetch`：`/api/**` 一律返回打桩数据，其余请求（`data/*.json` 等地图数据）
  *      照常走真网络；
  *   2. **管理端要求管理员登录态** → 同一时机写入 `localStorage['china-admin-session-v1']`
- *      （`src/authStore.ts` 的存储键），`isAdmin: true` 才会在下拉菜单里出现「日志记录」入口。
+ *      （`src/authStore.ts` 的存储键），`isAdmin: true` 才会在下拉菜单里出现管理入口。
  *
  * 用 Edge 而不是 Chrome：与其余验收脚本一致（本机 Chrome 过旧，不支持 ES module）。
  *
@@ -41,6 +45,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *   · 近一天（按小时）：24 点，标签 2026-09-15 15:00 → 2026-09-16 14:00，计数 3,6,9,…（倍数 3）
  *   · 近七天（按天）：7 点，标签 2026-09-10 → 2026-09-16，计数 7,14,21,…（倍数 7）
  *   · 近一个月（按天）：30 点，标签 …→ 2026-09-16，计数 11,22,…（倍数 11）
+ *
+ * 访问日志与游玩记录各 3 条（日志另有第 4 条），刻意覆盖本轮新增字段的**边角**：
+ *   · 第 1 条：完整环境 + 境外 IP + 超长 UA（> 90 字，旧 `truncateUa` 会截断）+ 未被判定为爬虫；
+ *   · 第 2 条：匿名（username=null）、无 IP、无环境快照、UA 是 curl，被判定爬虫（headless / keyword）
+ *     → 用户名位置必须显示「爬虫」；
+ *   · 第 3 条：登录用户但 `webdriver=true`、Cookie 关闭、UA 为空、region 与 city 同名（去重）；
+ *   · 第 4 条：匿名（username=null）但**没有任何判定理由** → 用户名位置必须显示「游客」
+ *     （2026-09 二次确认口径：标签与判定严格同源，不再"未登录即爬虫"）。
+ * 游玩记录覆盖三种来源/模式组合：start + 已知模式、tab + 另一已知模式、未登录 + 未知模式。
  */
 const STUB = `(function () {
   var ADMIN = { username: 'admintest', hometown: null, avatar: null, isAdmin: true, createdAt: 0, updatedAt: 0 };
@@ -59,9 +72,45 @@ const STUB = `(function () {
     }
     return out;
   }
+  /** 统计响应：范围 → 24/7/30 个点，计数按范围倍数递增；zeroRange 命中时该范围全为 0（验空态）。 */
+  function statsOf(url, zeroRange) {
+    var m = /[?&]range=([a-z]+)/.exec(url);
+    var range = (m && SPECS[m[1]]) ? m[1] : 'week';
+    var spec = SPECS[range];
+    var labels = labelsOf(spec);
+    var zero = zeroRange === range;
+    return {
+      range: range,
+      unit: spec.unit,
+      points: labels.map(function (label, i) { return { label: label, count: zero ? 0 : (i + 1) * spec.step }; }),
+    };
+  }
+
+  // 完整 UA，故意超过 90 字（旧实现截断到 90 字，脚本据此断言"显示完整 UA、不截断"）
+  var LONG_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.91';
+  var LOGS = [
+    { id: 100, username: 'admintest', ua: LONG_UA, ip: '203.0.113.7', country: '美国', region: 'California', city: 'Los Angeles',
+      env: { platform: 'Win32', language: 'zh-CN', languages: 'zh-CN,zh,en', timezone: 'Asia/Shanghai', screen: '1920x1080', viewport: '1280x720', dpr: 2, cores: 8, memory: 8, touch: 0, vendor: 'Google Inc.' },
+      bot: false, botReasons: [], createdAt: Date.UTC(2026, 8, 16, 13, 0) },
+    { id: 99, username: null, ua: 'curl/8.4.0', ip: null, country: null, region: null, city: null,
+      env: null, bot: true, botReasons: ['headless', 'keyword:curl'], createdAt: Date.UTC(2026, 8, 16, 12, 30) },
+    { id: 98, username: 'probeuser', ua: '', ip: '10.0.0.1', country: '中国', region: '上海', city: '上海',
+      env: { webdriver: true, cookie: false }, bot: true, botReasons: ['automation'], createdAt: Date.UTC(2026, 8, 16, 12, 0) },
+    // 匿名但**没有任何判定理由**：普通游客，用户名位置应当是「游客」而不是「爬虫」
+    { id: 97, username: null, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1',
+      ip: '198.51.100.9', country: '中国', region: null, city: null,
+      env: { platform: 'iPhone', language: 'zh-CN', timezone: 'Asia/Shanghai' }, bot: false, botReasons: [],
+      createdAt: Date.UTC(2026, 8, 16, 11, 30) },
+  ];
+  var PLAYS = [
+    { id: 300, username: 'admintest', mode: 'self', source: 'start', createdAt: Date.UTC(2026, 8, 16, 13, 5) },
+    { id: 299, username: null, mode: 'puzzle', source: 'tab', createdAt: Date.UTC(2026, 8, 16, 12, 40) },
+    { id: 298, username: 'probeuser', mode: 'unknown_mode', source: 'start', createdAt: Date.UTC(2026, 8, 16, 12, 10) },
+  ];
 
   window.__apiCalls = [];
-  window.__zeroRange = '';   // 置为某个范围名时，该范围的统计全为 0（验空态）
+  window.__zeroRange = '';       // 置为某个范围名时，该范围的**访问**统计全为 0（验空态）
+  window.__zeroPlayRange = '';   // 同上，作用于**游玩**统计
   window.__stub = function (url) {
     var json = function (body) { return { ok: true, status: 200, json: function () { return Promise.resolve(body); } }; };
     if (url.indexOf('/api/auth/me') >= 0) return json({ user: ADMIN });
@@ -70,23 +119,16 @@ const STUB = `(function () {
     if (url.indexOf('/api/leaderboard') >= 0) return json({ entries: [] });
     if (url.indexOf('/api/board') >= 0) return json({ posts: [] });
     if (url.indexOf('/api/admin/users') >= 0) return json({ users: [] });
-    if (url.indexOf('/api/admin/logs') >= 0 && url.indexOf('view=stats') >= 0) {
-      var m = /[?&]range=([a-z]+)/.exec(url);
-      var range = (m && SPECS[m[1]]) ? m[1] : 'week';
-      var spec = SPECS[range];
-      var labels = labelsOf(spec);
-      var zero = window.__zeroRange === range;
-      return json({
-        range: range,
-        unit: spec.unit,
-        points: labels.map(function (label, i) { return { label: label, count: zero ? 0 : (i + 1) * spec.step }; }),
-      });
+    // 注意：/api/admin/plays 必须排在 /api/play 之前（前者包含后者的前缀）
+    if (url.indexOf('/api/admin/plays') >= 0) {
+      if (url.indexOf('view=stats') >= 0) return json(statsOf(url, window.__zeroPlayRange));
+      return json({ plays: PLAYS });
     }
     if (url.indexOf('/api/admin/logs') >= 0) {
-      var logs = [];
-      for (var i = 0; i < 3; i++) logs.push({ id: 100 - i, username: 'admintest', ua: 'probe-UA-' + i, createdAt: Date.UTC(2026, 8, 16, 13, i) });
-      return json({ logs: logs });
+      if (url.indexOf('view=stats') >= 0) return json(statsOf(url, window.__zeroRange));
+      return json({ logs: LOGS });
     }
+    if (url.indexOf('/api/play') >= 0) return json({ ok: true });
     return json({ ok: true });
   };
 
@@ -174,6 +216,9 @@ try {
 
   const traffic = () => json('window.__probe.adminTraffic()');
   const pixelOf = (index) => json(`window.__probe.adminTrafficPointPixel(${index})`);
+  /** 游玩统计看板快照与像素（探针里另开的方法：adminTraffic 的字段与语义保持冻结）。 */
+  const plays = () => json('window.__probe.adminPlays()');
+  const playsPixelOf = (index) => json(`window.__probe.adminPlaysPointPixel(${index})`);
   const clickTab = async (view) => {
     await ev(`(() => {
       var b = Array.prototype.slice.call(document.querySelectorAll('.admin-tab')).filter(function (x) { return x.dataset.view === '${view}'; })[0];
@@ -182,16 +227,16 @@ try {
     })()`);
     await sleep(800);
   };
-  const clickRange = async (range) => {
+  const clickRange = async (range, rangeId = 'admin-traffic-range') => {
     const clicked = await ev(`(() => {
-      var b = document.querySelector('#admin-traffic-range button[data-range="${range}"]');
+      var b = document.querySelector('#${rangeId} button[data-range="${range}"]');
       if (b) b.click();
       return !!b;
     })()`);
     await sleep(700);
     return clicked;
   };
-  const activeRanges = () => json(`Array.prototype.slice.call(document.querySelectorAll('#admin-traffic-range button')).filter(function (b) { return b.classList.contains('active'); }).map(function (b) { return b.dataset.range; })`);
+  const activeRanges = (rangeId = 'admin-traffic-range') => json(`Array.prototype.slice.call(document.querySelectorAll('#${rangeId} button')).filter(function (b) { return b.classList.contains('active'); }).map(function (b) { return b.dataset.range; })`);
   /** 页面上此刻可见的浮层文本（ECharts 的 tooltip 挂在 body 下、position: absolute）。 */
   const overlays = () => json(`(function () {
     var out = [];
@@ -204,9 +249,9 @@ try {
     });
     return out;
   })()`);
-  const tooltipText = async () => {
+  const tooltipText = async (needle = '次访问') => {
     const list = (await overlays()) ?? [];
-    return list.find((t) => t.includes('次访问')) ?? null;
+    return list.find((t) => t.includes(needle)) ?? null;
   };
 
   // ==================== 0. 用真实路径进入「日志记录」 ====================
@@ -362,8 +407,8 @@ try {
   await ev(`(() => { document.getElementById('btn-theme').click(); return true })()`);
   await sleep(800);
 
-  // ==================== 7. 位置与下方列表保持不变 ====================
-  console.log('\n=== 7. 位置与访问明细保持不变 ===');
+  // ==================== 7. 位置、访问明细与「完整环境」字段 ====================
+  console.log('\n=== 7. 日志条：完整 IP / 完整 UA / 环境详情 / 爬虫标记 ===');
   await clickRange('week');
   const coexist = await json(`(function () {
     var body = document.getElementById('admin-body');
@@ -378,9 +423,156 @@ try {
       chartBeforeList: !!(chart && list) && (chart.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING) > 0,
     };
   })()`);
-  check('没有新增 tab（仍是三个子视图，流量看板留在「日志记录」里）', coexist.tabs.join(',') === 'users,logs,announcements', coexist.tabs);
-  check('下方访问明细与「加载更多」保持不变', coexist.rows === 3 && coexist.moreVisible && coexist.moreText === '加载更多', coexist);
+  check('tab 变成四个子视图（新增「游玩统计」，流量看板仍留在「日志记录」里）', coexist.tabs.join(',') === 'users,logs,plays,announcements', coexist.tabs);
+  check('下方访问明细与「加载更多」保持不变', coexist.rows === 4 && coexist.moreVisible && coexist.moreText === '加载更多', coexist);
   check('图表在访问明细之前（同一子视图内、顺序合理）', coexist.chartBeforeList === true);
+
+  /** 逐行读日志条的结构（行文本 / 各行子元素的类名 / 环境详情的键值）。 */
+  const logRows = await json(`(function () {
+    var list = document.querySelector('#admin-log-list');
+    return Array.prototype.map.call(list.querySelectorAll('.log-row'), function (row) {
+      return {
+        text: row.textContent.replace(/\\s+/g, ' ').trim(),
+        bot: row.classList.contains('log-row-bot'),
+        time: (row.querySelector('.log-time') || {}).textContent || '',
+        user: (row.querySelector('.log-user') || {}).textContent || '',
+        badge: (row.querySelector('.log-bot') || {}).textContent || '',
+        ip: (row.querySelector('.log-ip') || {}).textContent || '',
+        ua: (row.querySelector('.log-ua') || {}).textContent || '',
+        reasons: Array.prototype.map.call(row.querySelectorAll('.log-bot-reason'), function (b) { return b.textContent; }),
+        envKeys: Array.prototype.map.call(row.querySelectorAll('.log-env-key'), function (b) { return b.textContent; }),
+        envVals: Array.prototype.map.call(row.querySelectorAll('.log-env-val'), function (b) { return b.textContent; }),
+        envMissing: !!row.querySelector('.log-env-empty'),
+        hasEnvDetail: !!row.querySelector('details.log-env'),
+      };
+    });
+  })()`);
+  const [rowA, rowB, rowC, rowD] = logRows;
+  const LONG_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.91';
+  check('每行都有 时间 / 用户 / IP / UA / 可展开的环境详情 四类信息', logRows.length === 4 && logRows.every((r) => r.time && r.ip && r.ua && r.hasEnvDetail), logRows.map((r) => ({ time: r.time, ip: r.ip, ua: r.ua.length })));
+  check('显示**完整 UA（不截断）**：一字不差等于服务端给的长 UA（旧实现截到 90 字）', rowA.ua === LONG_UA && LONG_UA.length > 90, { got: rowA.ua.length, want: LONG_UA.length });
+  check('显示完整 IP + 地理标签（含国家/州/城市）', rowA.ip.includes('203.0.113.7') && rowA.text.includes('美国') && rowA.text.includes('California') && rowA.text.includes('Los Angeles'), rowA.ip);
+  check('无 IP 的行显示占位而不是空白/undefined', rowB.ip.includes('—') && !rowB.text.includes('undefined') && !rowB.text.includes('null'), rowB.ip);
+  check('region 与 city 同名时去重（「中国 · 上海」不重复）', (rowC.text.match(/上海/g) || []).length === 1, rowC.text);
+  check('环境详情逐字段渲染（平台/语言/时区/屏幕+像素比/视口/核心/内存/触控点/厂商）', rowA.envKeys.join('|') === '平台|语言|时区|屏幕|视口|核心|内存|触控点|厂商' && rowA.envVals.includes('Win32') && rowA.envVals.includes('zh-CN (zh-CN,zh,en)') && rowA.envVals.includes('Asia/Shanghai') && rowA.envVals.includes('1920x1080 @2x') && rowA.envVals.includes('8 GB'), { keys: rowA.envKeys, vals: rowA.envVals });
+  check('webdriver=true 与 cookie=false 也被渲染出来', rowC.envKeys.includes('WebDriver') && rowC.envVals.includes('true') && rowC.envKeys.includes('Cookie') && rowC.envVals.includes('false'), { keys: rowC.envKeys, vals: rowC.envVals });
+  check('env 为 null 的行显示占位（不留空白块）', rowB.envMissing === true, rowB.envMissing);
+
+  // 新口径（2026-09 二次确认）：未登录的访问**当且仅当有判定理由**才是「爬虫」，否则「游客」
+  check('未登录 + 有判定理由 → 用户名位置显示「爬虫」', rowB.user === '' && rowB.badge === '爬虫' && rowB.reasons.length > 0, { user: rowB.user, badge: rowB.badge, reasons: rowB.reasons });
+  check('未登录 + 没有任何判定理由 → 用户名位置显示「游客」（不是「爬虫」）', rowD.user === '游客' && rowD.badge === '' && rowD.reasons.length === 0, { user: rowD.user, badge: rowD.badge });
+  check('匿名游客行没有爬虫描边（.log-row-bot 只在判定命中时出现）', rowD.bot === false, logRows.map((r) => r.bot));
+  check('爬虫行有醒目标记（.log-row-bot 描边 + .log-bot 徽标）', rowB.bot === true && rowC.bot === true && rowA.bot === false, logRows.map((r) => r.bot));
+  check('判定标签按机器标签本地化（headless / keyword:curl / automation）', rowB.reasons.join('|') === '无头浏览器|关键词 curl' && (rowC.reasons.join('|') === '自动化标记' || rowC.reasons.join('|') === '自动化标记|自动化标记'), { rowB: rowB.reasons, rowC: rowC.reasons });
+  check('登录用户行的用户名是登录名（不是「爬虫」）', rowA.user === 'admintest' && rowC.user === 'probeuser', { a: rowA.user, c: rowC.user });
+  await shot('admin-traffic-8-logs-env.png');
+
+  // ==================== 7.5「加载更多」与首屏共用同一个行渲染函数 ====================
+  console.log('\n=== 7.5 翻页追加的行与首屏同构 ===');
+  const paged = await json(`(function () {
+    var more = document.getElementById('admin-log-more');
+    if (more) more.click();
+    return true;
+  })()`);
+  await sleep(900);
+  const appended = await json(`(function () {
+    var list = document.querySelector('#admin-log-list');
+    var rows = Array.prototype.slice.call(list.querySelectorAll('.log-row'));
+    return { count: rows.length, lastHasEnv: !!rows[rows.length - 1].querySelector('details.log-env'), lastHasIp: !!rows[rows.length - 1].querySelector('.log-ip'), lastHasUa: !!rows[rows.length - 1].querySelector('.log-ua') };
+  })()`);
+  check('点「加载更多」后追加的行同样带 IP / UA / 环境详情（首屏与翻页共用同一个行渲染函数）', paged === true && appended.count === 8 && appended.lastHasEnv && appended.lastHasIp && appended.lastHasUa, appended);
+
+  // ==================== 8. 游玩统计子视图 ====================
+  console.log('\n=== 8. 游玩统计（与日志逐字同构：曲线图 + 条目 + 范围按钮 + 加载更多） ===');
+  await ev(`(() => { window.__zeroRange = ''; return true })()`);
+  await clickTab('plays');
+  const playsBase = await plays();
+  check('点「游玩统计」tab 进入 plays 视图', playsBase.view === 'plays', playsBase.view);
+  check('游玩统计图表容器非 0 高、已挂载且有 canvas（与日志同一套图表）', playsBase.mounted === true && playsBase.height > 100 && playsBase.canvasCount >= 1, { height: playsBase.height, canvas: playsBase.canvasCount });
+  check('游玩统计默认「近七天」= 7 个点、粒度按天，x 轴刻度是日期', playsBase.range === 'week' && playsBase.unit === 'day' && playsBase.pointCount === 7 && playsBase.option?.xAxis.join(',') === '9/10,9/11,9/12,9/13,9/14,9/15,9/16', { counts: playsBase.option?.counts, xAxis: playsBase.option?.xAxis });
+  const playStatsCalls = (await json(`window.__apiCalls.filter(function (c) { return c.url.indexOf('/api/admin/plays') >= 0 && c.url.indexOf('view=stats') >= 0; })`)) ?? [];
+  check('进入游玩统计即请求 /api/admin/plays?view=stats&range=week（不是复用访问日志接口）', playStatsCalls.length >= 1 && playStatsCalls[0].url.includes('range=week'), playStatsCalls.map((c) => c.url));
+  const playCalls = (await json(`window.__apiCalls.filter(function (c) { return c.url.indexOf('/api/admin/plays') >= 0 && c.url.indexOf('view=stats') < 0; })`)) ?? [];
+  check('同时请求了游玩条目列表 /api/admin/plays?before=0', playCalls.length >= 1 && playCalls[0].url.includes('before=0'), playCalls.map((c) => c.url));
+
+  const playDom = await json(`(function () {
+    var body = document.getElementById('admin-body');
+    var list = document.getElementById('admin-play-list');
+    var more = document.getElementById('admin-play-more');
+    var rows = Array.prototype.slice.call(list.querySelectorAll('.log-row'));
+    return {
+      sectionTitles: Array.prototype.map.call(body.querySelectorAll('.admin-section-title'), function (s) { return s.textContent.trim(); }),
+      hasLogsChartId: !!body.querySelector('#admin-traffic'),
+      hasPlaysChartId: !!body.querySelector('#admin-plays'),
+      hasPlaysRange: !!body.querySelector('#admin-plays-range'),
+      hasPlaysEmpty: !!body.querySelector('#admin-plays-empty'),
+      rowCount: rows.length,
+      rows: rows.map(function (r) {
+        return {
+          time: (r.querySelector('.log-time') || {}).textContent || '',
+          user: (r.querySelector('.log-user') || {}).textContent || '',
+          mode: (r.querySelector('.log-mode') || {}).textContent || '',
+          source: (r.querySelector('.log-source') || {}).textContent || '',
+        };
+      }),
+      moreVisible: !!more && getComputedStyle(more).display !== 'none',
+      moreText: more ? more.textContent.trim() : '',
+      rangeTexts: Array.prototype.map.call(document.querySelectorAll('#admin-plays-range button'), function (b) { return b.textContent; }),
+      segmented: (function () { var r = document.getElementById('admin-plays-range'); return !!r && r.className.indexOf('mode-segmented') >= 0; })(),
+    };
+  })()`);
+  check('段落标题与日志同构（游玩量统计 / 最近游玩）', playDom.sectionTitles.join('|') === '游玩量统计|最近游玩', playDom.sectionTitles);
+  check('共用同一套范围按钮样式（.mode-segmented + 近一天/近七天/近一个月）', playDom.segmented && playDom.rangeTexts.join('|') === '近一天|近七天|近一个月', playDom.rangeTexts);
+  check('图表容器用**另一组 id**（#admin-plays / #admin-plays-empty），日志的 #admin-traffic 不再同时存在', playDom.hasPlaysChartId && playDom.hasPlaysEmpty && playDom.hasPlaysRange && !playDom.hasLogsChartId, playDom);
+  check('条目：时间 / 用户 / 模式名 / 来源 四项齐全', playDom.rowCount === 3 && playDom.rows.every((r) => r.time && r.user && r.mode && r.source), playDom.rows);
+  check('模式名复用 modes/capabilities 的模式名（输入模式 / 拼图模式），未知模式原样显示', playDom.rows[0].mode === '输入模式' && playDom.rows[1].mode === '拼图模式' && playDom.rows[2].mode === 'unknown_mode', playDom.rows.map((r) => r.mode));
+  check('来源区分 开始按钮 / Tab 重置（Tab 次数计入统计）', playDom.rows[0].source === '开始按钮' && playDom.rows[1].source === 'Tab 重置', playDom.rows.map((r) => r.source));
+  check('未登录的游玩条目显示「未登录」（不是日志口径的「爬虫」）', playDom.rows[1].user === '未登录', playDom.rows[1].user);
+  check('「加载更多」按钮复用 .board-load-more 且文案与日志一致', playDom.moreVisible && playDom.moreText === '加载更多', { visible: playDom.moreVisible, text: playDom.moreText });
+
+  // tooltip 口径：同一张图，量词换成「次游玩」
+  await moveTo(6, 6);
+  const playPx = await playsPixelOf(4);
+  if (playPx) {
+    await moveTo(playPx[0], playPx[1]);
+    const playTip = await tooltipText('次游玩');
+    check('游玩统计 tooltip 逐字正确：「9月14日 · 35 次游玩」（不是「次访问」）', playTip === '9月14日 · 35 次游玩' && (await tooltipText('次访问')) === null, playTip);
+    await shot('admin-traffic-9-plays-tooltip.png');
+  } else {
+    check('游玩统计 tooltip 逐字正确：「9月14日 · 35 次游玩」（不是「次访问」）', false, '取不到标记点像素');
+  }
+  await moveTo(6, 6);
+
+  // 范围切换：只刷新图表 + 重新请求 plays 统计 + 不重建 #admin-body
+  await ev(`(() => { document.getElementById('admin-body').dataset.probeMark = 'plays-keep-me'; return true })()`);
+  const clickedPlaysDay = await clickRange('day', 'admin-plays-range');
+  const playsDay = await plays();
+  const playsDayMark = await ev(`(() => document.getElementById('admin-body').dataset.probeMark || '')()`);
+  const playsDayCalls = (await json(`window.__apiCalls.filter(function (c) { return c.url.indexOf('/api/admin/plays') >= 0 && c.url.indexOf('range=day') >= 0; })`)) ?? [];
+  check('游玩统计范围按钮可切「近一天」= 24 点、粒度按小时、真去拉了 day 范围', clickedPlaysDay === true && playsDay.unit === 'hour' && playsDay.pointCount === 24 && playsDay.option?.xAxis.length === 24 && playsDayCalls.length >= 1, { unit: playsDay.unit, points: playsDay.pointCount, calls: playsDayCalls.length });
+  check('切范围**不重建** #admin-body（局部刷新，不丢滚动位置）', playsDayMark === 'plays-keep-me', playsDayMark);
+  check('游玩统计的按钮选中态跟随', (await activeRanges('admin-plays-range')).join(',') === 'day');
+  await shot('admin-traffic-10-plays-day.png');
+
+  // 空态：游玩统计有自己的空态文案（admin.noPlayStats）
+  console.log('\n=== 9. 游玩统计空态 ===');
+  await ev(`(() => { window.__zeroPlayRange = 'day'; return true })()`);
+  await clickRange('week', 'admin-plays-range');
+  await clickRange('day', 'admin-plays-range');
+  const playsEmpty = await plays();
+  const playsEmptyText = await ev(`(() => { var el = document.getElementById('admin-plays-empty'); return el ? el.textContent.trim() : ''; })()`);
+  check('游玩统计空态显示 admin.noPlayStats（「暂无游玩数据」）且时间窗口仍在', playsEmpty.emptyVisible === true && playsEmptyText === '暂无游玩数据' && playsEmpty.pointCount === 24, { text: playsEmptyText, points: playsEmpty.pointCount });
+  check('游玩统计空态与日志空态是两套文案（不串用 admin.noStats）', playsEmptyText !== '暂无统计数据', playsEmptyText);
+  await shot('admin-traffic-11-plays-empty.png');
+  await ev(`(() => { window.__zeroPlayRange = ''; return true })()`);
+  await clickRange('week', 'admin-plays-range');
+  check('恢复有数据后空态自动收起', (await plays()).emptyVisible === false);
+
+  // 离开 plays 视图：两个容器的实例都被换掉，不残留
+  await clickTab('logs');
+  const backToLogs = await traffic();
+  const playsGone = await plays();
+  check('切回日志视图后：日志图表重新挂上、游玩容器不再存在（实例随 DOM 一起销毁）', backToLogs.mounted === true && backToLogs.canvasCount >= 1 && playsGone.rect === null && playsGone.canvasCount === 0, { logs: backToLogs.canvasCount, playsRect: playsGone.rect });
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n===== ${results.length - failed.length}/${results.length} 通过 =====`);

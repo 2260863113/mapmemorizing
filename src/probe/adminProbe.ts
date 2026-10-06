@@ -1,10 +1,13 @@
 /**
- * 管理端的运行时验收探针（本轮：日志记录子视图的**流量折线图**）。
+ * 管理端的运行时验收探针（本轮：日志记录 + 游玩统计两个子视图的**折线图**）。
  *
  * 只读快照，不修改面板状态：折线图这类"画没画出来"的需求，单测只能覆盖 option 的构造，
  * 覆盖不到「ECharts 真的建了实例、真的画了 24 个点、鼠标挪上去真的弹出访问量」。
  * 故这里把面板的只读诊断视图摊平成一份 JSON，并把**标记点的页面像素**交给验收脚本，
  * 由脚本派发真实鼠标事件（`Input.dispatchMouseEvent`）。
+ *
+ * `adminTraffic()` / `adminTrafficPointPixel()` 的名字与返回结构**保持冻结**（既有验收脚本依赖）；
+ * 游玩统计另开 `adminPlays()` / `adminPlaysPointPixel()`，两者读的是同一份面板诊断视图。
  */
 import type { AppDiagnostics } from '../appDiagnostics';
 
@@ -41,5 +44,30 @@ export function adminProbe(a: AppDiagnostics) {
     adminTrafficPointPixel(index: number) {
       return d.trafficPointClientPixel(index);
     },
+
+    /** 游玩统计看板快照：与 `adminTraffic()` 同形，只是容器是 `#admin-plays`。 */
+    adminPlays() {
+      const readback = d.playsReadback();
+      return {
+        view: d.view,
+        range: d.trafficRange,
+        unit: d.playsUnit,
+        mounted: d.playsMounted,
+        pointCount: d.playsPointCount,
+        counts: d.playsCounts,
+        labels: d.playsLabels,
+        canvasCount: d.playsCanvasCount(),
+        height: d.playsHeight(),
+        emptyVisible: d.playsEmptyVisible,
+        rect: d.playsRect(),
+        option: readback,
+      };
+    },
+
+    /** 第 index 个游玩数据点的页面像素（脚本据此悬停验证 tooltip 口径是「次游玩」）。 */
+    adminPlaysPointPixel(index: number) {
+      return d.playsPointClientPixel(index);
+    },
   };
 }
+
