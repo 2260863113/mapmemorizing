@@ -1,6 +1,7 @@
 import { json, handle } from '../../_lib/http';
 import { requireAdmin } from '../../_lib/guard';
 import { parseJson } from '../../_lib/rows';
+import { parseBotReasons } from '../../_lib/botDetect';
 import { sanitizeClientEnv, type ClientEnv } from '../../_lib/clientEnv';
 import {
   buildStatsPoints,
@@ -21,24 +22,13 @@ interface LogRow {
   region: string | null;
   city: string | null;
   env: string | null;
+  visitor: string | null;
   bot: number | null;
   bot_reason: string | null;
   created_at: number;
 }
 
 const PAGE_SIZE = 50;
-
-/**
- * 从 `bot_reason` 列解析理由标签。
- *
- * 该列存的是 JSON 数组字符串（写入端 = `JSON.stringify(classifyClient().reasons)`），但**读取端不做
- * 假定**：手工执行过 SQL、或以后改了写入格式，坏值都只能退化成空数组 —— 解析失败不该让整个日志面板
- * 打不开（这是管理端唯一能看到"到底发生了什么"的地方）。
- */
-function parseBotReasons(raw: string | null): string[] {
-  const parsed = parseJson<unknown>(raw);
-  return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
-}
 
 /**
  * 把 `env` 列读回 `ClientEnv`。
@@ -53,6 +43,14 @@ function parseClientEnv(raw: string | null): ClientEnv | null {
 /**
  * 分桶统计 SQL。两条**常量**语句而不是拼接格式串：格式化串虽然来自 `statsWindow` 的字面量
  * 表，但「SQL 里出现模板字符串」本身就该避免，读的人不该去追它到底安不安全。
+ * 「排除管理员」也因此**逐条写在 SQL 里**，不做字符串拼接。
+ *
+ * ⚠ **管理员自己产生的访问不计入**（2026-10 用户口径：日志统计与游玩统计都不算管理员自己）：
+ * 站长的浏览器一天要刷几十次管理端，算进去看板就基本只剩自己。判断用
+ * `COALESCE(u.is_admin, 0) = 0` 而不是 `u.is_admin = 0` —— `user_id` 指向已删除用户时
+ * `LEFT JOIN` 给出 NULL，那种行是**访客**，不该被顺手过滤掉。
+ * 口径放在 SQL 而不是前端：**看板折线是服务端分组算出来的**，前端过滤只能过滤明细列表，
+ * 两条数据会当场自相矛盾（"表里没有管理员、折线却按含管理员计数"）。
  *
  * ⚠ 桶标签**不用** SQLite 的 `'localtime'`：D1 没有 tzdata，`'localtime'` 一律按 UTC 解析，
  * 而 Worker 的 `Date` 在本地 dev 下跟宿主时区 —— 两边会差整整 8 个小时桶（标签写 14:00、
@@ -61,13 +59,13 @@ function parseClientEnv(raw: string | null): ClientEnv | null {
  * 是同一个变换（详见 `_lib/statsWindow.ts` 文件头）。
  */
 const STAT_SQL: Record<StatsUnit, string> = {
-  hour: `SELECT strftime('%Y-%m-%d %H:00', created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
-         FROM access_logs
-         WHERE created_at >= ?1
+  hour: `SELECT strftime('%Y-%m-%d %H:00', l.created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
+         FROM access_logs l LEFT JOIN users u ON u.id = l.user_id
+         WHERE l.created_at >= ?1 AND COALESCE(u.is_admin, 0) = 0
          GROUP BY label`,
-  day: `SELECT strftime('%Y-%m-%d', created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
-        FROM access_logs
-        WHERE created_at >= ?1
+  day: `SELECT strftime('%Y-%m-%d', l.created_at / 1000 + ?2, 'unixepoch') AS label, COUNT(*) AS count
+        FROM access_logs l LEFT JOIN users u ON u.id = l.user_id
+        WHERE l.created_at >= ?1 AND COALESCE(u.is_admin, 0) = 0
         GROUP BY label`,
 };
 
@@ -90,13 +88,13 @@ export const onRequestGet = handle(
       return json({ range, unit: spec.unit, points });
     }
 
-    // 日志明细：分页（before 为日志 id，倒序）
+    // 日志明细：分页（before 为日志 id，倒序）。同样**排除管理员**（口径与看板一致，见 STAT_SQL 上方注释）
     const beforeParam = url.searchParams.get('before');
     const before = beforeParam && Number(beforeParam) > 0 ? Number(beforeParam) : 0;
     const rows = await env.DB.prepare(
-      `SELECT l.id, l.ua, l.ip, l.country, l.region, l.city, l.env, l.bot, l.bot_reason, l.created_at, u.username
+      `SELECT l.id, l.ua, l.ip, l.country, l.region, l.city, l.env, l.visitor, l.bot, l.bot_reason, l.created_at, u.username
        FROM access_logs l LEFT JOIN users u ON u.id = l.user_id
-       WHERE ? = 0 OR l.id < ?
+       WHERE (? = 0 OR l.id < ?) AND COALESCE(u.is_admin, 0) = 0
        ORDER BY l.id DESC
        LIMIT ?`,
     )
@@ -113,6 +111,8 @@ export const onRequestGet = handle(
       region: r.region ?? null,
       city: r.city ?? null,
       env: parseClientEnv(r.env),
+      // 游客编号（4 位，前端生成并长期不变）；老行/未上报为 null，前端退化成「游客」/「爬虫」
+      visitor: r.visitor ?? null,
       bot: r.bot === 1,
       botReasons: parseBotReasons(r.bot_reason),
       createdAt: r.created_at,

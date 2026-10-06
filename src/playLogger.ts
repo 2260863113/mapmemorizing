@@ -22,6 +22,7 @@
 import { api } from './api';
 import type { PlaySource } from './api';
 import { collectClientEnv } from './clientEnv';
+import { visitorId } from './visitorId';
 
 /**
  * 上报一次游玩。
@@ -29,11 +30,28 @@ import { collectClientEnv } from './clientEnv';
  * @param mode   当前模式 id（服务端白名单：self/click/endless/puzzle）。
  * @param source `start` = 点「开始」按钮；`tab` = 按 Tab 快速重开。
  * @param token  会话 token（未登录时 undefined，服务端按匿名记录）。
+ * @param scope  出题范围（2026-10 需求 5）：标识 + 展示名，供管理端按范围统计。
+ *               没有范围概念的模式（无尽闯关）传 `null`，服务端存 NULL、前端显示占位。
  */
-export function reportPlay(mode: string, source: PlaySource, token?: string): void {
+export function reportPlay(
+  mode: string,
+  source: PlaySource,
+  token?: string,
+  scope?: { scopeProvince: string | null; scopeLabel: string | null },
+): void {
   try {
     void api
-      .play({ mode, source, env: collectClientEnv() }, token)
+      .play(
+        {
+          mode,
+          source,
+          env: collectClientEnv(),
+          visitor: visitorId() ?? undefined,
+          scopeProvince: scope?.scopeProvince ?? null,
+          scopeLabel: scope?.scopeLabel ?? null,
+        },
+        token,
+      )
       .catch((err: unknown) => console.warn('[play] 游玩上报失败（不影响玩法）', err));
   } catch (err) {
     // api.play 本身在极端情况下也可能同步抛（例如请求参数序列化失败）：同样不能影响玩法

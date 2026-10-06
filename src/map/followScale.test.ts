@@ -34,14 +34,14 @@ function loadAreas(): Record<string, number> {
 describe('worldFollowScale / cityFollowScale（系数表）', () => {
   it('非洲 ×0.5，其余大洲一律 ×0.75', () => {
     expect(worldFollowScale('AF')).toBe(SELF_FOLLOW_SCALE_AFRICA);
-    expect(worldFollowScale('AF')).toBe(0.5);
+    expect(worldFollowScale('AF')).toBe(0.8);
     for (const c of ['AS', 'EU', 'NA', 'SA', 'OC'] as Continent[]) {
       expect(worldFollowScale(c), c).toBe(SELF_FOLLOW_SCALE);
       expect(worldFollowScale(c), c).toBe(0.75);
     }
   });
 
-  it('大洲缺失按通用档（不因一个空字段突然拉到 0.5 倍）', () => {
+  it('大洲缺失按通用档（不因一个空字段突然换档）', () => {
     expect(worldFollowScale(null)).toBe(0.75);
     expect(worldFollowScale(undefined)).toBe(0.75);
   });
@@ -53,12 +53,12 @@ describe('worldFollowScale / cityFollowScale（系数表）', () => {
 });
 
 describe('scaleFollowZoom（基准 × 系数 → 夹取）', () => {
-  it('乘法而不是加法：12 × 0.75 = 9（不是 12 + 2 = 14）', () => {
+  it('乘法而不是加法：12 × 0.75 = 9、12 × 0.8 = 9.6（不是 12 + 2 = 14 / +6 = 18）', () => {
     expect(scaleFollowZoom(12, SELF_FOLLOW_SCALE)).toBe(9);
-    expect(scaleFollowZoom(12, SELF_FOLLOW_SCALE_AFRICA)).toBe(6);
-    // 明确的"不是加法"断言：旧版 +2/+6 的结果必须不再出现
-    expect(scaleFollowZoom(12, 0.75)).not.toBe(14);
-    expect(scaleFollowZoom(12, 0.5)).not.toBe(18);
+    expect(scaleFollowZoom(12, SELF_FOLLOW_SCALE_AFRICA)).toBeCloseTo(9.6, 9);
+    // 明确的"不是加法"断言：+2 / +6 时代的结果必须不再出现
+    expect(scaleFollowZoom(12, SELF_FOLLOW_SCALE)).not.toBe(14);
+    expect(scaleFollowZoom(12, SELF_FOLLOW_SCALE_AFRICA)).not.toBe(18);
   });
 
   it('夹到地图缩放范围 [MIN_ZOOM, MAX_ZOOM]', () => {
@@ -87,10 +87,12 @@ describe('系数作用在真实面积映射上（世界档）', () => {
     }
   });
 
-  it('非洲国：乘 0.5 后恰为基准的一半，且比普通档更远', () => {
+  it('非洲国：乘 0.8 后恰为基准的 4/5，且比通用档**略近**（2026-10 由 0.5 改回 0.8）', () => {
     for (const iso of ['ZAF', 'EGY', 'NGA']) {
-      expect(scaleFollowZoom(zOf(iso), SELF_FOLLOW_SCALE_AFRICA), iso).toBeCloseTo(zOf(iso) * 0.5, 9);
-      expect(scaleFollowZoom(zOf(iso), SELF_FOLLOW_SCALE_AFRICA), iso).toBeLessThan(
+      expect(scaleFollowZoom(zOf(iso), SELF_FOLLOW_SCALE_AFRICA), iso).toBeCloseTo(zOf(iso) * 0.8, 9);
+      // 0.8 > 0.75 ⇒ 非洲档比通用档更"近"（倍率更大）。它与最初那版（非洲更远）是**反过来的**，
+      // 所以这条断言要显式写清楚方向，免得下一次调整时又改反。
+      expect(scaleFollowZoom(zOf(iso), SELF_FOLLOW_SCALE_AFRICA), iso).toBeGreaterThan(
         scaleFollowZoom(zOf(iso), SELF_FOLLOW_SCALE),
       );
     }

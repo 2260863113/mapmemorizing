@@ -1413,13 +1413,12 @@ body.theme-dark .leaderboard-row {
 .admin-traffic-chart { height: 240px; width: 100%; }
 .admin-traffic-empty { padding: 6px 0 10px; text-align: left; }
 
-/* 条目行：时间 / 用户 / IP+地理 一行，UA 一行（可换行），判定标签一行，可折叠的环境详情。
-   为什么改成 grid + 多行：完整 UA 与完整环境字段本来就长，硬塞进一行只能靠截断（旧代码的
-   truncateUa 就是这么来的，恰好把爬虫判定依据的那段版本号截掉了）。 */
+/* 条目行（2026-10 改版）：外层只留「时间 · 用户 · 判定标签」一行，**右侧**一个「环境详情」展开入口；
+   IP 与完整浏览器环境（UA + 环境字段）全部收进折叠区。
+   为什么收起：日志列表一屏要看几十条，完整 UA 与环境字段把它撑成每条五行，反而看不出重点。
+   为什么外层不截断：展开后必须一字不差 —— 爬虫判定（无头/版本过旧）靠的正是 UA 尾部那一段。 */
 .admin-log-list { display: grid; gap: 6px; }
 .log-row {
-  display: grid;
-  gap: 5px;
   padding: 8px 12px;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -1428,10 +1427,20 @@ body.theme-dark .leaderboard-row {
 }
 /* 被判定为爬虫的行：整行描边跟随危险色（明暗主题各自的变量），管理员扫一眼就能挑出来 */
 .log-row-bot { border-color: var(--danger); }
-.log-main { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+/* 游玩记录不是可展开的行：去掉 summary 的交互外观，只借用同一套行样式 */
+.log-row-plain { display: block; }
+.log-line { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+/* `<summary>` 自带三角标记：去掉它，改由右侧的「环境详情」文字承担展开入口 */
+summary.log-line { cursor: pointer; list-style: none; }
+summary.log-line::-webkit-details-marker { display: none; }
 .log-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-user { color: var(--control-text); font-weight: 600; white-space: nowrap; }
 .log-user-anon { color: var(--muted); }
+/* 展开入口推到最右（margin-left:auto），不再单独占一行；展开后用箭头提示当前状态 */
+.log-env-toggle { margin-left: auto; color: var(--accent); font-size: 12px; white-space: nowrap; }
+.log-env-toggle::after { content: ' ▾'; font-size: 10px; }
+details[open] > summary .log-env-toggle::after { content: ' ▴'; }
+.log-fold { display: grid; gap: 5px; margin-top: 6px; }
 .log-ip { color: var(--muted-strong); word-break: break-all; }
 .log-ip-label { margin-right: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .log-ua-line { display: flex; align-items: baseline; gap: 6px; }
@@ -1439,6 +1448,9 @@ body.theme-dark .leaderboard-row {
 /* 完整 UA 必须换行显示，不截断（word-break 让没有空格的长串也能断行） */
 .log-ua { color: var(--muted-strong); word-break: break-all; line-height: 1.5; }
 .log-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.log-mode { color: var(--control-text); }
+.log-scope { color: var(--muted-strong); }
+.log-source { color: var(--muted); }
 /* 爬虫徽标：用既有危险色变量（--timer-bg / --timer-text 是项目已有的红底红字一档），明暗主题都能看 */
 .log-bot {
   padding: 1px 8px;
@@ -1458,9 +1470,7 @@ body.theme-dark .leaderboard-row {
   font-size: 11px;
   white-space: nowrap;
 }
-/* 环境详情：原生 details，默认收起（不展开时行高与普通条目一致） */
-.log-env { color: var(--muted); }
-.log-env-summary { color: var(--accent); font-size: 12px; cursor: pointer; }
+/* 折叠区里的环境字段网格（外层容器是行本身，见上面的 .log-fold） */
 .log-env-grid {
   display: grid;
   grid-template-columns: auto 1fr;

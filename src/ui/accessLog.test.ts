@@ -8,6 +8,7 @@ import {
   isAnonymous,
   isBotEntry,
   logUserName,
+  playScopeLabel,
   showsBotLabel,
   MISSING,
   playModeLabel,
@@ -174,9 +175,20 @@ describe('游玩条目', () => {
     expect(playModeLabel(null)).toBe(MISSING);
   });
 
-  it('未登录的游玩条目显示「未登录」（不是日志口径的「爬虫」/「游客」）', () => {
-    expect(playUserName('admintest')).toBe('admintest');
-    expect(playUserName(null)).toBe('未登录');
-    expect(logUserName({ username: null, bot: false, botReasons: [] })).toBe('游客');
+  it('未登录的游玩条目显示「游客1234」而不是「未登录」（2026-10 需求 5）', () => {
+    expect(playUserName({ username: 'admintest', bot: false })).toBe('admintest');
+    expect(playUserName({ username: null, bot: false, visitor: '1234' })).toBe('游客1234');
+    expect(playUserName({ username: null, bot: true, visitor: '1234' })).toBe('爬虫1234');
+    // 编号缺失（老行/无痕）退化成不带编号的词根
+    expect(playUserName({ username: null, bot: false, visitor: null })).toBe('游客');
+    // 与日志同一套口径
+    expect(logUserName({ username: null, bot: false, botReasons: [], visitor: '1234' })).toBe('游客1234');
+  });
+
+  it('出题范围：优先展示名，老行退化成哨兵，两者都缺给占位', () => {
+    expect(playScopeLabel({ scopeLabel: '世界', scopeProvince: '__world_nation__' })).toBe('世界');
+    expect(playScopeLabel({ scopeLabel: null, scopeProvince: '__province_nation__' })).toBe('__province_nation__');
+    expect(playScopeLabel({ scopeLabel: '  ', scopeProvince: '' })).toBe(MISSING);
+    expect(playScopeLabel(null)).toBe(MISSING);
   });
 });

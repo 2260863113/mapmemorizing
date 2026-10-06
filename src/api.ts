@@ -61,6 +61,8 @@ export interface AccessLogEntry {
   city: string | null;
   /** 客户端自报的浏览器环境快照（见 `src/clientEnv.ts`）；爬虫/旧客户端为 null。 */
   env: ClientEnv | null;
+  /** 游客编号（4 位数字，见 `src/visitorId.ts`）；未登录时用于区分不同游客，无则 null。 */
+  visitor: string | null;
   /** 服务端关键词判定：这条记录是否疑似爬虫/自动化客户端。 */
   bot: boolean;
   /** 判定的理由（本地化前的机器标签，前端映射成文案）。 */
@@ -78,6 +80,14 @@ export interface PlayLogEntry {
   /** 模式 id（`self` / `click` / `endless` / `puzzle` …）。 */
   mode: string;
   source: PlaySource;
+  /** 出题范围标识（哨兵 / 6 位 adcode / `''`）；老行为 null。 */
+  scopeProvince: string | null;
+  /** 出题范围展示名（如「世界」「省级全国」「广东省」）；老行为 null。 */
+  scopeLabel: string | null;
+  /** 游客编号（4 位数字）；未登录时用于区分不同游客，无则 null。 */
+  visitor: string | null;
+  /** 服务端爬虫判定（未登录时才用于决定显示「爬虫」还是「游客」）。 */
+  bot: boolean;
   createdAt: number;
 }
 
@@ -190,11 +200,30 @@ export const api = {
     request<{ ok: true }>(`/board/reply/${id}`, { method: 'DELETE', token }),
   // ---------- 公告 ----------
   announcements: () => request<{ announcements: Announcement[] }>('/announcements'),
-  visit: (token?: string, env?: ClientEnv) =>
-    request<{ ok: true }>('/visit', { method: 'POST', token, body: env ? { env } : undefined }),
-  /** 游玩上报：用户开始一局（点「开始」或按 Tab 快速重开）时调用，带浏览器环境供管理端判定。 */
-  play: (body: { mode: string; source: PlaySource; env?: ClientEnv }, token?: string) =>
-    request<{ ok: true }>('/play', { method: 'POST', token, body }),
+  /**
+   * 访问上报。`visitor` 是本浏览器的游客编号（见 `src/visitorId.ts`）——
+   * 与 `env` 一起放在 body 里；两者都拿不到时**不发 body**（服务端按"什么都没报"处理）。
+   */
+  visit: (token?: string, env?: ClientEnv, visitor?: string | null) =>
+    request<{ ok: true }>('/visit', {
+      method: 'POST',
+      token,
+      body: env || visitor ? { env, visitor: visitor ?? undefined } : undefined,
+    }),
+  /** 游玩上报：用户开始一局（点「开始」或按 Tab 快速重开）时调用，带环境/编号/出题范围供管理端统计。 */
+  play: (
+    body: {
+      mode: string;
+      source: PlaySource;
+      env?: ClientEnv;
+      visitor?: string;
+      /** 出题范围标识（哨兵 / 6 位 adcode / `''`）。 */
+      scopeProvince?: string | null;
+      /** 出题范围展示名（如「世界」「省级全国」）。 */
+      scopeLabel?: string | null;
+    },
+    token?: string,
+  ) => request<{ ok: true }>('/play', { method: 'POST', token, body }),
   // ---------- 管理员 ----------
   adminUsers: (token: string) => request<{ users: AdminUser[] }>('/admin/users', { token }),
   adminLogs: (token: string, before = 0) => request<{ logs: AccessLogEntry[] }>(`/admin/logs?view=logs&before=${before}`, { token }),

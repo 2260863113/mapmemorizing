@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS access_logs (
   region     TEXT,                                  -- request.cf.region
   city       TEXT,                                  -- request.cf.city
   env        TEXT,                                  -- 客户端环境快照 JSON（≤2000 字符，见 functions/_lib/clientEnv.ts）
+  visitor    TEXT,                                  -- 游客编号（4 位数字，前端 localStorage 生成并保持不变；NULL = 老行/未上报）
   bot        INTEGER NOT NULL DEFAULT 0,             -- 1 = 疑似爬虫/自动化
   bot_reason TEXT,                                  -- 判定理由 JSON 数组字符串，如 ["overseas","keyword:headless"]
   created_at INTEGER NOT NULL
@@ -97,19 +98,22 @@ CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at DES
 -- 与 access_logs 分开：访问次数与开始局数是两个口径，混一张表后任一侧加字段都会污染另一侧。
 -- 客户端环境同样记一份：管理员要能从游玩记录里判断"这些局是不是同一个人在刷"。
 CREATE TABLE IF NOT EXISTS play_logs (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id    INTEGER,                               -- NULL = 未登录
-  mode       TEXT    NOT NULL,                      -- 'self' | 'click' | 'endless' | 'puzzle'
-  source     TEXT    NOT NULL,                      -- 'start' | 'tab'（Tab 快速重置也要计入统计）
-  ua         TEXT,
-  ip         TEXT,
-  country    TEXT,
-  region     TEXT,
-  city       TEXT,
-  env        TEXT,
-  bot        INTEGER NOT NULL DEFAULT 0,
-  bot_reason TEXT,
-  created_at INTEGER NOT NULL
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER,                           -- NULL = 未登录
+  mode           TEXT    NOT NULL,                  -- 'self' | 'click' | 'endless' | 'puzzle'
+  source         TEXT    NOT NULL,                  -- 'start' | 'tab'（Tab 快速重置也要计入统计）
+  scope_province TEXT,                              -- 出题范围哨兵/省 adcode（统计维度，不做白名单校验）
+  scope_label    TEXT,                              -- 出题范围展示名（如「世界」「省级全国」「广东省」）
+  ua             TEXT,
+  ip             TEXT,
+  country        TEXT,
+  region         TEXT,
+  city           TEXT,
+  env            TEXT,
+  visitor        TEXT,                              -- 游客编号，同 access_logs.visitor
+  bot            INTEGER NOT NULL DEFAULT 0,
+  bot_reason     TEXT,
+  created_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_play_logs_created ON play_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_play_logs_mode ON play_logs(mode, created_at DESC);

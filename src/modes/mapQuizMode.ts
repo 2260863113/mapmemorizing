@@ -140,6 +140,13 @@ export abstract class MapQuizMode extends BaseMode {
   protected onAnswerStart(): void {}
   /** 答对后的子类同步（输入模式记 lastGreen，点击模式弹答对提示）。 */
   protected onCorrect(_q: string): void {}
+  /**
+   * 答错后的子类同步（**两个**分支都会调：错误回滚的临时红显、以及正常计错的永久红格）。
+   *
+   * 需求来源：输入模式要据此把「下一题的自动跟随」延后 1 秒（2026-10 需求 4），
+   * 让用户先看清红显与正确答案的位置；要不要延后由子类自己判断（错误回滚模式不需要）。
+   */
+  protected onWrong(_q: string): void {}
   /** 错误回滚撤回后的收尾（输入模式重新聚焦搜索框）。 */
   protected onRollbackRestored(): void {}
   /** 暂停时的子类同步（输入模式清计时器）。 */
@@ -817,6 +824,19 @@ export abstract class MapQuizMode extends BaseMode {
     return this.ctx.randomUnit(pool);
   }
 
+  /**
+   * 答错的**共同收尾**：提示正确答案 → 通知子类 → 镜头平移到正确答案（缩放不变）。
+   *
+   * 两个答错分支（错误回滚的临时红显、正常计错的永久红格）逐字相同，抽出来是为了
+   * **口径不可能分叉** —— 上一版把 `onWrong` 分别加在两处，`answer()` 立刻超出行数上限，
+   * 而那种"两处都要记得加"的写法迟早会漏掉一处（需求 4 的延迟跟随就会在回滚分支上失灵）。
+   */
+  private afterWrong(q: string, name: string, timedOut: boolean) {
+    this.ctx.toast(this.wrongToast(name, timedOut));
+    this.onWrong(q);
+    this.panToUnit(q);
+  }
+
   protected answer(correct: boolean, scored: boolean, timedOut = false) {
     this.onAnswerStart();
     const q = this.question;
@@ -839,8 +859,7 @@ export abstract class MapQuizMode extends BaseMode {
       // this.red 在这里只承担**临时高亮**，撤回时统一清掉；永久红格由上面的 results 记录。
       this.red.add(q);
       this.question = null;
-      this.ctx.toast(this.wrongToast(name, timedOut));
-      this.panToUnit(q); // 答错：镜头跟随到正确答案位置（缩放不变）
+      this.afterWrong(q, name, timedOut);
       this.persist();
       // 先显示红色标记，停留后撤回，恢复当前题重新作答
       this.refresh();
@@ -872,8 +891,7 @@ export abstract class MapQuizMode extends BaseMode {
       this.red.add(q);
       this.fail += 1;
       this.results.push('red');
-      this.ctx.toast(this.wrongToast(name, timedOut));
-      this.panToUnit(q); // 答错：镜头跟随到正确答案位置（缩放不变）
+      this.afterWrong(q, name, timedOut);
     }
     this.persist();
     const pool = this.unvisited();

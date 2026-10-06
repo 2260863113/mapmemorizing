@@ -71,19 +71,19 @@ export function isBotEntry(entry: Pick<AccessLogEntry, 'bot' | 'botReasons'> | n
 /**
  * 日志用户名单元格里的文字。
  *
- * 口径（2026-09 用户二次确认）：未登录的访问**当且仅当存在爬虫判定理由**时显示「爬虫」，
- * 没有任何理由的普通未登录访问显示「游客」。
+ * 口径（2026-09 二次确认 + 2026-10 需求 3）：未登录的访问**当且仅当存在爬虫判定理由**时显示
+ * 「爬虫」，否则显示「游客」；两者都拼上**4 位游客编号**（如「游客1234」），用于区分不同游客。
  *
- * 为什么不是「未登录即爬虫」：那是上一版的粗口径，会把真人游客一起标成爬虫 —— 管理端看到的
+ * 为什么不是「未登录即爬虫」：那是更早一版的粗口径，会把真人游客一起标成爬虫 —— 管理端看到的
  * 「爬虫数」于是等于「未登录数」，判定标签也就失去了意义。现在标签与判定严格同源：
  * 有依据才是爬虫（`isBotEntry`：结论 `bot` 或依据 `botReasons` 任一成立）。
  */
 export function logUserName(
-  entry: Pick<AccessLogEntry, 'username' | 'bot' | 'botReasons'> | null | undefined,
+  entry: (Pick<AccessLogEntry, 'username' | 'bot' | 'botReasons'> & { visitor?: string | null }) | null | undefined,
 ): string {
   const name = (entry?.username ?? '').trim();
   if (name) return name;
-  return isBotEntry(entry) ? t('admin.botLabel') : t('admin.guest');
+  return visitorLabel(isBotEntry(entry), entry?.visitor);
 }
 
 /**
@@ -101,6 +101,19 @@ export function showsBotLabel(
 /** 是否匿名（匿名行才需要在「爬虫」与「游客」之间二选一）。 */
 export function isAnonymous(username: string | null | undefined): boolean {
   return (username ?? '').trim() === '';
+}
+
+/**
+ * 未登录访客的展示名：词根（爬虫 / 游客）+ **4 位游客编号**（2026-10 需求 3）。
+ *
+ * 编号来自 `src/visitorId.ts`（同一个浏览器长期不变）；缺编号时只给词根 ——
+ * 不猜一个号：假号会把两个不同的人显示成同一个人，比没有号更误导。
+ * 「爬虫还是游客」由**判定结果**决定（见 `isBotEntry`），与编号是两件正交的事。
+ */
+export function visitorLabel(bot: boolean, id: string | null | undefined): string {
+  const word = t(bot ? 'admin.botLabel' : 'admin.guest');
+  const num = (id ?? '').trim();
+  return num ? `${word}${num}` : word;
 }
 
 // ==================== IP / 地理 / UA ====================
@@ -190,13 +203,32 @@ export function playSourceLabel(source: PlayLogEntry['source'] | string | null |
 }
 
 /**
- * 游玩条目的用户名：未登录显示「未登录」。
- * 与日志列表口径**故意不同**：日志里未登录即无 UA 的爬虫（显示「爬虫」），
- * 游玩记录只说明"这局没登录"，把它叫爬虫是错的。
+ * 游玩条目的用户名（2026-10 需求 5：**不再写「未登录」**）。
+ *
+ * 未登录显示「游客1234」/「爬虫1234」，与日志列表同一套口径（`visitorLabel`）——
+ * 用户明确要求两处都用编号区分人；登录用户当然还是显示用户名。
  */
-export function playUserName(username: string | null | undefined): string {
-  const name = (username ?? '').trim();
-  return name || t('admin.playAnon');
+export function playUserName(
+  entry: Pick<PlayLogEntry, 'username' | 'bot'> & { visitor?: string | null } | null | undefined,
+): string {
+  const name = (entry?.username ?? '').trim();
+  if (name) return name;
+  return visitorLabel(entry?.bot === true, entry?.visitor);
+}
+
+/**
+ * 游玩条目的**出题范围**（2026-10 需求 5）。
+ *
+ * 优先用服务端记下的展示名（如「世界」「省级全国」「广东省」），老行没有展示名时退化成原始标识
+ * （哨兵/adcode，至少还能看出是哪个范围），两者都缺才给占位。
+ */
+export function playScopeLabel(
+  entry: Pick<PlayLogEntry, 'scopeLabel' | 'scopeProvince'> | null | undefined,
+): string {
+  const label = (entry?.scopeLabel ?? '').trim();
+  if (label) return label;
+  const raw = (entry?.scopeProvince ?? '').trim();
+  return raw || MISSING;
 }
 
 /**

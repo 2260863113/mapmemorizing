@@ -1,5 +1,65 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-10）：IPv4 优先 / 日志折叠 / 游客编号 / 延迟跟随 / 游玩范围 / 排除管理员 / 非洲 0.8
+
+用户一次给七条（原话编号即下文 1–7）：
+
+1. 为什么 ip 采集有的地方采集到的是 ipv6？请优先使用 ipv4。
+2. 将浏览器环境和 ip 地址放到折叠栏中，不显示在外层。环境详情点击处放到右边，不单独占一行。
+3. 每个游客自动赋予四位数字，例如游客1234，这样用于区分不同游客，对于同一个浏览器，每次访问时后面的四位数字保持不变。
+4. 输入模式下，当用户没有开启错误回滚，且开启自动跟随，那么如果回答错误，等待 1 秒后再才跟随，留给用户查看错误的时间。
+5. 游玩统计中，不要写用户「未登录」，而是写游客1234等等。需要收集信息包括：游玩模式、出题范围这两个信息。
+6. 日志统计和游玩统计需要把管理员排除在外，不参与统计。
+7. 非洲的缩放倍率变为原来的 0.8 倍。
+
+### 1：IP 优先 IPv4（`functions/_lib/clientEnv.ts`）
+
+`clientIp()` 重写成「按可信度取舍」：`CF-Connecting-IP`(v4) → **`CF-Pseudo-IPv4`**（Cloudflare 给纯 IPv6 客户端合成的 v4）→ `CF-Connecting-IP`(v6) → 本地 dev 才退到 `X-Forwarded-For`/`X-Real-IP` 并优先挑 v4。新增导出的 `normalizeIp()`：剥端口/方括号、`::ffff:1.2.3.4` 折回点分四段、非法值一律 null（**不再截断后入库** —— 旧实现的"超长值截断成 64 字符"会把垃圾当地址存下来）。
+
+⚠ **要在线上真正拿到 IPv4，需要去 Cloudflare 控制台 Network → Pseudo IPv4 选「Add header」**；不开的话纯 IPv6 客户端仍然只能记 IPv6。另：**不**为了凑 IPv4 去读客户端自带的 `X-Forwarded-For`（可伪造）。
+
+### 2：日志行折叠（`src/ui/adminPanel.ts` + `src/styles.css`）
+
+整行改成 `<details class="log-row">`：`<summary class="log-line">` 是唯一的外层行（时间 · 游客/爬虫 · 判定标签 · 右侧「环境详情」入口），IP、完整 UA、环境字段全部进 `.log-fold`。展开入口用 `margin-left:auto` 推到最右、与用户名同一行，隐藏原生三角标记、用 `▾/▴` 表示状态。
+
+⚠ 踩坑（验收脚本抓出来的）：**不能用折叠区子元素的 `getBoundingClientRect()` 判断"收起了"** —— 新版 Chrome/Edge 用 `::details-content { content-visibility: hidden }` 实现折叠，子元素**仍然有布局尺寸**。验收断言改成看 `details.open` + 行自身高度。
+
+### 3：游客编号（`src/visitorId.ts` 新增）
+
+4 位数字，`localStorage['china-admin-visitor-v1']` 首次访问生成、之后一直复用；存储不可用时返回 `null`（退化成不带编号的词根，不抛错、不反复重试）。`access_logs` 与 `play_logs` 各加一列 `visitor`，服务端 `sanitizeVisitorId()` 只做 `^\d{4}$` 形状校验（**不在服务端兜底生成**：那会把同一个游客记成几十个人）。
+
+⚠ 踩坑（验收脚本抓出来的）：爬虫分支曾硬写 `t('admin.botLabel')`，导致**只有「爬虫」少了编号**、而「游客」有编号 —— 现在两条分支都走 `accessLog.logUserName()`，徽标只换外观不换文本。
+
+### 4：答错后延迟 1 秒跟随（`src/modes/`）
+
+`MapQuizMode` 新增 `onWrong(q)` 钩子（两个答错分支共同收尾收敛成 `afterWrong()`，避免"两处都要记得加"）；`InputMode.onWrong` 在「未开错误回滚 + 开了自动跟随」时置位 `followDelayMs = SELF_WRONG_FOLLOW_DELAY_MS(1000)`，`ask()` 消费一次：题面立刻换、**镜头延后 1s**。暂停/重置/换题都会取消待执行的定时器（否则镜头会在暂停遮罩后面偷偷移动）。
+
+### 5：游玩统计记「模式 + 出题范围」（`play_logs` 加两列）
+
+`play_logs` 新增 `scope_province`（哨兵/adcode）与 `scope_label`（展示名）。前端在上报时从模式取 `getScopeProvince()`、用外壳的 `scopeLabel()` 算展示名（与排行榜侧栏同一份命名）。服务端对这两个字段**只截断长度、不做白名单校验** —— 与成绩提交刻意不同：那是排名数据（写错会污染榜），这只是统计维度，旧版前端多报一个新哨兵不该让整条游玩记录丢掉。列表里未登录显示「游客1234」（不再写「未登录」），`isPlain`/`.log-scope` 与日志的折叠行区分开。
+
+### 6：两个统计都排除管理员（纯 SQL）
+
+`admin/logs.ts` 与 `admin/plays.ts` 的分桶 SQL 与明细 SQL 都加 `AND COALESCE(u.is_admin, 0) = 0`。用 `COALESCE` 而不是 `u.is_admin = 0`：`LEFT JOIN` 上被删除的用户给 NULL，那种行是**访客**，不该被顺手过滤掉。口径必须在 SQL 里，因为**折线是服务端分组算的**，前端过滤只能过滤明细，会与折线自相矛盾。
+
+### 7：非洲系数 0.5 → 0.8（`src/map/followScale.ts`）
+
+只改一个常量。注意方向：**0.8 > 0.75 ⇒ 非洲档现在比通用档更"近"**（与最初"非洲加 6x"那版方向相同、与中间"0.5"那版相反），测试里把这条方向显式断言出来了。
+
+### 验收
+
+- `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（1 条**既有** warning `src/testCtx.ts`）+ **57 文件 / 765 用例**。
+- `npm run build` 通过；真实浏览器**六套**验收脚本全绿：`verify-admin-traffic` **85/85**（本轮由 74 涨到 85，新增折叠结构、入口右对齐、游客编号、出题范围、访问上报带编号等断言，并抓出上面两个真实缺陷）、`verify-round2` 38/38、`verify-round3` 54/54、`verify-naming` 47/47、`verify-drill-scope` 34/34、`verify-puzzle` 84/84。
+- **迁移在本地与线上各跑过一遍**（`npm run db:migrate:local|remote`，可重复执行）；线上实测：访问日志 323 行 = 178 匿名 + 145 管理员 + 0 孤儿 + 0 普通用户，排除管理员后正好 178 —— 同时证明了**必须用 `COALESCE(u.is_admin,0)=0`**（写成 `u.is_admin = 0` 会返回 0 行，把匿名行全删掉）。
+- 新增测试：`src/visitorId.test.ts`（6）、`src/playLogger.test.ts`（3）、`functions/_lib/clientEnv.test.ts` 的 `normalizeIp`/IPv4 优先/`sanitizeVisitorId`（33 例中含新增十余条）、`inputSubmit.test.ts` 的延迟跟随 5 例、`followScale.test.ts` 的非洲 0.8 与方向断言。
+
+### ⚠ 本轮已知遗留
+
+1. **`CF-Pseudo-IPv4` 需要控制台开启**（见上）——不开就只有 IPv6，代码侧已经尽力。
+2 **老数据没有 `visitor`/`scope_*`**：迁移前的行这几列为 NULL，管理端退化成不带编号的词根与「—」，属预期。
+3. 迁移文件是**新增的第二个文件**（`migrations/2026-10-06-visitor-and-play-scope.sql`），`npm run db:migrate:remote` 现在指向它；补跑旧库要自己用 wrangler 指定 09-28 那个文件。
+4. 游玩统计仍**不显示 IP/环境**（用户没要求，且那条流水要的是"谁在玩什么范围"）——`play_logs` 里其实存了 ua/ip/env/bot，要用随时能加。
+
 ## 本轮（2026-09）：九条需求（Tab 重开 / 排行榜口径 / 日志与爬虫判定 / 游玩统计 / 键盘与跟随 / BFS）
 
 用户一次给九条（原话编号即下文的 1–9）：

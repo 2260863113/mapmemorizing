@@ -311,7 +311,6 @@
   "admin.playTooltip": "{label} · {count} 次游玩",
   "admin.playSourceStart": "开始按钮",
   "admin.playSourceTab": "Tab 重置",
-  "admin.playAnon": "未登录",
   "admin.annTitle": "标题",
   "admin.annContent": "内容",
   "admin.annPin": "置顶",

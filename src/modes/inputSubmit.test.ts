@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { InputMode } from './input';
+import { InputMode, SELF_WRONG_FOLLOW_DELAY_MS } from './input';
 import { makeTestCtx } from '../testCtx';
 import type { AppData } from '../types';
 
@@ -202,6 +202,30 @@ describe('输入模式 · quickRestart（Tab 即时重开，需求 1）', () => 
   });
 });
 
+/** 世界档可能用到的两个国家：一个欧洲（通用档）、一个非洲（0.8 档）。 */
+const COUNTRIES = [
+  { iso: 'FRA', name: '法国', fullName: '法兰西共和国', center: [2, 46] as [number, number], neighbors: [], continent: 'EU' as const },
+  { iso: 'ZAF', name: '南非', fullName: '南非共和国', center: [24, -29] as [number, number], neighbors: [], continent: 'AF' as const },
+];
+
+/**
+ * 记录 `focusUnit` / `focusWorldCountry` 收到的第 2 个参数（倍率系数）与调用次数。
+ *
+ * `makeTestCtx` 的渲染器替身是空实现，这里换成记录型（类型上仍是同一个 `ModeCtx.renderer`）。
+ * 放在模块级是因为「跟随系数」与「答错延迟跟随」两处都要用它。
+ */
+function recordingCtx(data: Partial<AppData>) {
+  const { ctx } = makeTestCtx({ data, randomUnit: (pool) => pool[0] });
+  const seen = { unit: [] as [string, number | undefined][], world: [] as [string, number | undefined][] };
+  const renderer = ctx.renderer as unknown as {
+    focusUnit: (adcode: string, scale?: number) => void;
+    focusWorldCountry: (iso: string, scale?: number) => void;
+  };
+  renderer.focusUnit = (adcode, scale) => seen.unit.push([adcode, scale]);
+  renderer.focusWorldCountry = (iso, scale) => seen.world.push([iso, scale]);
+  return { ctx, seen };
+}
+
 /**
  * 自动跟随的**接线**（2026-09 需求 8 修订版）：模式侧只负责"乘多少系数"，
  * 真倍率由渲染器算（基准 × 系数 → 夹取）。系数本身在 `map/followScale.test.ts` 里逐档断言；
@@ -209,25 +233,6 @@ describe('输入模式 · quickRestart（Tab 即时重开，需求 1）', () => 
  * 界面上只表现为"镜头有点近/有点远"，别的测试全绿也发现不了。
  */
 describe('输入模式 · 自动跟随把倍率系数交给渲染器（需求 8 修订版）', () => {
-  /** 世界档可能用到的两个国家：一个欧洲（通用档）、一个非洲（0.5 档）。 */
-  const COUNTRIES = [
-    { iso: 'FRA', name: '法国', fullName: '法兰西共和国', center: [2, 46] as [number, number], neighbors: [], continent: 'EU' as const },
-    { iso: 'ZAF', name: '南非', fullName: '南非共和国', center: [24, -29] as [number, number], neighbors: [], continent: 'AF' as const },
-  ];
-
-  /** 记录 `focusUnit` / `focusWorldCountry` 收到的第 2 个参数（系数）。 */
-  function recordingCtx(data: Partial<AppData>) {
-    const { ctx } = makeTestCtx({ data, randomUnit: (pool) => pool[0] });
-    const seen = { unit: [] as [string, number | undefined][], world: [] as [string, number | undefined][] };
-    const renderer = ctx.renderer as unknown as {
-      focusUnit: (adcode: string, scale?: number) => void;
-      focusWorldCountry: (iso: string, scale?: number) => void;
-    };
-    renderer.focusUnit = (adcode, scale) => seen.unit.push([adcode, scale]);
-    renderer.focusWorldCountry = (iso, scale) => seen.world.push([iso, scale]);
-    return { ctx, seen };
-  }
-
   it('中国地级：传 ×0.75 系数（不是绝对倍率、也不是加法）', () => {
     stubBrowserGlobals();
     const { ctx, seen } = recordingCtx(DATA);
@@ -246,7 +251,7 @@ describe('输入模式 · 自动跟随把倍率系数交给渲染器（需求 8 
     expect(seen.world).toEqual([['FRA', 0.75]]);
   });
 
-  it('世界档非洲国：传 ×0.5（池首换成南非）', () => {
+  it('世界档非洲国：传 ×0.8（池首换成南非）', () => {
     stubBrowserGlobals();
     const { ctx, seen } = recordingCtx({ countries: COUNTRIES });
     // 让首题落在池尾（南非）——题序由夹具的 randomUnit 决定，故这里直接换掉它
@@ -254,7 +259,7 @@ describe('输入模式 · 自动跟随把倍率系数交给渲染器（需求 8 
     const mode = new InputMode(ctx);
     mode.applyScopeQuery({ granularity: 'world', continent: null, subregion: null, province: null });
     startMode(mode);
-    expect(seen.world).toEqual([['ZAF', 0.5]]);
+    expect(seen.world).toEqual([['ZAF', 0.8]]);
   });
 
   it('自动跟随关闭时一次也不聚焦（系数与镜头都不该动）', () => {
@@ -268,5 +273,116 @@ describe('输入模式 · 自动跟随把倍率系数交给渲染器（需求 8 
     mode.getModeSettings()?.onChange('auto-follow', false);
     startMode(mode);
     expect(seen.unit).toEqual([]);
+  });
+});
+
+/**
+ * 答错后的**延迟跟随**（2026-10 需求 4）。
+ *
+ * 口径：输入模式下，**没开错误回滚 + 开了自动跟随**时，答错后下一题的镜头要等 1 秒再过去，
+ * 让用户先看清红显与正确答案的位置。要锁三件事：
+ *   1. 该延迟时真的延迟（题面立刻换、镜头不动）；到点后镜头才跟随；
+ *   2. 开了错误回滚时**不延迟**（回滚会重问同一题，没有"跟到下一题"这回事）；
+ *   3. 关掉自动跟随时天然没有镜头可延迟；暂停/重置要取消待执行的延迟（否则镜头会在遮罩后面偷偷动）。
+ */
+describe('输入模式 · 答错后延迟 1 秒再跟随（需求 4）', () => {
+  /** 记录 setTimeout 的调用，便于手动触发（夹具的 window 替身默认把定时器丢掉）。 */
+  function stubTimers() {
+    const timers: { id: number; fn: () => void; ms: number }[] = [];
+    let seq = 0;
+    vi.stubGlobal('window', {
+      setTimeout: (fn: () => void, ms: number) => {
+        const id = ++seq;
+        timers.push({ id, fn, ms });
+        return id;
+      },
+      clearTimeout: (id: number) => {
+        const i = timers.findIndex((t) => t.id === id);
+        if (i >= 0) timers.splice(i, 1);
+      },
+      setInterval: () => 0,
+      clearInterval: () => {},
+    });
+    vi.stubGlobal('document', {
+      getElementById: () => ({ classList: { toggle: () => {}, add: () => {}, remove: () => {} }, innerHTML: '', onclick: null }),
+    });
+    return {
+      timers,
+      pending: () => timers.filter((t) => t.ms === SELF_WRONG_FOLLOW_DELAY_MS),
+      /** 触发一个定时器（真实定时器触发后会自己从队列里消失，替身也照做）。 */
+      fire: (t: { id: number; fn: () => void; ms: number }) => {
+        const i = timers.indexOf(t);
+        if (i >= 0) timers.splice(i, 1);
+        t.fn();
+      },
+    };
+  }
+
+  function makeCityMode() {
+    const { ctx, seen } = recordingCtx(DATA);
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery({ granularity: 'city', continent: null, subregion: null, province: null });
+    return { mode, seen };
+  }
+
+  it('未开错误回滚：答错后镜头不动，1 秒后才跟随到下一题', () => {
+    const { timers, pending, fire } = stubTimers();
+    const { mode, seen } = makeCityMode();
+    startMode(mode);
+    expect(seen.unit).toEqual([[UNIT_A.adcode, 0.75]]); // 首题立即跟随
+
+    mode.onSubmit(''); // 答错（空 Enter 计错）
+    // 题面已经换成下一题，但镜头**没有**动 —— 这正是"留给用户查看错误的时间"
+    expect(mode.diagnostics().question).toBe(UNIT_B.adcode);
+    expect(seen.unit).toHaveLength(1);
+    expect(pending()).toHaveLength(1);
+
+    fire(pending()[0]); // 时间到
+    expect(seen.unit).toEqual([
+      [UNIT_A.adcode, 0.75],
+      [UNIT_B.adcode, 0.75],
+    ]);
+    expect(timers).toHaveLength(0);
+  });
+
+  it('开了错误回滚：不发延迟（回滚会重问同一题，不存在"跟到下一题"）', () => {
+    const { pending } = stubTimers();
+    const { mode } = makeCityMode();
+    mode.diagnostics().errorRollback = true;
+    startMode(mode);
+    mode.onSubmit('');
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('关掉自动跟随：既没有立即跟随也没有延迟跟随', () => {
+    const { pending, timers } = stubTimers();
+    const { mode, seen } = makeCityMode();
+    mode.getModeSettings()?.onChange('auto-follow', false);
+    startMode(mode);
+    mode.onSubmit('');
+    expect(seen.unit).toEqual([]);
+    expect(pending()).toHaveLength(0);
+    expect(timers).toHaveLength(0);
+  });
+
+  it('暂停会取消待执行的延迟（镜头不该在暂停遮罩后面移动）', () => {
+    const { pending } = stubTimers();
+    const { mode, seen } = makeCityMode();
+    startMode(mode);
+    mode.onSubmit('');
+    expect(pending()).toHaveLength(1);
+    mode.pause();
+    expect(pending()).toHaveLength(0);
+    expect(seen.unit).toHaveLength(1);
+  });
+
+  it('重置（新会话）会取消待执行的延迟', () => {
+    const { pending } = stubTimers();
+    const { mode } = makeCityMode();
+    startMode(mode);
+    mode.onSubmit('');
+    expect(pending()).toHaveLength(1);
+    mode.onReset();
+    expect(pending()).toHaveLength(0);
   });
 });

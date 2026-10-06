@@ -20,6 +20,7 @@ import {
   logUserName,
   MISSING,
   playModeLabel,
+  playScopeLabel,
   playSourceLabel,
   playUserName,
   showsBotLabel,
@@ -493,52 +494,64 @@ export class AdminPanel {
   /**
    * 单行访问日志。
    *
+   * 结构（2026-10 需求 2）：**外层只留「时间 · 用户 · 判定标签」，右侧一个「环境详情」展开入口**；
+   * IP 与完整浏览器环境（UA + 环境字段）全部收进折叠区，不再占外层。
+   *
    * 为什么要显示**完整 UA 且不截断**：需求就是"显示完整的浏览器环境"，而爬虫判定（版本过旧、
    * 无头浏览器）恰恰靠 UA 尾部的版本号/无头标记 —— 截断到 90 字正好把判定依据截掉。
    * 换行交给 CSS（`word-break: break-all`），不在这里做字符串截断。
    *
-   * 未登录的访问按**判定结果**二选一：有爬虫判定理由 → 「爬虫」；没有任何理由 → 「游客」
-   * （2026-09 用户二次确认的口径：标签与判定严格同源，不再"未登录即爬虫"）。
+   * 用户名按**判定结果**二选一：有爬虫判定理由 → 「爬虫1234」；没有任何理由 → 「游客1234」
+   * （编号见 `visitorId.ts`；2026-09 的口径是「标签与判定严格同源」，2026-10 再加编号区分人）。
+   *
+   * 用 `<details>` 做整行容器而不是自己写显隐：原生元素自带键盘可达性与展开状态，
+   * 面板重建 DOM 时也不必维护一份"哪些行展开了"的状态（与 `visitorId` 无关，见 CSS 注释）。
    */
   private logRowHtml(l: AccessLogEntry): string {
     const flagged = isBotEntry(l);
     // 「爬虫」作为用户名出现的条件：未登录 **且** 有判定依据（见 accessLog.showsBotLabel）
     const botUser = showsBotLabel(l);
-    const botBadge = `<span class="log-bot">${t('admin.botLabel')}</span>`;
+    // 用户名单元格的两种外观：落在「爬虫」上时换成徽标，否则是普通文本。
+    // ⚠ 两者都用 `logUserName(l)` —— 它已经把游客编号拼好了（如「爬虫4321」「游客8765」）。
+    //   上一版这里对爬虫分支硬写了 `t('admin.botLabel')`，于是**只有爬虫少了编号**，
+    //   而未登录游客有编号 —— 由 verify-admin-traffic 的「爬虫4321」断言抓出来。
+    const userCell = botUser
+      ? `<span class="log-bot">${escapeHtml(logUserName(l))}</span>`
+      : `<span class="log-user">${escapeHtml(logUserName(l))}</span>`;
     // 判定依据（机器标签本地化）逐条展示，未知标签原样输出，不丢信息
     const reasons = botReasonLabels(l.botReasons)
       .map((r) => `<span class="log-bot-reason">${escapeHtml(r)}</span>`)
       .join('');
-    // 「爬虫」已经占了用户名位置时，标签行里不再重复画一遍同款徽标（登录用户的徽标仍在这里出）
-    const tags = [...(botUser ? [] : flagged ? [botBadge] : []), ...(reasons ? [reasons] : [])].join('');
+    // 标签行里的「爬虫」徽标只在**登录用户**被判定的行上出现（匿名行的徽标已占用户名位置），
+    // 且这里写的是词根、不带编号：它与用户名是两件事，编号属于"这是哪个游客"。
+    const tagBadge = !botUser && flagged ? `<span class="log-bot">${t('admin.botLabel')}</span>` : '';
+    const tags = [...(tagBadge ? [tagBadge] : []), ...(reasons ? [reasons] : [])].join('');
 
     return `
-      <div class="log-row${flagged ? ' log-row-bot' : ''}">
-        <div class="log-main">
+      <details class="log-row${flagged ? ' log-row-bot' : ''}">
+        <summary class="log-line">
           <span class="log-time">${formatDateTime(l.createdAt)}</span>
-          ${
-            botUser
-              ? botBadge
-              : `<span class="log-user">${escapeHtml(logUserName(l))}</span>`
-          }
+          ${userCell}
+          ${tags ? `<span class="log-tags">${tags}</span>` : ''}
+          <span class="log-env-toggle">${t('admin.envDetail')}</span>
+        </summary>
+        <div class="log-fold">
           <span class="log-ip"><span class="log-ip-label">${t('admin.ipLabel')}</span>${escapeHtml(formatIpCell(l))}</span>
+          <div class="log-ua-line">
+            <span class="log-ua-label">${t('admin.uaLabel')}</span>
+            <span class="log-ua">${escapeHtml(formatUa(l.ua))}</span>
+          </div>
+          ${this.envGridHtml(clientEnvRows(l.env))}
         </div>
-        <div class="log-ua-line">
-          <span class="log-ua-label">${t('admin.uaLabel')}</span>
-          <span class="log-ua">${escapeHtml(formatUa(l.ua))}</span>
-        </div>
-        ${tags ? `<div class="log-tags">${tags}</div>` : ''}
-        ${this.envDetailHtml(clientEnvRows(l.env))}
-      </div>
+      </details>
     `;
   }
 
   /**
-   * 可展开的环境详情：用 `<details>` 而不是自己写展开逻辑 ——
-   * 原生元素自带键盘可达性与展开状态，面板重建 DOM 时也不必维护一份"哪些行展开了"的状态。
-   * `env` 为 null（爬虫/旧客户端不上报环境）时显示占位，不留空白块。
+   * 折叠区里的环境字段网格；`env` 为 null（爬虫/旧客户端不上报环境）时显示占位，不留空白块。
+   * 网格本身不是可展开元素 —— 展开与否由整行的 `<details>` 决定（2026-10 需求 2）。
    */
-  private envDetailHtml(rows: { key: MessagesKey; value: string }[]): string {
+  private envGridHtml(rows: { key: MessagesKey; value: string }[]): string {
     const grid = rows.length
       ? rows
           .map(
@@ -547,7 +560,7 @@ export class AdminPanel {
           )
           .join('')
       : `<span class="log-env-empty">${MISSING}</span>`;
-    return `<details class="log-env"><summary class="log-env-summary">${t('admin.envDetail')}</summary><div class="log-env-grid">${grid}</div></details>`;
+    return `<div class="log-env-grid">${grid}</div>`;
   }
 
   private playRowsHtml(plays: readonly PlayLogEntry[]): string {
@@ -555,18 +568,21 @@ export class AdminPanel {
   }
 
   /**
-   * 单行游玩记录：时间 / 用户 / 模式名 / 来源。
+   * 单行游玩记录：时间 / 游客 / **模式名** / **出题范围** / 来源（2026-10 需求 5）。
+   *
    * 模式名走 `accessLog.playModeLabel`（内部复用 `modes/capabilities.ts` 的 `modeTitle`），
-   * 不在管理端另造一份模式文案；未登录显示「未登录」（与日志的「爬虫」口径区分开）。
+   * 不在管理端另造一份模式文案；出题范围走 `playScopeLabel`（服务端记的展示名，老行退化成哨兵）。
+   * 未登录**不再显示「未登录」**，而是「游客1234」/「爬虫1234」（与日志同一套编号口径）。
    */
   private playRowHtml(p: PlayLogEntry): string {
     const anonymous = isAnonymous(p.username);
     return `
-      <div class="log-row">
-        <div class="log-main">
+      <div class="log-row log-row-plain">
+        <div class="log-line">
           <span class="log-time">${formatDateTime(p.createdAt)}</span>
-          <span class="log-user${anonymous ? ' log-user-anon' : ''}">${escapeHtml(playUserName(p.username))}</span>
+          <span class="log-user${anonymous ? ' log-user-anon' : ''}">${escapeHtml(playUserName(p))}</span>
           <span class="log-mode">${escapeHtml(playModeLabel(p.mode))}</span>
+          <span class="log-scope">${escapeHtml(playScopeLabel(p))}</span>
           <span class="log-source">${escapeHtml(playSourceLabel(p.source))}</span>
         </div>
       </div>

@@ -151,23 +151,89 @@ export function sanitizeClientEnv(raw: unknown): ClientEnv | null {
   return Object.keys(out).length ? out : null;
 }
 
-/** 去掉首尾空白；空串视为没有该头。 */
-function trimOrNull(value: string | null): string | null {
-  const text = value?.trim();
-  return text ? text.slice(0, 64) : null;
+/** 点分四段 IPv4（每段 ≤255）。 */
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function isIpv4(text: string): boolean {
+  const m = IPV4_RE.exec(text);
+  return !!m && m.slice(1).every((part) => Number(part) <= 255);
+}
+
+/** 宽松的 IPv6 形状：只允许十六进制与冒号、至少两个冒号组、长度不超 45。 */
+function isIpv6(text: string): boolean {
+  return text.length <= 45 && text.includes(':') && /^[0-9a-fA-F:.]+$/.test(text);
 }
 
 /**
- * 取客户端 IP。
+ * 归一化一个 IP 候选：剥掉端口/方括号，并把 **IPv4-mapped IPv6**（`::ffff:1.2.3.4`）折回点分四段。
  *
- * `CF-Connecting-IP` 由 Cloudflare 平台注入、客户端无法伪造，是唯一直得信的来源；
- * 本地 `wrangler pages dev` 没有该头，退化为 `X-Forwarded-For` 第一段（经过多级代理时最左才是真实客户端）。
+ * 为什么要把 mapped 形式当 IPv4：双栈客户端在本机走 `::ffff:` 是常态，管理端看到一串
+ * `::ffff:114.255.147.61` 既读不懂也没法按 IPv4 排序/比对；折回后它就是同一个地址。
+ */
+export function normalizeIp(raw: string | null | undefined): { ip: string; v4: boolean } | null {
+  let text = (raw ?? '').trim();
+  if (!text) return null;
+  // `[2001:db8::1]:443` → `2001:db8::1`
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(text);
+  if (bracketed) text = bracketed[1];
+  // `1.2.3.4:5678` → `1.2.3.4`（只在剩余部分确实是 IPv4 时才剥，避免把裸 IPv6 的末段当端口切掉）
+  const withPort = /^([^:]+):(\d+)$/.exec(text);
+  if (withPort && isIpv4(withPort[1])) text = withPort[1];
+  // `::ffff:1.2.3.4` → `1.2.3.4`
+  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(text);
+  if (mapped) text = mapped[1];
+
+  if (isIpv4(text)) return { ip: text, v4: true };
+  if (isIpv6(text)) return { ip: text.toLowerCase(), v4: false };
+  return null;
+}
+
+/**
+ * 取客户端 IP，**优先 IPv4**（2026-10 用户口径：日志里出现 IPv6 时希望看到 IPv4）。
+ *
+ * 取值顺序（越靠前越可信）：
+ *   1. `CF-Connecting-IP` 是 IPv4 → 直接用它（平台注入，客户端无法伪造）；
+ *   2. `CF-Pseudo-IPv4` → 用它。这是 Cloudflare 给**纯 IPv6 客户端**合成的 IPv4
+ *      （需在 Cloudflare 控制台 Network → Pseudo IPv4 里选「Add header」；未开启时该头不存在）；
+ *   3. `CF-Connecting-IP` 是 IPv6 且上面两步都拿不到 IPv4 → 只能记 IPv6（比丢地址强）；
+ *   4. 没有 CF 头（本地 `wrangler pages dev`）→ 从 `X-Forwarded-For`（取最左段，多级代理下那才是真实客户端）、
+ *      `X-Real-IP` 里按「先 IPv4 后 IPv6」挑一个。
+ *
+ * ⚠ 为什么第 4 步**不**在 CF 头存在时也参与：`X-Forwarded-For` 是**客户端可以自己带**的头。
+ * 若为了"凑一个 IPv4"去读它，任何人加一行 `X-Forwarded-For: 1.2.3.4` 就能把日志里的地址改掉。
+ * 所以"优先 IPv4"只在**平台可信来源**之间取舍，绝不为此降级去信任客户端自报的头。
  */
 export function clientIp(request: Request): string | null {
-  const direct = trimOrNull(request.headers.get('cf-connecting-ip'));
-  if (direct) return direct;
+  const direct = normalizeIp(request.headers.get('cf-connecting-ip'));
+  if (direct?.v4) return direct.ip;
+
+  const pseudo = normalizeIp(request.headers.get('cf-pseudo-ipv4'));
+  if (pseudo?.v4) return pseudo.ip;
+
+  if (direct) return direct.ip;
+
   const forwarded = request.headers.get('x-forwarded-for');
-  return forwarded ? trimOrNull(forwarded.split(',')[0]) : null;
+  const candidates: (string | null | undefined)[] = [
+    forwarded ? forwarded.split(',')[0] : null,
+    request.headers.get('x-real-ip'),
+  ];
+  const parsed = candidates.map((raw) => normalizeIp(raw)).filter((ip): ip is { ip: string; v4: boolean } => ip !== null);
+  return (parsed.find((ip) => ip.v4) ?? parsed[0])?.ip ?? null;
+}
+
+/**
+ * 游客编号（4 位数字，如 `1234`）。
+ *
+ * 由前端在 `localStorage` 里生成并长期保持不变（同一个浏览器每次访问都是同一个号），
+ * 服务端只做**形状校验**：不是恰好 4 位数字就当没报（`null`）。
+ *
+ * 为什么不在这里"兜底生成"一个：那样每次请求都会得到不同的号，反而把同一个游客记成几十个人；
+ * 拿不到号时管理端退化为显示「游客」/「爬虫」，比一个假号诚实。
+ */
+export function sanitizeVisitorId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  return /^\d{4}$/.test(text) ? text : null;
 }
 
 /** 地理信息：`request.cf` 在生产由 Cloudflare 注入，本地 dev 为 undefined，故全程按未知类型防御。 */

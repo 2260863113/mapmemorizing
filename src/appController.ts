@@ -46,6 +46,7 @@ import { IntroCard } from './ui/introCard';
 import { api } from './api';
 import { collectClientEnv } from './clientEnv';
 import { reportPlay } from './playLogger';
+import { visitorId } from './visitorId';
 import { labelOverride, setLabelOverride } from './map/labelVisibility';
 import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
@@ -275,7 +276,10 @@ export class AppController {
     void this.authStore.restoreSession(); // 后台校验已存会话，不阻塞启动
     // 访问日志带**完整浏览器环境**（需求 3）：UA 可伪造、且不含屏幕/时区/核心数，
     // 而管理端「日志记录」要按这些事实判爬虫。collectClientEnv 永不抛错，读不到的字段直接省略。
-    void api.visit(this.authStore.sessionToken() ?? undefined, collectClientEnv()).catch(() => {});
+    // 再带上**游客编号**（2026-10 需求 3）：同一个浏览器刷新后仍是同一个号，管理端据此区分不同游客。
+    void api
+      .visit(this.authStore.sessionToken() ?? undefined, collectClientEnv(), visitorId())
+      .catch(() => {});
     $('btn-announcement').addEventListener('click', () => void this.announcementPanel.open());
     this.authPanel.onAdminAction = (view) => {
       this.adminMode.setView(view);
@@ -954,11 +958,20 @@ export class AppController {
    *   · Tab 即时重开 → `source: 'tab'`。
    * 两者互斥的原因见 `wireStartActionLock` 与 `handleTabRestart` 的注释
    * （Tab 路径不派发 click，click 路径也不经过键盘 handler）。
+   *
+   * 顺带带上**出题范围**（2026-10 需求 5）：管理端「游玩统计」要按「模式 + 范围」两个维度看。
+   * 范围取自模式自己（`getScopeProvince()` 的哨兵/adcode），展示名复用外壳的 `scopeLabel()`
+   * —— 与排行榜侧栏用的是同一份命名，不另造一套。无尽闯关没有范围概念（恒为全国市级），
+   * 它的 `getScopeProvince()` 返回 null，展示名因此回落到「全国」，这是刻意的。
    */
   private reportPlayStart(source: PlaySource) {
     const mode = this.current?.id;
     if (!mode) return;
-    reportPlay(mode, source, this.authStore.sessionToken() ?? undefined);
+    const scopeProvince = this.current?.getScopeProvince() ?? null;
+    reportPlay(mode, source, this.authStore.sessionToken() ?? undefined, {
+      scopeProvince,
+      scopeLabel: this.scopeLabel(scopeProvince),
+    });
   }
 
   /**

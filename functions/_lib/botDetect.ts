@@ -192,3 +192,22 @@ export function classifyClient(signals: ClientSignals): BotVerdict {
   // 爬虫标只看「爬虫/自动化/浏览器异常」三类信号；overseas 单独出现时不算爬虫（见文件头）
   return { bot: hits.length > 0 || automation || oldBrowser, reasons, overseas };
 }
+
+/**
+ * 把库里的 `bot_reason` 列读回理由数组。
+ *
+ * 放在**写入端同一个模块**里（写入端 = `JSON.stringify(classifyClient().reasons)`，见 `api/visit.ts`
+ * 与 `api/play.ts`）：格式的写入与读回只有一处真相，改了格式不会出现"一个端点改、另一个没改"。
+ *
+ * 读取端**不做任何假定**：手工执行过 SQL、或以后改了写入格式，坏值都只能退化成空数组 ——
+ * 解析失败不该让整个管理面板打不开（那是站长唯一能看到"到底发生了什么"的地方）。
+ */
+export function parseBotReasons(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}

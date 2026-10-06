@@ -23,6 +23,14 @@ import { WorldMatcher } from '../worldNames';
 import { showStartCard } from '../ui/dom';
 
 /**
+ * 答错后「下一题自动跟随」的延后时长（2026-10 需求 4）。
+ *
+ * 导出是为了让单测与验收探针能引用同一个数（与 `mapQuizMode.ts` 的 `ROLLBACK_RED_MS` 同一套路），
+ * 避免测试里再抄一份 1000 之后与实现漂移。
+ */
+export const SELF_WRONG_FOLLOW_DELAY_MS = 1000;
+
+/**
  * 输入模式（BFS 扩张）：
  * - 市级（全国/单省）：随机起点作为当前题目（蓝色）→ 输入名称；答对变绿、答错标红，随后继续扩张。
  *   顺序模式下出题走**严格广度优先**（bfsOrder.ts），且**优先选队列里与上一题相邻的地区**
@@ -37,6 +45,15 @@ export class InputMode extends MapQuizMode {
   readonly id: Mode = 'self';
   readonly title = modeTitle('self');
   private lastGreen: string | null = null;
+  /**
+   * 延后跟随（2026-10 需求 4）：答错后**下一题**的自动跟随要等这么久。
+   *
+   * 只在「未开错误回滚 + 开了自动跟随」时生效（回滚模式会重问同一题，不存在"跟到下一题"的问题）。
+   * 1000ms 是用户给定值：旧行为是答错后镜头立刻被下一题拽走，用户根本来不及看红显与正确答案。
+   */
+  private followDelayMs = 0;
+  /** 延后跟随的定时器（换题/暂停/重置/重开时取消，见 cancelFollowDelay）。 */
+  private followDelayTimer: number | null = null;
   /**
    * 上一个**已作答**的单位（对错都算）——顺序模式「邻接优先」的参考点（2026-09 需求 9）。
    *
@@ -195,18 +212,51 @@ export class InputMode extends MapQuizMode {
     //   第二版是「额外加成（+2/+6）」，**现在是倍率系数（×0.75/×0.5，缺省 1 = 不动基准）**。
     //   真正的乘法与夹取都在渲染器里（`renderer.focusUnit/focusWorldCountry` → `scaleFollowZoom`）；
     //   这里只回答"乘多少"。面积极小的国家由渲染器判定并改用跟随上限，模式侧不掺和。
-    if (this.autoFollow) {
+    //
+    // 「延后跟随」（2026-10 需求 4）：上一题答错且用户没开错误回滚时，`focusNext` 延后
+    // `SELF_WRONG_FOLLOW_DELAY_MS` 再执行 —— 题面**立刻**换成新题（不受影响），只有镜头等一秒，
+    // 让用户先看清红显与正确答案的位置。见 onWrong()。
+    const delayMs = this.consumeFollowDelay();
+    const focusNext = () => {
+      // 定时器到期时重新校验状态：期间可能已经暂停/重置/切模式，那就不该再动镜头
+      if (!this.autoFollow || !this.started || this.paused) return;
       if (this.isWorldNation()) {
         const continent = this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent;
         this.ctx.renderer.focusWorldCountry(u.adcode, worldFollowScale(continent));
       } else if (!this.isProvinceNation()) {
         this.ctx.renderer.focusUnit(u.adcode, cityFollowScale());
       }
+    };
+    this.cancelFollowDelay();
+    if (this.autoFollow) {
+      if (delayMs > 0) {
+        this.followDelayTimer = window.setTimeout(() => {
+          this.followDelayTimer = null;
+          focusNext();
+        }, delayMs);
+      } else {
+        focusNext();
+      }
     }
     this.ctx.search.clear();
     this.ctx.search.focus();
     this.persist();
     this.ctx.showTimer(null);
+  }
+
+  /** 取走「下一题是否延后跟随」的标记（消费一次即清，避免影响再下一题）。 */
+  private consumeFollowDelay(): number {
+    const delay = this.followDelayMs;
+    this.followDelayMs = 0;
+    return delay;
+  }
+
+  /** 取消尚未到期的延后跟随（换题/暂停/重置/重开时都要，否则镜头会在错的时候跳走）。 */
+  private cancelFollowDelay() {
+    if (this.followDelayTimer !== null) {
+      window.clearTimeout(this.followDelayTimer);
+      this.followDelayTimer = null;
+    }
   }
 
   nextUnit(pool: Unit[]): Unit {
@@ -275,6 +325,9 @@ export class InputMode extends MapQuizMode {
     this.activeProvince = this.scopeProvince;
     this.bfsQueue = [];
     this.bfsDomain = '';
+    // 新会话不该继承上一局的延后跟随（定时器与标记都要清）
+    this.followDelayMs = 0;
+    this.cancelFollowDelay();
   }
 
   protected onEntered() { this.ctx.search.clear(); }
@@ -292,8 +345,21 @@ export class InputMode extends MapQuizMode {
     this.ctx.showTimer(null);
   }
   protected onCorrect(q: string) { this.lastGreen = q; }
+  /**
+   * 答错后置位「延后跟随」（2026-10 需求 4）。
+   *
+   * 条件就是用户口径的两条：**没开错误回滚**（开了就重问同一题，不存在跟到下一题的问题）
+   * **且开了自动跟随**（自动跟随关着时本来就不动镜头，延后没有意义）。
+   * 置位只影响 `ask()` 里那一次镜头移动；题面、红显、toast 都照旧立刻发生。
+   */
+  protected onWrong(_q: string) {
+    this.followDelayMs = !this.errorRollback && this.autoFollow ? SELF_WRONG_FOLLOW_DELAY_MS : 0;
+  }
   protected onRollbackRestored() { this.ctx.search.clear(); this.ctx.search.focus(); }
-  protected onPause() { this.ctx.showTimer(null); }
+  protected onPause() {
+    this.ctx.showTimer(null);
+    this.cancelFollowDelay(); // 暂停时别让一秒后的镜头在遮罩后面偷偷移动
+  }
   protected beforeStartPool() { this.activeProvince = this.scopeProvince; }
   protected onStarted(first: Unit) {
     if (!this.activeProvince) this.activeProvince = first.provinceAdcode;

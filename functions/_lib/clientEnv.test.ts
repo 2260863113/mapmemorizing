@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { clientIp, MAX_ENV_JSON_LEN, requestGeo, sanitizeClientEnv, type ClientEnv } from './clientEnv';
+import {
+  clientIp,
+  MAX_ENV_JSON_LEN,
+  normalizeIp,
+  requestGeo,
+  sanitizeClientEnv,
+  sanitizeVisitorId,
+  type ClientEnv,
+} from './clientEnv';
 
 /**
  * 客户端环境快照的白名单化。
@@ -151,25 +159,87 @@ describe('sanitizeClientEnv · 绝不抛错', () => {
   });
 });
 
-describe('clientIp', () => {
-  it('优先 CF-Connecting-IP（平台注入，客户端伪造不了）', () => {
+describe('normalizeIp', () => {
+  it('识别 IPv4 / IPv6 并给出 v4 标记', () => {
+    expect(normalizeIp('1.2.3.4')).toEqual({ ip: '1.2.3.4', v4: true });
+    expect(normalizeIp('2001:db8::1')).toEqual({ ip: '2001:db8::1', v4: false });
+  });
+
+  it('空值/垃圾 → null', () => {
+    for (const bad of ['', '   ', null, undefined, 'abc', '1.2.3', '256.1.1.1', 'a'.repeat(200)]) {
+      expect(normalizeIp(bad), String(bad)).toBeNull();
+    }
+  });
+});
+
+describe('clientIp · 优先 IPv4（2026-10 需求 1）', () => {
+  it('CF-Connecting-IP 是 IPv4 时直接用它（平台注入，客户端伪造不了）', () => {
     const request = fakeRequest({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '10.0.0.1' });
     expect(clientIp(request)).toBe('203.0.113.7');
   });
 
-  it('本地 dev 没有 CF 头时退化为 X-Forwarded-For 第一段', () => {
+  it('客户端是纯 IPv6 时改用 CF-Pseudo-IPv4（Cloudflare 合成的 IPv4）', () => {
+    const request = fakeRequest({ 'cf-connecting-ip': '2001:db8::1', 'cf-pseudo-ipv4': '203.0.113.9' });
+    expect(clientIp(request)).toBe('203.0.113.9');
+  });
+
+  it('拿不到任何 IPv4 时退回 IPv6（比丢地址强），并归一成小写', () => {
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '2001:DB8::ABCD' }))).toBe('2001:db8::abcd');
+    // 伪造的伪 IPv4 头内容非法 → 不采信，仍回退到真实的 v6
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '2001:db8::1', 'cf-pseudo-ipv4': 'not-an-ip' }))).toBe('2001:db8::1');
+  });
+
+  it('IPv4-mapped IPv6（::ffff:1.2.3.4）折回点分四段 —— 它就是同一个 IPv4 地址', () => {
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '::ffff:203.0.113.7' }))).toBe('203.0.113.7');
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '::FFFF:203.0.113.7' }))).toBe('203.0.113.7');
+  });
+
+  it('带端口的写法剥掉端口（含 `[v6]:port` 的方括号形式）', () => {
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '203.0.113.7:5678' }))).toBe('203.0.113.7');
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '[2001:db8::1]:443' }))).toBe('2001:db8::1');
+    // 裸 IPv6 的末段不是端口，不能被切掉
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '2001:db8::1' }))).toBe('2001:db8::1');
+  });
+
+  it('本地 dev 没有 CF 头时退化为 X-Forwarded-For 第一段（多级代理下最左才是真实客户端）', () => {
     expect(clientIp(fakeRequest({ 'x-forwarded-for': '198.51.100.9, 10.0.0.1, 10.0.0.2' }))).toBe('198.51.100.9');
   });
 
-  it('两个头都没有 → null（本地 wrangler pages dev 的正常情况）', () => {
+  it('没有 CF 头时，也在本地候选里优先挑 IPv4（X-Real-IP 兜底）', () => {
+    expect(clientIp(fakeRequest({ 'x-real-ip': '198.51.100.9' }))).toBe('198.51.100.9');
+  });
+
+  it('⚠ 有 CF 头时不采信客户端自带的 X-Forwarded-For（"优先 IPv4"不能降级为信任可伪造的头）', () => {
+    const request = fakeRequest({ 'cf-connecting-ip': '2001:db8::1', 'x-forwarded-for': '203.0.113.7' });
+    expect(clientIp(request)).toBe('2001:db8::1');
+  });
+
+  it('没有可用地址 → null（本地 wrangler pages dev 的正常情况）', () => {
     expect(clientIp(fakeRequest({}))).toBeNull();
     expect(clientIp(fakeRequest({ 'x-forwarded-for': '' }))).toBeNull();
     expect(clientIp(fakeRequest({ 'cf-connecting-ip': '   ' }))).toBeNull();
     expect(clientIp(fakeRequest({ 'x-forwarded-for': '  , 1.2.3.4' }))).toBeNull();
   });
 
-  it('超长值被截断（伪造的巨长头不该原样进库）', () => {
-    expect(clientIp(fakeRequest({ 'cf-connecting-ip': 'a'.repeat(200) }))).toHaveLength(64);
+  it('非法/超长/越界的值一律 null，而不是截断后入库（垃圾不该冒充地址）', () => {
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': 'a'.repeat(200) }))).toBeNull();
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '999.1.1.1' }))).toBeNull();
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '1.2.3' }))).toBeNull();
+    expect(clientIp(fakeRequest({ 'cf-connecting-ip': '<script>alert(1)</script>' }))).toBeNull();
+  });
+});
+
+describe('sanitizeVisitorId', () => {
+  it('恰好 4 位数字才接受', () => {
+    expect(sanitizeVisitorId('1234')).toBe('1234');
+    expect(sanitizeVisitorId('0001')).toBe('0001');
+    expect(sanitizeVisitorId('  5678  ')).toBe('5678');
+  });
+
+  it('其它形状一律 null（不在这里"兜底生成"：那会把同一个游客记成几十个人）', () => {
+    for (const bad of ['', '123', '12345', 'abcd', '12a4', '12.4', 1234, null, undefined, {}, [], true]) {
+      expect(sanitizeVisitorId(bad), String(bad)).toBeNull();
+    }
   });
 });
 
