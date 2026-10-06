@@ -126,6 +126,9 @@ try {
         button: btn ? btn.textContent.trim() : '',
         appVisibility: as ? as.visibility : '',
         viewport: meta ? meta.getAttribute('content') : '',
+        // 「只能有一个 viewport 声明」是本轮真实缺陷的回归判据：旧实现是"静态声明 + 脚本改写"，
+        // 会让百度 App 旧内核在重排后留下浮动控件残影（用户看到"按钮重复且位置不对"）。
+        viewportMetaCount: document.querySelectorAll('meta[name="viewport"]').length,
         clientWidth: html.clientWidth,
         innerWidth: window.innerWidth,
         bodyWidth: document.body.clientWidth,
@@ -177,6 +180,7 @@ try {
   check('桌面 UA 下没有门槛（html.mobile-gate 不存在）', desktop.hasClass === false, desktop.hasClass);
   check('桌面下 #app 正常可见', desktop.appVisibility === 'visible', desktop.appVisibility);
   check('桌面下 viewport 仍是 device-width（没有被改成桌面宽度）', desktop.viewport.includes('device-width'), desktop.viewport);
+  check('全页只有一个 viewport 声明（不是"静态声明 + 脚本改写"）', desktop.viewportMetaCount === 1, desktop.viewportMetaCount);
   // 不用"等于窗口宽 1440"当判据：有没有纵向滚动条会让 clientWidth 差 15px 左右（1440→1425），
   // 那是环境差异而不是行为差异。真正要断的是「门槛没有把桌面 viewport 改小」。
   check(
@@ -204,6 +208,7 @@ try {
   check('下方按钮就是「继续访问」', phone.button === '继续访问', phone.button);
   check('门槛生效时 #app 被隐藏（visibility: hidden，仍保留布局供图表测量）', phone.appVisibility === 'hidden', phone.appVisibility);
   check('手机上一开始就按电脑 viewport 排版（width=1280，不是 device-width）', phone.viewport === DESKTOP_VIEWPORT, phone.viewport);
+  check('手机下也只有一个 viewport 声明（一次到位、之后不再改 —— 残影根因已消）', phone.viewportMetaCount === 1, phone.viewportMetaCount);
   check('布局视口宽度 = 1280（这就是"电脑视图"而非错乱手机视图的客观判据）', phone.clientWidth === 1280, { clientWidth: phone.clientWidth, body: phone.bodyWidth });
   await shot('mobile-gate-1-phone-blocked.png');
 

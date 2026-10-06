@@ -2,7 +2,6 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- ===== 手机端访问门槛（2026-10）=====
        必须在**主 bundle 之前**生效：bundle 有 1.3MB，等它跑起来再遮罩，手机用户已经先看到
@@ -11,11 +10,23 @@
        （UA 正则源码 / 存储键 / 桌面 viewport / class 名 / 两句文案）在
        src/mobileGate.ts 与 messages.json 里各有一份**被单测逐字比对**的副本
        （见 src/mobileGate.test.ts），所以"改了实现忘了改这里"不会静默上线。
+
+       ⚠ **刻意不放静态的 viewport meta**，改由下面的内联脚本**创建唯一的那一个**
+       （在 `<head>` 最前面、任何内容之前）。原因是一个真实缺陷：
+       原先的做法是"先声明 `width=device-width`，再在脚本里改成 `width=1280`"。
+       百度 App 内置浏览器（Android，Chromium 97）在脚本执行前就已按 `device-width` 排版并
+       **合成了那些带圆角/阴影的浮动控件图层**（`#zoom-pill` / `#btn-help` / `#hkmac-inset`）；
+       视口改成 1280 触发重新排版后，旧图层没有被失效，于是在旧的左上角位置留下残影、
+       新位置在左下角 —— 用户看到的是"按钮重复且位置不对"。
+       （现代 Chromium 会正确失效，所以本地/新版 Edge 复现不出来。）
+       现在全程**只声明一次 viewport、之后永不修改**，那个重排与残留从根上不存在。
+       `src/mobileGate.test.ts` 有两条断言守着这一点（不得出现静态 meta、不得二次修改）。
+
        判定与行为：
          · 明显爬虫（含 Googlebot-Smartphone）不弹 —— 手机 UA 与爬虫无法区分，而 SEO 要抓正文；
-         · 手机（UA 像手机 且 有触屏/粗指针）：先按**电脑 viewport** 排版（width=1280），
+         · 手机（UA 像手机 且 有触屏/粗指针）：按**电脑 viewport**（width=1280）排版一次到位，
            弹出「请用电脑端访问」；点「继续访问」记下选择并放行，下次访问不再打扰；
-         · 桌面浏览器：什么都不做（viewport 保持 device-width）。 -->
+         · 桌面浏览器：viewport 仍是 device-width，什么都不做。 -->
   <style>
     html.mobile-gate #app { visibility: hidden; }
     #mobile-gate {
@@ -62,16 +73,25 @@
       var GATE_CLASS = 'mobile-gate';
       var ua = navigator.userAgent || '';
       // 爬虫不弹（Googlebot-Smartphone 与普通手机 UA 无法区分，而 SEO 要抓正文）
-      if (CRAWLER_UA.test(ua)) return;
-      if (!PHONE_UA.test(ua)) return;
-      var coarse = false;
-      try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) {}
-      if (!(navigator.maxTouchPoints > 0 || coarse)) return;
+      var crawler = CRAWLER_UA.test(ua);
+      var phone = false;
+      if (!crawler && PHONE_UA.test(ua)) {
+        var coarse = false;
+        try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) {}
+        phone = navigator.maxTouchPoints > 0 || coarse;
+      }
 
-      // 手机上一律先按电脑 viewport 排版：遮罩盖着时看不见，但"点继续后就是电脑视图"
-      // 这一步就**在首次绘制前**完成了 —— 不依赖运行时改 viewport（iOS 对动态改动不总是重排）。
-      var meta = document.getElementById('viewport-meta');
-      if (meta) meta.setAttribute('content', DESKTOP_VIEWPORT);
+      // ★ 唯一一次声明 viewport：在**任何内容之前**按判定结果创建它，之后**永不修改**。
+      //   手机 → width=1280（电脑视图，一次到位）；其余（桌面/爬虫/无 JS）→ device-width。
+      //   为什么不能"先 device-width 再改"：见上面注释里的真实缺陷（百度 App 旧内核留下
+      //   浮动控件残影，表现为"按钮重复且位置不对"）。
+      var meta = document.createElement('meta');
+      meta.id = 'viewport-meta';
+      meta.name = 'viewport';
+      meta.setAttribute('content', phone ? DESKTOP_VIEWPORT : 'width=device-width, initial-scale=1.0');
+      (document.head || document.documentElement).appendChild(meta);
+
+      if (!phone) return;
 
       var stored = null;
       try { stored = localStorage.getItem(KEY); } catch (e) {}

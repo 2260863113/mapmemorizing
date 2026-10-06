@@ -54,16 +54,37 @@ describe('index.html 的内联门槛与 mobileGate.ts / messages.json 逐字一�
     expect(html).toContain('id="mobile-gate-continue"');
     expect(html).toContain('id="mobile-gate-title"');
     expect(html).toContain(`html.${GATE_CLASS} #app { visibility: hidden; }`);
-    // viewport 必须可被脚本改（点「继续访问」后换成桌面宽度）
-    expect(html).toContain('id="viewport-meta"');
-    expect(html).toContain('name="viewport"');
+    // viewport 元素由脚本创建（见下一条），所以这里只断言脚本里那个 id 常量在
+    expect(html).toContain('viewport-meta');
   });
 
-  it('行尾/大小写这类细节不影响，但缺了整段就该报错（防止有人顺手删掉门槛）', () => {
-    expect(html.indexOf('mobile-gate')).toBeGreaterThan(0);
-    // 脚本必须在 <head> 里（否则要等到 body 解析完才执行，首屏已经绘制过手机布局）
+  /**
+   * ⚠ 这一条是一个**真实缺陷**的回归闸门（2026-10，用户在百度 App 里看到"按钮重复且位置不对"）：
+   *
+   * 原先的写法是静态声明 `width=device-width`、再由脚本改成 `width=1280`。
+   * 百度 App 内置浏览器（Android，Chromium 97）在脚本执行前就按 `device-width` 排版并合成了
+   * 那些带圆角/阴影的浮动控件图层（`#zoom-pill` / `#btn-help` / `#hkmac-inset`）；视口改成 1280
+   * 触发重排后**旧图层没有被失效**，于是在旧的左上角位置留下残影，看起来就是"按钮重复"。
+   * （现代 Chromium 会正确失效，所以新版浏览器复现不出来 —— 只有那次真实截图暴露了它。）
+   *
+   * 现在的要求是：**全程只声明一次 viewport，之后永不修改** —— 所以静态 meta 必须不存在，
+   * 由内联脚本用 `createElement('meta')` 一次性创建最终那一个。
+   */
+  it('viewport 不静态声明、也不被二次修改（防"重排后浮动控件留残影"复发）', () => {
+    expect(html).not.toMatch(/<meta[^>]*name\s*=\s*["']viewport["']/i);
+    expect(html).not.toMatch(/<meta[^>]*id\s*=\s*["']viewport-meta["']/i);
+    expect(html).toContain("document.createElement('meta')");
+    expect(html).toContain("meta.name = 'viewport'");
+    // 创建之后不允许再改它（改了就是重新引入了那个重排）
+    expect(html).not.toContain('viewport-meta\').setAttribute');
+    expect(html).not.toMatch(/getElementById\(['"]viewport-meta['"]\)/);
+  });
+
+  it('脚本在 <head> 里、且早于任何 SEO/OG meta（否则首屏已经按 device-width 排过一次版）', () => {
     const headEnd = html.indexOf('</head>');
     expect(html.indexOf('GATE_CLASS')).toBeLessThan(headEnd);
+    // 「早」的判据：创建 viewport 的那段脚本出现在 <title> 之前
+    expect(html.indexOf('GATE_CLASS')).toBeLessThan(html.indexOf('<title>'));
   });
 });
 

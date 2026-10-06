@@ -19,6 +19,27 @@
 
 ⚠ **口径分两处，靠单测消漂移**：内联脚本不能 import 模块或文案表，故 `src/mobileGate.ts` 持有正则源码/存储键/viewport/class 等常量，`messages.json` 持有两句文案，`src/mobileGate.test.ts` 断言 `index.html` **逐字包含**它们（与 `capabilities.test.ts` 断言 tab 文案同一套路）。**改门槛口径时三处一起改**，忘了会立刻红。
 
+### 1b：手机端「按钮重复」的真实原因与修法（用户截图反馈后追加）
+
+用户在**百度 App 内置浏览器**（Android，UA 里 `baiduboxapp` + `Chrome/97`）里看到：左上角叠了三个
+「1.00x」和多余的「说明」，而左下角还有一套正常的控件 —— 看起来像控件被重复渲染。
+
+排查结论（重要，别再走弯路）：
+1. **不是 DOM 重复**。用用户的真实 UA 复现后 dump 过：`#zoom-pill` / `#btn-help` / `#settings` /
+   `#hkmac-inset` 的 `count` 全是 **1**，源码里也各只有一个。
+2. **是 compositor 残影**。根因在旧实现：`<head>` 里**先静态声明 `width=device-width`，再由内联脚本改成
+   `width=1280`**。旧内核在脚本执行前就按 `device-width` 排版并合成了那几个带圆角/阴影的浮动控件图层；
+   改成 1280 触发重排后**旧图层没有被失效**，于是旧位置（左上）留下残影、新位置（左下）是当前值。
+   现代 Chromium 会正确失效 —— 所以本地、`verify-mobile-gate`（新版 Edge）**永远复现不出来**，
+   只有真实旧内核才暴露。这也是"用户截图比自动化验收更有信息量"的一个实例。
+3. **修法：全程只声明一次 viewport**。删掉静态 meta；内联脚本用 `document.createElement('meta')`
+   在 `<head>` 最前面**创建**唯一的那一个（手机 `width=1280`、其余 `device-width`），**之后永不修改**。
+   没有重排，就没有残留。
+4. **回归闸门**：`src/mobileGate.test.ts` 两条断言守死这件事 —— 静态 HTML 里**不得**出现 viewport meta、
+   且**不得**再 `getElementById('viewport-meta').setAttribute(...)`；`verify-mobile-gate` 另外断言
+   `document.querySelectorAll('meta[name="viewport"]').length === 1`。
+   ⚠ 改动门槛时别顺手把静态 meta 加回来。
+
 ### 2：答错扣三分（`src/store.ts`）
 
 新增 `CORRECT_SCORE = 1` / `WRONG_SCORE = -3` 与 `practiceScore(correct, wrong)`，替掉散在三处的 `correctCount - wrongCount`（**地级 / 省级 / 国家**三套熟练度的写入与读回）。
@@ -33,8 +54,7 @@
 
 ### ⚠ 本轮已知遗留
 
-1. **没有手机版布局，也不打算做** —— 门槛是刻意的替代方案。若将来要做手机版，门槛的判据（`isPhoneClient`）就是现成的开关点。
-2. 门槛生效期间应用仍在遮罩后面运行（首题已出、计时可能已开始）。键盘已让路（见上），但**触屏点击被遮罩挡住**是唯一保证 —— 若将来给门槛加"关闭(X)"之类会漏出交互入口，需要重新考虑。
+1. **没有手机版布局，也不打算做** —— 门槛是刻意的替代方案。若将来要做手机版，门槛的判据（`isPhoneClient`）就是现成的开关点。2. 门槛生效期间应用仍在遮罩后面运行（首题已出、计时可能已开始）。键盘已让路（见上），但**触屏点击被遮罩挡住**是唯一保证 —— 若将来给门槛加"关闭(X)"之类会漏出交互入口，需要重新考虑。
 3. `width=1280` 意味着手机上一屏会缩得比较小（约 0.3 倍），需要双指放大阅读。这是"电脑视图"的固有代价；若嫌小，改 `DESKTOP_VIEWPORT` 一个常量即可（会与 `mobileGate.test.ts` 一起生效）。
 4. 分值改动会让**老用户的熟练度颜色变化**（派生值重算），这是刻意的。
 
