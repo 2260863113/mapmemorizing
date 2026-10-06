@@ -5,6 +5,31 @@ const SET_KEY = 'china-admin-settings-v1';
 const PROV_MEM_KEY = 'china-admin-province-memory-v1';
 const WORLD_MEM_KEY = 'china-admin-world-memory-v1';
 
+/**
+ * 每题分值（2026-10 用户口径）：答对 **+1**、答错 **−3**。
+ *
+ * 沿革：此前是「对 +1 / 错 −1」。用户本轮改成答错扣三分 —— **只改分值、不改断点**
+ * （熟练度色阶 −10/−5/−1/0/+1/+5/+10 保持不变，只是答错更快掉档）。
+ *
+ * 为什么把两个数写成常量而不是散在各处 `+ 1` / `- 1`：这套分值同时作用在
+ * **地级 / 省级 / 国家**三套熟练度上，且分数是**派生值**（见 `practiceScore`）——
+ * 只要有一处忘了改，同一个用户在三个粒度上就会看到两套算法。
+ */
+export const CORRECT_SCORE = 1;
+export const WRONG_SCORE = -3;
+
+/**
+ * 熟练度分数 = 对 × `CORRECT_SCORE` + 错 × `WRONG_SCORE`。
+ *
+ * **分数不是事实、是派生的**：存储里只持久化 `correctCount` / `wrongCount`，分数每次读回时
+ * 现算（见 `loadScoreData` / `normalizeRecord` 都调它）。好处是分值口径改动后，**历史数据自动按新
+ * 口径重算**，不需要写迁移去改一堆旧的 score 字段 —— 而写那种迁移必然会漏掉一部分记录。
+ * 代价是"改分值会让老用户的颜色变"：这是改规则的应有之义（一次答错现在等于三次答错的代价）。
+ */
+export function practiceScore(correctCount: number, wrongCount: number): number {
+  return correctCount * CORRECT_SCORE + wrongCount * WRONG_SCORE;
+}
+
 /** 省级熟练度：以省 adcode 为键的简单对错计数（独立于地级市熟练度）。 */
 interface ProvincePractice {
   correctCount: number;
@@ -59,7 +84,7 @@ export class MemoryStore {
           wrongCount: finiteCount(value.wrongCount),
           score: 0,
         };
-        out[adcode].score = out[adcode].correctCount - out[adcode].wrongCount;
+        out[adcode].score = practiceScore(out[adcode].correctCount, out[adcode].wrongCount);
       }
       assign(out);
     } catch {
@@ -85,7 +110,7 @@ export class MemoryStore {
   }
 
   private syncProvScore(record: ProvincePractice) {
-    record.score = record.correctCount - record.wrongCount;
+    record.score = practiceScore(record.correctCount, record.wrongCount);
   }
 
   /** 省级熟练度查询：省 adcode → { correctCount, wrongCount, score }（默认 0）。 */
@@ -164,7 +189,7 @@ export class MemoryStore {
   }
 
   private syncScore(record: MemoryRecord) {
-    record.score = record.correctCount - record.wrongCount;
+    record.score = practiceScore(record.correctCount, record.wrongCount);
   }
 
   private persist() {

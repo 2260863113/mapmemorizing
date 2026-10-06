@@ -1,5 +1,43 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-10 第二轮）：手机端访问门槛 + 答错扣三分
+
+用户两条（原话）：
+
+1. 去给手机端写一个门槛，当用户用手机访问时，在加载之前，窗口询问「请用电脑端访问」，下方添加按钮「继续访问」，如果用户点击继续访问，那么在手机端，用户在手机上看的内容是电脑视图显示，而不是 ui 错乱的手机视图。
+2. 将熟练度分析中，答错一题扣三分，而不是现在的一分。答对只得一分。
+
+### 1：手机端访问门槛（`index.html` 内联 + `src/mobileGate.ts` 契约）
+
+**为什么内联在 `index.html`**：项目**没有**手机版布局（只有两处窄屏微调），所以门槛必须早于主 bundle（1.3MB）生效 —— 否则用户会先看到一眼错乱的手机布局（`styles.css` 在构建产物里是 `<link>`，首屏就生效而 JS 还没跑）。故遮罩的 `<style>` 与判定 `<script>` 都写在 `index.html` 的 `<head>` 里（同步执行、早于首次绘制）。**光靠 `main.ts` 做不到这一点**（那时首屏已经画过一次）。
+
+**判据三条同时成立才弹**：UA 像手机（`PHONE_UA_SOURCE`）、确实有触屏或粗指针（`maxTouchPoints>0 || (pointer: coarse)`）、且**不是爬虫**（`CRAWLER_UA_SOURCE`）。第三条是因为 Googlebot-Smartphone 与普通手机 UA 无法区分，而本站 SEO 依赖爬虫读正文（README 的 SEO 一节）。
+
+**"电脑视图"的实现是改 layout viewport**：手机上一律先把 `<meta name="viewport">` 改成 `width=1280`（`DESKTOP_VIEWPORT`）。选 1280 是因为项目自己的窄屏断点是 900 / 620px，1280 保证落在"电脑档"。**在首次绘制前就改**（而不是点按钮时才改）：iOS 对运行时改 viewport 不总是重排，而遮罩盖着时用户看不见底层布局，所以"提前改成桌面宽度 + 点按钮只去掉遮罩"是零风险的做法。门槛生效期间 `#app` 是 `visibility: hidden`（**不是 `display:none`** —— 后者会让 ECharts 量到 0×0 画布）；`AppController.onGlobalKeyDown` 在 `html.mobile-gate` 存在时直接早退，免得遮罩背后按 Tab 把测试重开。
+
+**选择记在 `localStorage['china-admin-mobile-gate-v1'] = 'continue'`**，同一台手机下次访问不再打扰（仍按电脑视图）。
+
+⚠ **口径分两处，靠单测消漂移**：内联脚本不能 import 模块或文案表，故 `src/mobileGate.ts` 持有正则源码/存储键/viewport/class 等常量，`messages.json` 持有两句文案，`src/mobileGate.test.ts` 断言 `index.html` **逐字包含**它们（与 `capabilities.test.ts` 断言 tab 文案同一套路）。**改门槛口径时三处一起改**，忘了会立刻红。
+
+### 2：答错扣三分（`src/store.ts`）
+
+新增 `CORRECT_SCORE = 1` / `WRONG_SCORE = -3` 与 `practiceScore(correct, wrong)`，替掉散在三处的 `correctCount - wrongCount`（**地级 / 省级 / 国家**三套熟练度的写入与读回）。
+
+⚠ 关键设计：**分数是派生值**。存储里只持久化 `correctCount` / `wrongCount`，分数每次读回现算（`loadScoreData` / `normalizeRecord` 都调 `practiceScore`）。所以改分值后**历史数据自动按新口径重算，不需要写迁移** —— 而写那种迁移必然漏掉一部分记录。代价是老用户的颜色会变，这是改规则的应有之义（一次答错现在等于三次答错的代价）。**色阶断点（−10/−5/−1/0/+1/+5/+10）没有改**，用户只要求改分值。
+
+### 验收
+
+- `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（1 条**既有** warning `src/testCtx.ts`）+ **59 文件 / 782 用例**。
+- `npm run build` 通过；真实浏览器**七套**验收脚本全绿（363 项断言）：新增 `verify-mobile-gate` **21/21**（CDP 模拟 iPhone UA + 移动端 metrics + 触屏：桌面不弹、手机弹「请用电脑端访问」、首屏即 `width=1280`、点「继续访问」后布局视口与地图画布都是 1280 宽、选择被记住、二次访问不再打扰、手机爬虫不弹），以及 `verify-admin-traffic` 85/85、`verify-round2` 38/38、`verify-round3` 54/54、`verify-naming` 47/47、`verify-drill-scope` 34/34、`verify-puzzle` 84/84。
+- 新增测试：`src/mobileGate.test.ts`（11：内联副本逐字一致 + `isPhoneClient` 三个条件）、`src/storeScore.test.ts`（6：三套熟练度都按新分值 + 存量数据重算）。
+
+### ⚠ 本轮已知遗留
+
+1. **没有手机版布局，也不打算做** —— 门槛是刻意的替代方案。若将来要做手机版，门槛的判据（`isPhoneClient`）就是现成的开关点。
+2. 门槛生效期间应用仍在遮罩后面运行（首题已出、计时可能已开始）。键盘已让路（见上），但**触屏点击被遮罩挡住**是唯一保证 —— 若将来给门槛加"关闭(X)"之类会漏出交互入口，需要重新考虑。
+3. `width=1280` 意味着手机上一屏会缩得比较小（约 0.3 倍），需要双指放大阅读。这是"电脑视图"的固有代价；若嫌小，改 `DESKTOP_VIEWPORT` 一个常量即可（会与 `mobileGate.test.ts` 一起生效）。
+4. 分值改动会让**老用户的熟练度颜色变化**（派生值重算），这是刻意的。
+
 ## 本轮（2026-10）：IPv4 优先 / 日志折叠 / 游客编号 / 延迟跟随 / 游玩范围 / 排除管理员 / 非洲 0.8
 
 用户一次给七条（原话编号即下文 1–7）：

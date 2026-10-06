@@ -48,6 +48,7 @@ import { collectClientEnv } from './clientEnv';
 import { reportPlay } from './playLogger';
 import { visitorId } from './visitorId';
 import { labelOverride, setLabelOverride } from './map/labelVisibility';
+import { GATE_CLASS } from './mobileGate';
 import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
 import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
@@ -1017,6 +1018,10 @@ export class AppController {
    */
   private onGlobalKeyDown(event: KeyboardEvent) {
     if (isNonMapMode(this.current?.id)) return;
+    // 手机端门槛挡着时，游戏语义的按键（Tab 重开/空格暂停/Alt 标签）一律让路：
+    // 那时 `<html>` 上挂着 mobile-gate，屏幕被遮罩盖住，按 Tab 把测试重开是纯破坏
+    // （应用在遮罩后面照常跑着，见 index.html 的内联门槛脚本）。
+    if (document.documentElement.classList.contains(GATE_CLASS)) return;
     if (event.defaultPrevented) return;
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (target && target !== document.body && !$('app').contains(target)) return;

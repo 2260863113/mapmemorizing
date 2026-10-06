@@ -2,7 +2,93 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- ===== 手机端访问门槛（2026-10）=====
+       必须在**主 bundle 之前**生效：bundle 有 1.3MB，等它跑起来再遮罩，手机用户已经先看到
+       一眼错乱的手机布局（styles.css 在构建产物里是 <link>，首屏就生效而 JS 还没跑）。
+       故这里的样式与判定是**内联**的（同步执行、早于首次绘制）；其中可变的口径
+       （UA 正则源码 / 存储键 / 桌面 viewport / class 名 / 两句文案）在
+       src/mobileGate.ts 与 messages.json 里各有一份**被单测逐字比对**的副本
+       （见 src/mobileGate.test.ts），所以"改了实现忘了改这里"不会静默上线。
+       判定与行为：
+         · 明显爬虫（含 Googlebot-Smartphone）不弹 —— 手机 UA 与爬虫无法区分，而 SEO 要抓正文；
+         · 手机（UA 像手机 且 有触屏/粗指针）：先按**电脑 viewport** 排版（width=1280），
+           弹出「请用电脑端访问」；点「继续访问」记下选择并放行，下次访问不再打扰；
+         · 桌面浏览器：什么都不做（viewport 保持 device-width）。 -->
+  <style>
+    html.mobile-gate #app { visibility: hidden; }
+    #mobile-gate {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      padding: 24px;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.92);
+      font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      color: #f8fafc;
+    }
+    html.mobile-gate #mobile-gate { display: flex; }
+    #mobile-gate .mobile-gate-card {
+      width: min(360px, 100%);
+      padding: 28px 22px;
+      border: 1px solid rgba(248, 250, 252, 0.18);
+      border-radius: 14px;
+      background: rgba(30, 41, 59, 0.96);
+      text-align: center;
+    }
+    #mobile-gate .mobile-gate-title { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+    #mobile-gate .mobile-gate-note { margin: 0 0 20px; font-size: 12px; line-height: 1.6; color: #cbd5e1; }
+    #mobile-gate button {
+      width: 100%;
+      padding: 11px 16px;
+      border: 0;
+      border-radius: 10px;
+      background: #10b981;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+  <script>
+    (function () {
+      var PHONE_UA = new RegExp('Android|iPhone|iPod|Windows Phone|HarmonyOS|MiuiBrowser|MicroMessenger|Weixin|Mobile Safari', 'i');
+      var CRAWLER_UA = new RegExp('bot|spider|crawler|slurp|headless|externalagent', 'i');
+      var KEY = 'china-admin-mobile-gate-v1';
+      var DESKTOP_VIEWPORT = 'width=1280';
+      var GATE_CLASS = 'mobile-gate';
+      var ua = navigator.userAgent || '';
+      // 爬虫不弹（Googlebot-Smartphone 与普通手机 UA 无法区分，而 SEO 要抓正文）
+      if (CRAWLER_UA.test(ua)) return;
+      if (!PHONE_UA.test(ua)) return;
+      var coarse = false;
+      try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) {}
+      if (!(navigator.maxTouchPoints > 0 || coarse)) return;
+
+      // 手机上一律先按电脑 viewport 排版：遮罩盖着时看不见，但"点继续后就是电脑视图"
+      // 这一步就**在首次绘制前**完成了 —— 不依赖运行时改 viewport（iOS 对动态改动不总是重排）。
+      var meta = document.getElementById('viewport-meta');
+      if (meta) meta.setAttribute('content', DESKTOP_VIEWPORT);
+
+      var stored = null;
+      try { stored = localStorage.getItem(KEY); } catch (e) {}
+      if (stored === 'continue') return; // 已经选过"继续访问"：不再打扰
+
+      document.documentElement.classList.add(GATE_CLASS);
+      document.addEventListener('DOMContentLoaded', function () {
+        var btn = document.getElementById('mobile-gate-continue');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          try { localStorage.setItem(KEY, 'continue'); } catch (e) {}
+          document.documentElement.classList.remove(GATE_CLASS);
+        });
+      });
+    })();
+  </script>
+
 
   <!-- ===== SEO：标题与描述 =====
        百度对标题前段权重更高，故关键词「地图记忆」在前、「中国行政区」在后；
@@ -51,6 +137,16 @@
   </script>
 </head>
 <body>
+  <!-- 手机端访问门槛（结构与文案；显隐由 head 里的内联脚本加/去 html.mobile-gate 决定）。
+       文案「请用电脑端访问」/「继续访问」与 messages.json 的 mobileGate.title / mobileGate.continue
+       逐字一致，由 src/mobileGate.test.ts 断言 —— 内联脚本不能 import 文案表，故这里必须留一份。 -->
+  <div id="mobile-gate" role="dialog" aria-modal="true" aria-labelledby="mobile-gate-title">
+    <div class="mobile-gate-card">
+      <p class="mobile-gate-title" id="mobile-gate-title">请用电脑端访问</p>
+      <p class="mobile-gate-note">手机屏幕放不下完整的地图与按钮，建议在电脑上打开以获得完整体验。</p>
+      <button id="mobile-gate-continue" type="button">继续访问</button>
+    </div>
+  </div>
   <div id="app">
     <!-- 静态可爬文本：搜索蜘蛛（尤其百度）不执行 JS，这段是站点唯一稳定的语义信号。
          它同时是视觉上的品牌名与站点简介，不是隐藏文本。 -->
