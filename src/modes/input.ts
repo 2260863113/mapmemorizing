@@ -15,7 +15,7 @@ import {
 import { canDrillProvince, drillTargetOfUnit } from '../province';
 import { modeTitle } from './capabilities';
 import { activeChoiceOf } from './naming';
-import { cityFollowExtraZoom, worldFollowExtraZoom } from './followBonus';
+import { cityFollowScale, worldFollowScale } from '../map/followScale';
 import { MapQuizMode } from './mapQuizMode';
 import type { QuizOrderDiagnostics } from './quizDiagnostics';
 import { bfsStep } from './bfsOrder';
@@ -29,8 +29,9 @@ import { showStartCard } from '../ui/dom';
  *   （2026-09 需求 9）；随机/错题模式各按自己的口径选题。
  * - 省级（全国）：出题池为 34 个省级单元，BFS 在省-省邻接上扩张；省级答题只计入省级熟练度。
  * - 世界（全国）：出题池为 195 个国家单元，BFS 在国家-国家邻接上扩张；国家答题只计入国家熟练度。
- * - 自动跟随（自由跟随）：出题后镜头聚焦该题，倍率 = 渲染器按省/面积算的基准 + 加成
- *   （中国地级与世界普通国 +2x，非洲 +6x，2026-09 需求 8；见 followBonus.ts）。
+ * - 自动跟随（自由跟随）：出题后镜头聚焦该题，倍率 = 渲染器按省/面积算的**基准** × **系数**
+ *   （中国地级与世界普通国 ×0.75、非洲 ×0.5；面积极小、几乎难以察觉的国家**不乘系数**，
+ *   直接用世界跟随上限）。2026-09 需求 8 修订版，见 `map/followScale.ts`。
  */
 export class InputMode extends MapQuizMode {
   readonly id: Mode = 'self';
@@ -188,17 +189,18 @@ export class InputMode extends MapQuizMode {
     this.question = u.adcode;
     this.refresh();
     // 省级全国保持全国视野不聚焦；世界全国按面积决定缩放、中国地级按省标定阶梯，
-    // 两者再各自加一段**加成**（2026-09 需求 8：统一 +2x，非洲 +6x）。
+    // 两者再各自乘**系数**（2026-09 需求 8 修订版：通用 ×0.75、非洲 ×0.5）。
     //
-    // ⚠ 这个参数以前传的是「12」而渲染器根本不读它（参数名 `_zoom`），实际倍率是渲染器
-    //   内部按省/按面积算的。现在它是**货真价实的额外加成**：真倍率 = 基准 + extra，由
-    //   渲染器统一夹取（见 renderer.followZoomWithBonus）。
+    // ⚠ 这个参数的语义已经换过两次，务必按当前定义读：第一版是「被渲染器忽略的绝对倍率 12」，
+    //   第二版是「额外加成（+2/+6）」，**现在是倍率系数（×0.75/×0.5，缺省 1 = 不动基准）**。
+    //   真正的乘法与夹取都在渲染器里（`renderer.focusUnit/focusWorldCountry` → `scaleFollowZoom`）；
+    //   这里只回答"乘多少"。面积极小的国家由渲染器判定并改用跟随上限，模式侧不掺和。
     if (this.autoFollow) {
       if (this.isWorldNation()) {
         const continent = this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent;
-        this.ctx.renderer.focusWorldCountry(u.adcode, worldFollowExtraZoom(continent));
+        this.ctx.renderer.focusWorldCountry(u.adcode, worldFollowScale(continent));
       } else if (!this.isProvinceNation()) {
-        this.ctx.renderer.focusUnit(u.adcode, cityFollowExtraZoom());
+        this.ctx.renderer.focusUnit(u.adcode, cityFollowScale());
       }
     }
     this.ctx.search.clear();

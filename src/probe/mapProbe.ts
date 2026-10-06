@@ -314,10 +314,9 @@ export function mapProbe(a: AppDiagnostics) {
       renderer.setWorldMode(false, null, null);
       renderer.setProvinceMode(false, { inset: false });
       if (drill) renderer.drillToProvince(drill);
-      // extraZoom 语义变了（2026-09 需求 8）：它现在是**额外加成**而非绝对倍率。
-      // 探针要的是"渲染器按省标定的默认跟随"，故传 0（以前传 12 其实一直被忽略，
-      // 现在若不改，同一个截图点会平白放大到 24x）。
-      renderer.focusUnit(adcode, 0);
+      // scale 的语义换过两次（2026-09 需求 8 与其修订版）：现在它是**倍率系数**而非绝对倍率。
+      // 探针要的是"渲染器按省标定的默认跟随"，故不传（缺省 1 = 不动基准）。
+      renderer.focusUnit(adcode);
       return { center: d.center.join(','), zoom: d.zoom };
     },
 

@@ -37,20 +37,10 @@ export interface ModeSettingsPanel {
 const SELF_REQUIRE_ENTER_KEY = 'china-admin-self-require-enter-v1';
 const SELF_ERROR_ROLLBACK_KEY = 'china-admin-self-error-rollback-v1';
 const SELF_AUTO_FOLLOW_KEY = 'china-admin-self-auto-follow-v1';
-/**
- * 输入模式自动跟随的**固定基准倍率**（历史常量，12x）。
- *
- * ⚠ 含义已变（2026-09 需求 8）：旧实现里它被当作「绝对倍率」传给 `renderer.focusUnit(adcode, 12)`，
- * 但渲染器**忽略**了那个参数，实际用的是按省标定的阶梯（`followZoomFor`：宽省 6x / 海南 28x /
- * 其余 12x）。本轮把那层「传了不用」的假参数改成**语义明确的额外加成**（见下面两个新常量），
- * 真倍率一律由渲染器算，故本常量**不再被任何调用点读取**，只作为「12x 曾是基准」的历史注记保留
- * （真正的加成常量是 SELF_FOLLOW_ZOOM_BONUS / _AFRICA；要改跟随观感请改它们或渲染器）。
- */
-export const SELF_FOLLOW_ZOOM = 12;
-/** 输入模式自由跟随：世界档（除非洲）与中国地级统一 **+2x**（2026-09 需求 8）。 */
-export const SELF_FOLLOW_ZOOM_BONUS = 2;
-/** 输入模式自由跟随：**非洲**国家 **+6x**（2026-09 需求 8，用户给定口径：非洲国家整体偏大）。 */
-export const SELF_FOLLOW_ZOOM_BONUS_AFRICA = 6;
+// 自动跟随的**倍率系数**不在这里：它是纯换算（基准 × 系数 → 夹取），住在 `map/followScale.ts`，
+// 与「每模式设置」这些 localStorage 开关不是一类东西。这里原先的三个历史常量
+// （`SELF_FOLLOW_ZOOM = 12`、`+2`、`+6`）已随语义变更删除 —— 留一个语义已经相反的常量，
+// 比删掉它危险得多（下一个读代码的人会照着它写回旧的加法）。
 
 export function loadSelfRequireEnter(): boolean {
   return loadBool(SELF_REQUIRE_ENTER_KEY, true);
@@ -83,13 +73,9 @@ export function saveClickErrorRollback(v: boolean) {
 
 // ---------- 无尽闯关（endless） ----------
 const ENDLESS_AUTO_FOLLOW_KEY = 'china-admin-endless-auto-follow-v1';
-/**
- * 无尽闯关自动跟随的历史常量（12x）。**同 `SELF_FOLLOW_ZOOM`：已不参与取景**。
- *
- * 无尽闯关明确**不加成**（2026-09 需求 8 只覆盖输入模式），调用点因此改成 `focusUnit(adcode, 0)`，
- * 走渲染器按省标定的阶梯；本常量保留作历史注记。
- */
-export const ENDLESS_FOLLOW_ZOOM = 12;
+// 无尽闯关的自动跟随**不乘任何系数**（2026-09 需求 8 只覆盖输入模式），
+// 调用点因此是 `focusUnit(adcode)`（缺省系数 1 = 不动基准，走渲染器按省标定的阶梯）。
+// 原历史常量 `ENDLESS_FOLLOW_ZOOM = 12` 已删除：它早已不参与取景。
 
 export function loadEndlessAutoFollow(): boolean {
   return loadBool(ENDLESS_AUTO_FOLLOW_KEY, true);

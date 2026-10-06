@@ -16,6 +16,18 @@ export function loadTinyCountries(): string[] {
   return cache ?? [];
 }
 
+/**
+ * 该 iso 是否属于**面积极小、几乎难以察觉**的国家。
+ *
+ * 与 `ignoredIsos()` 的区别：那个是「用户开启设置后被排除出局的集合」，这里是**清单事实本身**，
+ * 与设置无关。自动跟随要用的是后者 —— 无论用户有没有开「忽略面积极小的国家」，
+ * 摩纳哥在镜头里都只有几个像素，跟随倍率都不该被缩小。
+ * 清单未加载时返回 false（降级为「按普通国家处理」，不会让镜头跳到意料之外的地方）。
+ */
+export function isTinyCountry(iso: string): boolean {
+  return (cache ?? []).includes(iso);
+}
+
 /** 取异步清单，供判定前确保已就绪（幂等，失败时降级为空清单，不抛出）。 */
 export async function ensureTinyCountries(): Promise<string[]> {
   if (cache) return cache;

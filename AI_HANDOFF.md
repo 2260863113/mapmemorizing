@@ -49,11 +49,16 @@
 
 `functions/api/admin/users.ts` 改为 `ORDER BY is_admin DESC, created_at DESC`（管理员置顶 + 越晚注册越靠前）。前端不做二次排序。
 
-### 8：输入模式自动跟随加成
+### 8：输入模式自动跟随的倍率系数（**修订过一次**）
 
-基准（中国按省阶梯 `followZoomFor`、世界按面积反比 `worldFollowZoom`）仍在渲染器；**加成由模式回答**（`src/modes/followBonus.ts`：世界普通国 +2、**非洲 +6**、中国地级 +2），渲染器 `followZoomWithBonus(base, extra)` 相加后**统一 `clampZoom`**。
+基准（中国按省阶梯 `followZoomFor`、世界按面积反比 `worldFollowZoom`）仍由渲染器算；**系数由模式回答**，纯换算与夹取住在 `src/map/followScale.ts`：
+- 中国地级与世界普通国家 **×0.75**；**非洲 ×0.5**；
+- **面积极小、几乎难以察觉的国家（`tiny_countries.json` 那 6 国）不乘系数**，`focusWorldCountry` 直接使用世界跟随上限 28x（判定在渲染器里做，靠 `tinyCountries.isTinyCountry()`，与「忽略面积极小的国家」这条**设置**无关）；
+- 非法系数（`NaN`/`Infinity`/**≤0**）在 `scaleFollowZoom` 里按 **1** 兜掉 —— 系数 0 会被夹成 `MIN_ZOOM`，表现为"跟随之后镜头突然拉到最远"，而上一版恰好有个「传 0 表示不加成」的调用点。
 
-⚠ 顺手修掉一处长期隐患：`renderer.focusUnit(adcode, _zoom)` 的第二个参数**从前被完全忽略**（真实倍率来自按省阶梯），调用方以为传 12 就是 12x。现在它的语义是**额外加成**，调用点已同步（`endless` 传 0 = 无尽不加成、`probe/mapProbe` 传 0）。`focusWorldCountry(iso, extraZoom = 0)` 默认 0，故既有探针断言（`verify-round2`）逐字未变。
+⚠ **这一条改过两次，务必按当前定义读**：第一版是「**加** 2x / 非洲加 6x」（用户随后指出方向说反了），现行是「**乘**系数把镜头拉远」。因为运算类型从加减变成乘除，旧的 `followZoomWithBonus`、`SELF_FOLLOW_ZOOM_BONUS(_AFRICA)`、以及两个只作历史注记的 `SELF_FOLLOW_ZOOM = 12` / `ENDLESS_FOLLOW_ZOOM = 12` 全部**删除**，`focusUnit`/`focusWorldCountry` 的第 2 个参数语义定为「倍率系数，缺省 1 = 不动基准」；调用点同步为 `focusUnit(adcode, cityFollowScale())` / `focusWorldCountry(iso, worldFollowScale(continent))` / 无尽的 `focusUnit(adcode)` / 探针的 `focusUnit(adcode)`。上一版那处「`focusUnit(adcode, 0)` 表示不加成」若被遗留到乘法语义下会把镜头拉到最远，故纯函数对 ≤0 做了兜底。
+
+⚠ 顺手修掉一处长期隐患：`renderer.focusUnit(adcode, _zoom)` 的第二个参数**从前被完全忽略**（真实倍率来自按省阶梯），调用方以为传 12 就是 12x。现在它的语义是**倍率系数**（缺省 1 = 不动基准），调用点已同步（`endless` 传 `focusUnit(adcode)`、`probe/mapProbe` 同样不传）。`focusWorldCountry(iso, scale = 1)` 缺省 1，故既有探针断言（`verify-round2`）逐字未变。
 
 ### 9：顺序出题邻接优先
 
@@ -61,7 +66,7 @@
 
 ### 验收
 
-- `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（仅 1 条**既有** warning `src/testCtx.ts` 函数 62 行 > 60，本轮无人改该文件）+ **56 文件 / 731 用例**（基线 49 / 615）。
+- `npm run check` 全绿：tsc（src + functions 两套 tsconfig）+ eslint **0 error**（仅 1 条**既有** warning `src/testCtx.ts` 函数 62 行 > 60，本轮无人改该文件）+ **55 文件 / 739 用例**（基线 49 / 615）。
 - `npm run build` 通过。
 - 真实浏览器验收（headless Edge + 真实指针事件，全部在最终改动之后重跑）：`verify-admin-traffic` **74/74**（原 38；含完整 UA 129 字一字不差、完整 IP/地理、环境详情逐字段、**未登录有依据→「爬虫」/ 无依据→「游客」两条路径**、匿名游客行无爬虫描边、翻页与首屏同构、游玩统计的曲线/条目/来源/空态/另一组容器 id/「次游玩」量词）、`verify-round2` **38/38**（含顺序模式 48/48 题 0 重复全覆盖）、`verify-round3` **54/54**、`verify-naming` **47/47**、`verify-drill-scope` **34/34**。
 - 基线在动工前用 `git worktree` 建在 `777b568` 上跑过一遍（49 文件 / 615 用例全绿），因此"新增的失败"与"既有的失败"不会混在一起。

@@ -201,3 +201,72 @@ describe('输入模式 · quickRestart（Tab 即时重开，需求 1）', () => 
     expect(mode.isStarted()).toBe(true);
   });
 });
+
+/**
+ * 自动跟随的**接线**（2026-09 需求 8 修订版）：模式侧只负责"乘多少系数"，
+ * 真倍率由渲染器算（基准 × 系数 → 夹取）。系数本身在 `map/followScale.test.ts` 里逐档断言；
+ * 这里锁的是**模式真的把系数传下去了** —— 一个漏传/传错位置的接线，
+ * 界面上只表现为"镜头有点近/有点远"，别的测试全绿也发现不了。
+ */
+describe('输入模式 · 自动跟随把倍率系数交给渲染器（需求 8 修订版）', () => {
+  /** 世界档可能用到的两个国家：一个欧洲（通用档）、一个非洲（0.5 档）。 */
+  const COUNTRIES = [
+    { iso: 'FRA', name: '法国', fullName: '法兰西共和国', center: [2, 46] as [number, number], neighbors: [], continent: 'EU' as const },
+    { iso: 'ZAF', name: '南非', fullName: '南非共和国', center: [24, -29] as [number, number], neighbors: [], continent: 'AF' as const },
+  ];
+
+  /** 记录 `focusUnit` / `focusWorldCountry` 收到的第 2 个参数（系数）。 */
+  function recordingCtx(data: Partial<AppData>) {
+    const { ctx } = makeTestCtx({ data, randomUnit: (pool) => pool[0] });
+    const seen = { unit: [] as [string, number | undefined][], world: [] as [string, number | undefined][] };
+    const renderer = ctx.renderer as unknown as {
+      focusUnit: (adcode: string, scale?: number) => void;
+      focusWorldCountry: (iso: string, scale?: number) => void;
+    };
+    renderer.focusUnit = (adcode, scale) => seen.unit.push([adcode, scale]);
+    renderer.focusWorldCountry = (iso, scale) => seen.world.push([iso, scale]);
+    return { ctx, seen };
+  }
+
+  it('中国地级：传 ×0.75 系数（不是绝对倍率、也不是加法）', () => {
+    stubBrowserGlobals();
+    const { ctx, seen } = recordingCtx(DATA);
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery({ granularity: 'city', continent: null, subregion: null, province: null });
+    startMode(mode);
+    expect(seen.unit).toEqual([[UNIT_A.adcode, 0.75]]);
+  });
+
+  it('世界档普通国：传 ×0.75', () => {
+    stubBrowserGlobals();
+    const { ctx, seen } = recordingCtx({ countries: COUNTRIES });
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery({ granularity: 'world', continent: null, subregion: null, province: null });
+    startMode(mode);
+    expect(seen.world).toEqual([['FRA', 0.75]]);
+  });
+
+  it('世界档非洲国：传 ×0.5（池首换成南非）', () => {
+    stubBrowserGlobals();
+    const { ctx, seen } = recordingCtx({ countries: COUNTRIES });
+    // 让首题落在池尾（南非）——题序由夹具的 randomUnit 决定，故这里直接换掉它
+    (ctx as unknown as { randomUnit: (pool: { adcode: string }[]) => { adcode: string } }).randomUnit = (pool) => pool[pool.length - 1];
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery({ granularity: 'world', continent: null, subregion: null, province: null });
+    startMode(mode);
+    expect(seen.world).toEqual([['ZAF', 0.5]]);
+  });
+
+  it('自动跟随关闭时一次也不聚焦（系数与镜头都不该动）', () => {
+    stubBrowserGlobals();
+    const { ctx, seen } = recordingCtx(DATA);
+    // 模式设置里的「自动跟随」默认开；这里模拟用户关掉它
+    // （该开关由 loadSelfAutoFollow 从 localStorage 读，测试环境无 localStorage → 默认 true，
+    //  故走 setModeSettings 的 onChange 那条公开路径把字段改掉）
+    const mode = new InputMode(ctx);
+    mode.applyScopeQuery({ granularity: 'city', continent: null, subregion: null, province: null });
+    mode.getModeSettings()?.onChange('auto-follow', false);
+    startMode(mode);
+    expect(seen.unit).toEqual([]);
+  });
+});

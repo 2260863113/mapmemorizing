@@ -5,6 +5,8 @@ import { bestLabelAnchor, polygonsOf, type GeoFeature, type GeoPoint } from './g
 import { buildLabelAnchors, buildProvinceLines } from './geoIndex';
 import { MAX_ZOOM, clampZoom } from './zoom';
 import { clampFollowCenter, followZoomFloor, isComfortablyVisible, isNegligibleMove } from './follow';
+import { scaleFollowZoom, worldFocusZoom } from './followScale';
+import { isTinyCountry } from '../tinyCountries';
 import { InsetMap } from './inset';
 import { registerMaps } from './mapRegistry';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
@@ -120,25 +122,8 @@ export function worldFollowZoom(area: number): number {
   return Math.min(WORLD_FOLLOW_MAX_ZOOM, Math.max(WORLD_FOLLOW_MIN_ZOOM, z));
 }
 
-/**
- * 跟随倍率 = **基准倍率 + 额外加成**，再夹到地图缩放范围 `[MIN_ZOOM, MAX_ZOOM]`。
- *
- * 为什么单独成函数：2026-09 需求 8 的「输入模式自由跟随统一 +2x（非洲 +6x）」落在这一步上，
- * 而它原先埋在 `focusUnit` / `focusWorldCountry` 里 —— 要验证「加成真的加上了、且不会被顶到
- * 28x 以上」就得起一个 ECharts 实例。抽成导出纯函数后可以脱离浏览器逐档断言
- * （见 `followZoomBonus.test.ts`），渲染器只负责把基准倍率算出来。
- *
- * 反例（错误实现）：只在其中一个调用点加。世界档极小国（基准 23.6x）+6 若不夹取会得到 29.6x，
- * 超出地图上限后 ECharts 的 roam 缩放状态与角标显示会各自漂移——故加法与夹取必须成对出现。
- *
- * 另：加成非法（NaN/Infinity）时按 0 处理。`clampZoom(NaN)` 会**原样返回 NaN**，
- * 一旦传进 geo.zoom 就是整幅地图消失且再也回不来（roam 状态坏了），不值得为「参数写错」
- * 付这个代价；宁可少加一次。
- */
-export function followZoomWithBonus(base: number, extraZoom: number): number {
-  const extra = Number.isFinite(extraZoom) ? extraZoom : 0;
-  return clampZoom(base + extra);
-}
+// 跟随倍率的**系数**（中国地级 ×0.75 / 世界普通国 ×0.75 / 非洲 ×0.5）与「基准 × 系数」的夹取
+// 见 ./followScale.ts —— 那里是纯函数，可脱离 ECharts 单测。
 
 // 镜头动画缓动 easeInOutCubic 随取景换算一起搬到 ./camera.ts
 
@@ -1022,7 +1007,17 @@ export class MapRenderer {
    * 但世界档极小国（23.6x）+6 也会顶到 28x —— 这正是我们要的「不越地图上限」。
    * `followZoomFloor` 之后不再夹取，因为它是**下限**，不会把倍率抬到 28 以上。
    */
-  focusUnit(adcode: string, extraZoom = 0) {
+  /**
+   * 中国族自动跟随：镜头移到某地级单位，倍率 = **按省标定的阶梯** `followZoomFor(省)` **× scale**。
+   *
+   * `scale` 是「倍率系数」（2026-09 需求 8 修订版：输入模式自由跟随中国地级统一 ×0.75）。
+   * 它**不是绝对倍率**，也不是加法 —— 旧签名那两版分别是「被忽略的 `_zoom`」和「额外加成」，
+   * 两次语义变更都踩过坑，故这里连同注释一起写死：**缺省 1 = 不动基准**（无尽闯关与验收探针走它）。
+   *
+   * 真实倍率 = 基准 × 系数 → `clampZoom` 夹到 [MIN_ZOOM, MAX_ZOOM] → 再取 `followZoomFloor`
+   * 的倍率下限（取景边界必须覆盖视口）。顺序要紧：先乘再夹，否则小范围的取景下限会算错。
+   */
+  focusUnit(adcode: string, scale = 1) {
     if (this.worldMode) return; // 世界模式无自动聚焦（输入模式世界档不跟随）
     const u = this.units.find((item) => item.adcode === adcode);
     if (!u) return;
@@ -1033,7 +1028,7 @@ export class MapRenderer {
     }
     const extent = this.framingExtent();
     const win = this.viewportWindow();
-    const zoom = followZoomFloor(win, this.zoom, extent, followZoomWithBonus(followZoomFor(u.provinceAdcode), extraZoom));
+    const zoom = followZoomFloor(win, this.zoom, extent, scaleFollowZoom(followZoomFor(u.provinceAdcode), scale));
     const center = clampFollowCenter(win, this.zoom, u.center, zoom, extent);
     if (isNegligibleMove(win, this.center, this.zoom, center, zoom)) return; // 钳制后基本没动，就别白跑一趟动画
     this.animateViewTo(center, zoom);
@@ -1042,19 +1037,28 @@ export class MapRenderer {
   /**
    * 世界模式自动跟随：镜头移到某国，**缩放倍率与国家面积成反比**（面积越小放得越大）。
    *
-   * 倍率由 `worldFollowZoom(面积)` 按绝对映射算出（`A − B·ln(面积)`，夹到 [3, 28]）：
-   * 极小国顶到地图上限 28x、法国约 8x、俄罗斯 3x，标定见该函数的注释；
-   * 再叠加 `extraZoom`（2026-09 需求 8：输入模式自由跟随普通国家 +2x、**非洲 +6x**），
-   * 随后 `clampZoom` 夹到地图上限、最后取 `followZoomFloor()` 的倍率下限（取景边界必须覆盖视口）。
-   * 落点经 `clampFollowCenter()` 钳制。
+   * 基准由 `worldFollowZoom(面积)` 按绝对映射算出（`A − B·ln(面积)`，夹到 [3, 28]）：
+   * 法国约 8x、俄罗斯 3x，极小国落在 18–23.6x，标定见该函数的注释。
+   *
+   * 随后分两种情况（2026-09 需求 8 修订版）：
+   *   · **面积极小、几乎难以察觉的国家**（`tiny_countries.json` 那 6 国）：**不乘系数**，
+   *     直接用世界跟随上限 `WORLD_FOLLOW_MAX_ZOOM`(28x)。理由是它们本来就只有几个像素，
+   *     任何"拉远"都会让它们在地图上彻底消失 —— 用户口径原话是"倍率不受改变，统一使用最大的倍率"。
+   *     判定放在这里而不是调用点：本方法同时掌握面积与 `isTinyCountry()`，
+   *     放调用点会出现「某个新调用方忘了这条例外」的静默不一致；
+   *   · 其余国家：基准 **× `scale`**（输入模式自由跟随：普通国 0.75、非洲 0.5）。
+   *     `scale` 缺省 1 = 不动基准（验收探针走它，保持既有断言不变）。
+   *
+   * 最后取 `followZoomFloor()` 的倍率下限（取景边界必须覆盖视口），落点经 `clampFollowCenter()` 钳制。
    */
-  focusWorldCountry(iso: string, extraZoom = 0) {
+  focusWorldCountry(iso: string, scale = 1) {
     if (!this.worldMode) return;
     const center = this.worldLabelAnchors.get(iso);
     if (!center) return;
     const extent = this.framingExtent();
     const win = this.viewportWindow();
-    const zoom = followZoomFloor(win, this.zoom, extent, followZoomWithBonus(worldFollowZoom(this.countryArea(iso)), extraZoom));
+    const target = worldFocusZoom(worldFollowZoom(this.countryArea(iso)), scale, isTinyCountry(iso));
+    const zoom = followZoomFloor(win, this.zoom, extent, target);
     const next = clampFollowCenter(win, this.zoom, [center[0], center[1]], zoom, extent);
     if (isNegligibleMove(win, this.center, this.zoom, next, zoom)) return;
     this.animateViewTo(next, zoom);

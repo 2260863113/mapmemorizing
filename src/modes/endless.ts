@@ -438,7 +438,9 @@ export class EndlessMode extends BaseMode {
     this.ctx.search.focus();
     this.refresh();
     this.ctx.renderer.flash(unit.adcode);
-    if (this.autoFollow) this.ctx.renderer.focusUnit(unit.adcode, 0); // 无尽闯关**不加成**（2026-09 需求 8 只覆盖输入模式），倍率走渲染器按省标定的阶梯
+    // 无尽闯关**不乘系数**（2026-09 需求 8 只覆盖输入模式）：缺省系数 1 = 不动基准，
+    // 倍率走渲染器按省标定的阶梯。
+    if (this.autoFollow) this.ctx.renderer.focusUnit(unit.adcode);
     const extras: string[] = [];
     if (bonus > 0) extras.push(t('endless.bonusCoins', { value: fmt(bonus) }));
     if (timeBonus > 0) extras.push(t('endless.timeBonus', { seconds: timeBonus }));
