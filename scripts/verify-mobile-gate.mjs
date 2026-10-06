@@ -16,6 +16,7 @@
  * + `setTouchEmulationEnabled` 造一个"手机"，再用真实点击按下按钮。
  *
  * 用法：npm run build && node scripts/verify-mobile-gate.mjs
+ *      node scripts/verify-mobile-gate.mjs --prod      # 直连线上（https://mapmemory.cn/），跳过本地静态服
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -29,6 +30,10 @@ const PORT = 9995;
 const CDP = 9996;
 const OUT = path.join(ROOT, 'docs', 'shots');
 fs.mkdirSync(OUT, { recursive: true });
+
+/** `--prod`：直连线上站点验收（本地静态服与 dist 都不参与），用于部署后确认门槛真的在线上生效。 */
+const PROD = process.argv.includes('--prod');
+const BASE = PROD ? 'https://mapmemory.cn' : `http://127.0.0.1:${PORT}`;
 
 /** 与 src/mobileGate.ts 的常量逐字一致（本脚本只读，不改）。 */
 const GATE_KEY = 'china-admin-mobile-gate-v1';
@@ -49,8 +54,10 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : '  → ' + JSON.stringify(detail)}`);
 };
 
-const server = spawn(process.execPath, [path.join(ROOT, 'scripts', 'static-server.mjs'), String(PORT), path.join(ROOT, 'dist')], { stdio: 'ignore' });
-await sleep(1200);
+const server = PROD
+  ? null
+  : spawn(process.execPath, [path.join(ROOT, 'scripts', 'static-server.mjs'), String(PORT), path.join(ROOT, 'dist')], { stdio: 'ignore' });
+await sleep(PROD ? 0 : 1200);
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-mobile-gate-'));
 const browser = spawn(
   BROWSER,
@@ -129,14 +136,31 @@ try {
     await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
     await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   };
-  const openAndWait = async () => {
-    await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
-    for (let i = 0; i < 60; i++) {
-      await sleep(400);
-      if ((await ev(`!!document.getElementById('app') && !!document.querySelector('#mode-tabs button')`).catch(() => false)) === true) break;
+  /**
+   * 打开页面。
+   *
+   * `waitFor` 刻意区分两种时机，因为**这是本轮抓到的真实缺陷所在**：
+   *   · `'dom'`：只等静态 DOM（`#app` 与模式 tab）—— 此时主 bundle（type=module，延迟执行）
+   *     可能还在跑、`DOMContentLoaded` 还没触发。遮罩与按钮**此刻已经可见可点**，
+   *     所以门槛的点击处理器必须**已经挂上**（用即时事件委托，而不是挂在 DOMContentLoaded 上）。
+   *     旧实现挂在 DOMContentLoaded 上，在生产（慢网）就是这个窗口里"点按钮没反应"。
+   *   · `'load'`：等到 `document.readyState === 'complete'`。
+   */
+  const openPage = async (waitFor = 'dom') => {
+    await send('Page.navigate', { url: `${BASE}/` });
+    for (let i = 0; i < 90; i++) {
+      await sleep(300);
+      const ready = await ev(`document.readyState`).catch(() => 'loading');
+      if (waitFor === 'load') {
+        if (ready === 'complete') break;
+        continue;
+      }
+      const domReady = await ev(`!!document.getElementById('app') && !!document.querySelector('#mode-tabs button')`).catch(() => false);
+      if (domReady === true) break;
     }
-    await sleep(500);
+    await sleep(waitFor === 'load' ? 500 : 150);
   };
+  const openAndWait = () => openPage('load');
 
   // ==================== 1. 桌面：什么都不该发生 ====================
   console.log('=== 1. 桌面浏览器：不弹门槛、viewport 不动 ===');
@@ -150,11 +174,18 @@ try {
   check('桌面下布局视口就是窗口宽度（1440）', desktop.clientWidth === 1440, desktop.clientWidth);
 
   // ==================== 2. 手机首次访问：门槛在首屏弹出、且已经按电脑视图排版 ====================
-  console.log('\n=== 2. 手机首次访问：门槛弹出 + 电脑 viewport ===');
+  console.log('\n=== 2. 手机首次访问：门槛弹出 + 电脑 viewport + 加载完成前就能点 ===');
   await emulatePhone(IPHONE_UA);
   await ev('localStorage.clear()').catch(() => {});
-  await openAndWait();
+  // 限速到约 150KB/s：让 1.3MB 的主 bundle 需要好几秒才能执行完，从而**稳定复现**
+  // "遮罩已可见可点、但 DOMContentLoaded 还没触发"的那个窗口（本地不营造这个条件太快，测不到）。
+  await send('Network.enable');
+  await send('Network.emulateNetworkConditions', { offline: false, latency: 400, downloadThroughput: 150 * 1024, uploadThroughput: 150 * 1024 });
+  // 刻意**只等静态 DOM**：这时主 bundle 还在下载/执行，遮罩却已经可见可点
+  await openPage('dom');
   const phone = await readGate();
+  const earlyReady = await ev(`document.readyState`);
+  check('门槛生效时页面**还没加载完**（这才是真实用户会遇到的最早时机）', earlyReady !== 'complete', earlyReady);
   check('手机 UA + 触屏 → 门槛生效（html.mobile-gate 存在）', phone.hasClass === true, phone.hasClass);
   check('门槛真的显示出来（不是藏在 DOM 里）', phone.gateVisible === true, { visible: phone.gateVisible });
   check('标题就是「请用电脑端访问」', phone.title === '请用电脑端访问', phone.title);
@@ -169,7 +200,7 @@ try {
   const clicked = await clickContinue();
   await sleep(600);
   const after = await readGate();
-  check('按钮可点且真的触发了放行', clicked === true && after.hasClass === false, { clicked, hasClass: after.hasClass });
+  check(`按钮在**页面还没加载完**时（readyState=${earlyReady}）就可用 —— 处理器不依赖 DOMContentLoaded`, clicked === true && after.hasClass === false, { clicked, hasClass: after.hasClass, readyState: earlyReady });
   check('放行后 #app 恢复可见（能看到内容了）', after.appVisibility === 'visible', after.appVisibility);
   check('放行后仍是电脑 viewport（width=1280）—— 用户看到的是电脑视图', after.viewport === DESKTOP_VIEWPORT && after.clientWidth === 1280, { viewport: after.viewport, clientWidth: after.clientWidth });
   check('门槛遮罩不再显示', after.gateVisible === false, after.gateVisible);
@@ -178,6 +209,12 @@ try {
   // 顺带确认放行后应用是真的能用（地图画布按**桌面宽度**铺开），而不是"放行了一个空白页"。
   // 这里刻意断言 canvas 宽度 == 布局视口宽度（1280），而不是断言"有个画布"：
   // 手机视图下画布会是 390 宽 —— 那正是需求要避免的"错乱手机视图"。
+  // 先把限速恢复（否则 1.3MB 要等十几秒），再等主 bundle 真的把地图画出来。
+  await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  for (let i = 0; i < 90; i++) {
+    await sleep(400);
+    if ((await ev(`!!document.querySelector('#map canvas')`).catch(() => false)) === true) break;
+  }
   const usable = await asJson(`(function () {
     var canvas = document.querySelector('#map canvas');
     var rect = canvas ? canvas.getBoundingClientRect() : null;
@@ -210,7 +247,7 @@ try {
 } finally {
   try { ws?.close(); } catch { /* ignore */ }
   browser.kill();
-  server.kill();
+  server?.kill();
 }
 
 const failed = results.filter((r) => !r.ok);
