@@ -237,13 +237,15 @@ const OTHER_CHOICES: readonly NamingChoice<'other'>[] = [
     value: 'zh',
     label: '中文',
     placeholderKey: () => 'self.otherPlaceholder',
-    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits) : null),
+    // 判题时把**当前题目**的编码当决胜依据：源数据里有两对名字剥后缀后会撞车
+    // （阿尔泰共和国/阿尔泰边疆区、莫斯科/莫斯科州），只输入核心名时优先判当前题（见 matchOtherUnit）。
+    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits, ctx.question) : null),
   },
   {
     value: 'local',
     label: '外语',
     placeholderKey: () => 'self.otherLocalPlaceholder',
-    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits) : null),
+    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits, ctx.question) : null),
   },
 ];
 

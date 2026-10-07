@@ -17,6 +17,11 @@
  *   · 「错题」顺序档仍能用（错题清单独立存，见 src/other.ts）。
  *
  * 用法：npm run build && node scripts/verify-other.mjs
+ *      node scripts/verify-other.mjs --prod   # 直连线上（https://mapmemory.cn/），跳过本地静态服
+ *
+ * ⚠ `--prod` 需要一条**健康**的链路到 CDN：它要真下载 1.3MB 主包 + 若干国家的行政几何。
+ *   若主包或几何迟迟下不完，页面会停在半加载状态、断言失败 —— 那是链路问题而不是站点问题
+ *   （判断方法：本地跑同一套是否全绿）。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -31,6 +36,10 @@ const CDP = 9982;
 const OUT = path.join(ROOT, 'docs', 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 
+/** `--prod`：直连线上站点验收（本地静态服与 dist 都不参与），用于部署后确认整档在线上可用。 */
+const PROD = process.argv.includes('--prod');
+const BASE = PROD ? 'https://mapmemory.cn' : `http://127.0.0.1:${PORT}`;
+
 /** 熟练度的三个存储键（纯练习口径：这三个键必须一动不动）。 */
 const PRACTICE_KEYS = ['china-admin-memory-v1', 'china-admin-province-memory-v1', 'china-admin-world-memory-v1'];
 
@@ -41,8 +50,10 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : '  → ' + JSON.stringify(detail)}`);
 };
 
-const server = spawn(process.execPath, [path.join(ROOT, 'scripts', 'static-server.mjs'), String(PORT), path.join(ROOT, 'dist')], { stdio: 'ignore' });
-await sleep(1200);
+const server = PROD
+  ? null
+  : spawn(process.execPath, [path.join(ROOT, 'scripts', 'static-server.mjs'), String(PORT), path.join(ROOT, 'dist')], { stdio: 'ignore' });
+await sleep(PROD ? 0 : 1200);
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-other-'));
 const browser = spawn(BROWSER, ['--headless=new', '--disable-gpu', '--no-first-run', `--user-data-dir=${userDir}`, `--remote-debugging-port=${CDP}`, '--window-size=1440,900', '--force-device-scale-factor=1', 'about:blank'], { stdio: 'ignore' });
 
@@ -150,7 +161,7 @@ try {
       };
     })();`,
   });
-  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?probe=1` });
+  await send('Page.navigate', { url: `${BASE}/?probe=1` });
   for (let i = 0; i < 90; i++) {
     await sleep(500);
     if ((await ev(`typeof window.__probe === 'object'`).catch(() => false)) === true) break;
@@ -290,7 +301,7 @@ try {
 } finally {
   try { ws?.close(); } catch { /* ignore */ }
   browser.kill();
-  server.kill();
+  server?.kill();
 }
 
 const failed = results.filter((r) => !r.ok);

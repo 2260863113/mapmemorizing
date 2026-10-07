@@ -49,20 +49,35 @@ const SUFFIXES = [
 ];
 
 /**
- * 比对用归一化：小写、去变音符号、去空白与标点、剥行政后缀。
+ * 比对用归一化（**不剥行政后缀**）：小写、去变音符号、去空白与标点。
  *
- * 变音符号用 NFD 分解后剔除组合字符（Québec → quebec、Ōita → oita），
- * 这样"打不出长音符号"的用户也能答对。
+ * 变音符号用 NFD 分解后剔除组合字符（Québec → quebec、Ōita → oita、São → sao），
+ * 这样"打不出长音符号/重音"的用户也能答对。
+ */
+export function looseKey(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[\s\-_.'’·,，。()（）]/g, '');
+}
+
+/**
+ * 比对用归一化：在 `looseKey` 基础上**再剥掉行政后缀**。
+ *
+ * ⚠ 剥后缀会让不同的行政区撞成同一个键 —— 源数据里就有两对：
+ *   `阿尔泰共和国` 与 `阿尔泰边疆区` 都剥成「阿尔泰」、`莫斯科` 与 `莫斯科州` 都剥成「莫斯科」。
+ * 故归一化结果**不能单独作为判题依据**（会把「阿尔泰边疆区」判成阿尔泰共和国），
+ * 它只是 `matchOtherUnit` 打分里的第二档：精确（不剥后缀）优先。
  */
 export function normalizeOtherName(raw: string): string {
-  let s = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  s = s.replace(/[\s\-_.'’·,，。()（）]/g, '');
+  let s = looseKey(raw);
   // 后缀剥离：反复剥（「阿尔泰共和国」→ 阿尔泰；「Республика Алтай」的前缀形式见下）
   let changed = true;
   while (changed && s.length > 2) {
     changed = false;
     for (const suf of SUFFIXES) {
-      const n = suf.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const n = looseKey(suf);
       if (s.length > n.length && s.endsWith(n)) {
         s = s.slice(0, -n.length);
         changed = true;
@@ -81,27 +96,59 @@ export function acceptedNamesOf(u: OtherUnitMeta): string[] {
   return [u.name, u.nameLocal, u.nameEn].filter((v, i, a) => !!v && a.indexOf(v) === i);
 }
 
+/** 匹配分档：精确 > 归一化（剥后缀）> 前缀兜底。分越高越可信。 */
+const SCORE_EXACT = 3;
+const SCORE_NORMALIZED = 2;
+const SCORE_PREFIX = 1;
+
 /**
  * 判题：输入是否命中某个一级行政区（返回编码；未命中 null）。
  *
- * 三种名字（中文/当地/英文）+ 归一化写法都接受。命中多个时报 null 让调用方按"未命中"处理？
- * 不 —— 因为题池内名字**唯一**（构建期断言过中文名与当地名都唯一），而英文名的冲突面更小，
- * 故取第一个命中即可（顺序稳定：题池按编码排序）。
+ * ## 为什么是"打分 + 决胜"而不是"归一化后查表"
+ *
+ * 剥掉行政后缀之后，源数据里有**两对**名字会撞车（`阿尔泰共和国`/`阿尔泰边疆区`、
+ * `莫斯科`/`莫斯科州`）。若只做归一化相等，输入「阿尔泰边疆区」会命中排序更靠前的
+ * 阿尔泰共和国 —— 用户明明答对却判错，而且不报错（由 `other.test.ts` 的全覆盖用例抓出）。
+ * 故按可信度分三档，取最高分：
+ *   1. **精确**：只做大小写/标点/变音符号归一化，不剥后缀（「Алтайский край」对「Алтайский край」）；
+ *   2. **归一化**：剥掉行政后缀后相等（「加利福尼亚」对「加利福尼亚州」）；
+ *   3. **前缀兜底**：`北卡` → `北卡罗来纳` 这类常见简写（要求输入至少 2 个字，避免单字乱命中）。
+ *
+ * 仍然并列时（例如只输入「阿尔泰」，两个阿尔泰都同分）：优先 `preferred`（**当前题目**的编码，
+ * 由输入模式从 `NamingJudgeCtx.question` 传进来）—— 这既让"答对了核心名字"被判对，
+ * 又不会把"别的行政区"判成正确。没有 `preferred` 时取第一个（题池按编码排序，结果稳定可复现）。
  */
-export function matchOtherUnit(input: string, units: readonly OtherUnitMeta[]): string | null {
+export function matchOtherUnit(
+  input: string,
+  units: readonly OtherUnitMeta[],
+  preferred: string | null = null,
+): string | null {
+  const loose = looseKey(input);
+  if (!loose) return null;
   const key = normalizeOtherName(input);
-  if (!key) return null;
+  let best = 0;
+  let hits: string[] = [];
   for (const u of units) {
+    let score = 0;
     for (const name of acceptedNamesOf(u)) {
-      if (normalizeOtherName(name) === key) return u.code;
+      if (looseKey(name) === loose) score = Math.max(score, SCORE_EXACT);
+      else if (normalizeOtherName(name) === key) score = Math.max(score, SCORE_NORMALIZED);
+    }
+    if (!score && key.length >= 2) {
+      const short = normalizeOtherName(u.name);
+      if (short.length >= 2 && (short.startsWith(key) || key.startsWith(short))) score = SCORE_PREFIX;
+    }
+    if (score > best) {
+      best = score;
+      hits = [u.code];
+    } else if (score === best && score > 0) {
+      hits.push(u.code);
     }
   }
-  // 二级兜底："加州"这种通用简称（取中文名去掉后缀后的前缀匹配）
-  for (const u of units) {
-    const short = normalizeOtherName(u.name);
-    if (short.length >= 2 && (short.startsWith(key) || key.startsWith(short))) return u.code;
-  }
-  return null;
+  if (!hits.length) return null;
+  if (hits.length === 1) return hits[0];
+  if (preferred && hits.includes(preferred)) return preferred;
+  return hits[0];
 }
 
 // ==================== 语言选择的本地存储 ====================
