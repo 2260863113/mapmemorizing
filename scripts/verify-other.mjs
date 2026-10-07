@@ -107,6 +107,26 @@ try {
     fs.writeFileSync(path.join(OUT, name), Buffer.from(r.data, 'base64'));
   };
   const click = (sel) => ev(`(function(){var b=document.querySelector(${JSON.stringify(sel)}); if(!b) return false; b.click(); return true;})()`);
+  /**
+   * 轮询等待某个条件成立（默认 30 秒）。
+   *
+   * 为什么不能只 `sleep(固定值)`：切国家要**懒加载**该国的几何（俄罗斯 183KB、加拿大 203KB），
+   * 线上慢链路下 2.5 秒根本下不完 —— 断言会读到"上一个国家"的状态而误报失败（线上实测踩过）。
+   * 轮询到状态真的变了再断言，本地与线上都稳定。
+   */
+  const waitFor = async (fn, timeoutMs = 30000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      if (await fn()) return true;
+      await sleep(250);
+    }
+    return false;
+  };
+  /** 等到「其他」档的当前国家变成 cc（渲染器也已换图）。 */
+  const waitCountry = (cc) => waitFor(async () => {
+    const s = await asJson(`JSON.stringify({ c: window.__probe.otherScope().country, m: window.__probe.otherScope().mapName })`);
+    return s.c === cc && s.m === `other-${cc}`;
+  });
   /** 档位快照：数据 + 渲染器（地图名/标签）+ UI（按钮高亮/显隐/小窗），一次拿全。 */
   const snap = () => asJson(`(function () {
     var s = window.__probe.otherScope();
@@ -221,7 +241,7 @@ try {
   // ==================== 2. 换国家 ====================
   console.log('\n=== 2. 换国家：日本 → 俄罗斯 ===');
   await click('#other-country-jpn');
-  await sleep(2500);
+  await waitCountry('jpn');
   const jpn = await snap();
   check('切到日本：题池 47、地图换成 other-jpn', jpn.country === 'jpn' && jpn.poolSize === 47 && jpn.mapName === 'other-jpn', { country: jpn.country, pool: jpn.poolSize, mapName: jpn.mapName });
   check('地图真的画出来了，且始终没有小窗容器', jpn.fillPct > 2 && jpn.insetHostExists === false, { fillPct: jpn.fillPct, host: jpn.insetHostExists });
@@ -230,7 +250,7 @@ try {
   check('国家按钮高亮跟随（日本*）', jpn.countryButtons.join(',') === '美国,加拿大,日本*,俄罗斯', jpn.countryButtons);
 
   await click('#other-country-rus');
-  await sleep(2500);
+  await waitCountry('rus');
   const rus = await snap();
   check('切到俄罗斯：题池 83（85 面 − 2 个不考的争议地区）', rus.country === 'rus' && rus.poolSize === 83 && rus.unitTotal === 85 && rus.decorative === 2, { pool: rus.poolSize, total: rus.unitTotal, decorative: rus.decorative });
   check('俄罗斯地图生效，加里宁格勒在主图上可点（不再是小窗）', rus.mapName === 'other-rus' && rus.fillPct > 5 && rus.insetHostExists === false && rus.interactive.includes('RU-KGD'), { mapName: rus.mapName, fillPct: rus.fillPct, kgd: rus.interactive.includes('RU-KGD') });
@@ -255,7 +275,7 @@ try {
   check('语言行高亮切到「俄语」', local.langButtons.join(',') === '中文,俄语*' && local.lang === 'local', local.langButtons);
   check('地图标签整体换成俄文（题池规模不变 = 只是换了名字）', local.poolSize === before.poolSize && local.labels.includes('Московская область') && !local.labels.includes('莫斯科州'), { sample: local.labels.slice(0, 4) });
   await click('#other-country-jpn');
-  await sleep(2000);
+  await waitCountry('jpn');
   const jpnLocal = await snap();
   check('切到日本后仍是当地语言档，标签是日文（東京都 / 沖縄県），按钮文字变「日语」', jpnLocal.lang === 'local' && jpnLocal.langButtons.join(',') === '中文,日语*' && jpnLocal.labels.includes('東京都') && jpnLocal.labels.includes('沖縄県'), { buttons: jpnLocal.langButtons, sample: jpnLocal.labels.slice(0, 4) });
   await shot('verify-other-3-jpn-local.png');
@@ -272,10 +292,10 @@ try {
   await click('#mode-tabs button[data-mode="self"]');
   await sleep(1200);
   await click('#granularity-other');
-  await sleep(2500);
-  // 本模式的「其他」档记住的是它自己的国家（默认美国），故这里显式切到日本 + 外语
+  await waitCountry('usa'); // 输入模式记得的是它自己的国家（默认美国）
+  // 本模式的「其他」档记住的是它自己的国家（默认美国），故这里显式切到日本 + 当地语言
   await click('#other-country-jpn');
-  await sleep(2000);
+  await waitCountry('jpn');
   await click('#other-lang-local');
   await sleep(1200);
   const beforeStart = await snap();
