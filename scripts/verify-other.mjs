@@ -174,9 +174,17 @@ try {
     })();`,
   });
   await send('Page.navigate', { url: `${BASE}/?probe=1` });
-  for (let i = 0; i < 90; i++) {
+  // 本地静态服很快；线上要下 1.3MB 主包 + 探针 chunk，**而且探针是 `start()` 里 `loadData()`
+  // 之后才挂上的**（那之前还要拉中国 units/几何等若干 MB）。链路慢时给足 5 分钟上限，
+  // 否则会得到"应用没启动"（`window.__probe` undefined）的假象 —— 那不是站点问题。
+  const bootLimit = PROD ? 600 : 90;
+  for (let i = 0; i < bootLimit; i++) {
     await sleep(500);
     if ((await ev(`typeof window.__probe === 'object'`).catch(() => false)) === true) break;
+  }
+  if (PROD) {
+    const booted = await ev(`typeof window.__probe === 'object'`);
+    console.log(`  线上启动检查：__probe=${booted}（等待上限 ${bootLimit * 0.5}s）`);
   }
   await sleep(1500);
   const initial = await snap();
