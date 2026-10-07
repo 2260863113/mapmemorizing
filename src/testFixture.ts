@@ -38,6 +38,8 @@ export function makeAppData(over: Partial<AppData> = {}): AppData {
     subregions: [],
     isoSubregion: {},
     countryArea: {},
+    // 「其他」档四国清单（几何按国家懒加载，不在 AppData 里）
+    otherCountries: [],
     ...over,
   };
 }

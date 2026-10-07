@@ -29,3 +29,22 @@ export function registerMaps(data: AppData) {
   echarts.registerMap('china-provinces-raw', data.provincesRawGeoJson as never); // zoom ≥ 14（100% 顶点）
   echarts.registerMap('world', data.worldGeoJson as never); // 世界地图：答题国 + 装饰面
 }
+
+/** 「其他」档的地图名（主图与第 i 个小窗）。命名集中在这里，避免拼字符串的两处写法漂移。 */
+export function otherMapName(cc: string): string {
+  return `other-${cc}`;
+}
+export function otherInsetMapName(cc: string, group: number): string {
+  return `other-${cc}-inset${group}`;
+}
+
+/**
+ * 「其他」档：注册一国的主图与各飞地小窗（**按需调用**，见 src/otherData.ts 的懒加载说明）。
+ *
+ * 与 `registerMaps` 分开的理由：那 13 张是启动即用的中国/世界档，这里是"点了哪个国家才注册哪个"。
+ * 混在一起会让 `registerMaps` 必须知道当前选了中国还是美国，而它本该只是一张静态声明表。
+ */
+export function registerOtherMaps(cc: string, geoJson: unknown, insetGeoJsons: unknown[]) {
+  echarts.registerMap(otherMapName(cc), geoJson as never);
+  insetGeoJsons.forEach((geo, i) => echarts.registerMap(otherInsetMapName(cc, i), geo as never));
+}

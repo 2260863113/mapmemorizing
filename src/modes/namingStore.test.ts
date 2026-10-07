@@ -26,19 +26,19 @@ describe('namingStore', () => {
 
   it('存过之后读回来是同一份', () => {
     stubStorage();
-    saveStoredNaming('click', { world: 'capital', lang: 'en', province: 'abbr' });
-    expect(loadStoredNaming('click')).toEqual({ world: 'capital', lang: 'en', province: 'abbr' });
+    saveStoredNaming('click', { world: 'capital', lang: 'en', province: 'abbr', other: 'local' });
+    expect(loadStoredNaming('click')).toEqual({ world: 'capital', lang: 'en', province: 'abbr', other: 'local' });
   });
 
   it('国旗档也记得住（点击模式专有的一档）', () => {
     stubStorage();
-    saveStoredNaming('click', { world: 'flag', lang: 'en', province: 'full' });
-    expect(loadStoredNaming('click')).toEqual({ world: 'flag', lang: 'en', province: 'full' });
+    saveStoredNaming('click', { world: 'flag', lang: 'en', province: 'full', other: 'zh' });
+    expect(loadStoredNaming('click')).toEqual({ world: 'flag', lang: 'en', province: 'full', other: 'zh' });
   });
 
   it('模式之间互不干扰（输入模式的口径不会串到点击模式）', () => {
     const store = stubStorage();
-    saveStoredNaming('self', { world: 'capital', lang: 'zh', province: 'full' });
+    saveStoredNaming('self', { world: 'capital', lang: 'zh', province: 'full', other: 'local' });
     expect(loadStoredNaming('click')).toEqual(DEFAULT_NAMING);
     expect(store.has(namingStorageKey('self'))).toBe(true);
     expect(store.has(namingStorageKey('click'))).toBe(false);
@@ -46,7 +46,7 @@ describe('namingStore', () => {
 
   it('非法值**逐字段**回落，不牵连其它字段', () => {
     stubStorage({ [namingStorageKey('self')]: JSON.stringify({ world: 'capital', lang: 'fr', province: 42 }) });
-    expect(loadStoredNaming('self')).toEqual({ world: 'capital', lang: 'zh', province: 'full' });
+    expect(loadStoredNaming('self')).toEqual({ world: 'capital', lang: 'zh', province: 'full', other: 'zh' });
   });
 
   it('JSON 损坏时整体回落默认，不抛错', () => {
@@ -64,6 +64,6 @@ describe('namingStore', () => {
       },
     });
     expect(loadStoredNaming('self')).toEqual(DEFAULT_NAMING);
-    expect(() => saveStoredNaming('self', { world: 'capital', lang: 'en', province: 'abbr' })).not.toThrow();
+    expect(() => saveStoredNaming('self', { world: 'capital', lang: 'en', province: 'abbr', other: 'zh' })).not.toThrow();
   });
 });

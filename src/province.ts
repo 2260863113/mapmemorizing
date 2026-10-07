@@ -61,8 +61,14 @@ export function isNationLikeScope(scope: string | null | undefined): boolean {
   );
 }
 
-/** 测验/分析粒度：省级全国（省名）/ 市级全国或单省（地级市）/ 世界全国（国家名）。 */
-export type Granularity = 'province' | 'city' | 'world';
+/**
+ * 测验/分析粒度：省级全国（省名）/ 市级全国或单省（地级市）/ 世界全国（国家名）/
+ * 其他（他国一级行政区，2026-10）。
+ *
+ * 「其他」与前三档的**根本差别**：它的地图不是中国也不是世界，而是**某个国家自己**
+ * （投影逐国不同），且题池与熟练度都不进现有的三套分区（用户口径：纯练习）。
+ */
+export type Granularity = 'province' | 'city' | 'world' | 'other';
 
 /** 省全名 adcode 索引。 */
 export function provinceByAdcode(data: AppData, adcode: string): Province | null {

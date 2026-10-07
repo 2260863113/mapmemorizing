@@ -16,6 +16,8 @@ import {
 } from './modes/capabilities';
 import { NAMING_GROUPS } from './modes/naming';
 import { renderNamingGroups } from './ui/namingControls';
+import { loadOtherCountry } from './otherData';
+import { loadOtherCountryChoice, saveOtherCountryChoice } from './other';
 import { MemoryStore, loadSettings, saveSettings } from './store';
 import { SearchBox } from './ui/searchBox';
 import { AuthPanel } from './ui/authPanel';
@@ -53,7 +55,7 @@ import { ScoreSubmitter } from './scoreSubmitter';
 import { canSubmitScore } from './scoreRules';
 import { parseScopeQuery, type ScopeQuery } from './scopeQuery';
 import { applyIgnoreTiny, ensureTinyCountries, ignoredIsos, loadTinyCountries } from './tinyCountries';
-import type { AppData, Mode, RoundResult, Settings, Unit } from './types';
+import type { AppData, Mode, OtherCountryCode, RoundResult, Settings, Unit } from './types';
 import type { PlaySource } from './api';
 import type { ModeCtx, ModeController, ClickOrderMode, OrderMode, QuestionNaming } from './modes/types';
 import type { AppDiagnostics } from './appDiagnostics';
@@ -291,7 +293,116 @@ export class AppController {
     this.syncThemeButton();
     void this.initTinyCountrySetting(); // 全局设置：极小国家的清单是异步取的
     void this.applyScopeQuery(); // 落地页深链参数（Q26）：必须在 enter 之前应用
+    this.renderOtherCountries(); // 「其他」档的国家按钮（数据驱动）
+    this.restoreOtherScope(); // 上次停在「其他」档时把国家数据补上（几何是按需加载的）
     this.switchMode('click'); // 默认展示点击模式
+  }
+
+  // ==================== 「其他」档（他国一级行政区，2026-10） ====================
+
+  /**
+   * 渲染「其他」档的国家分段按钮（美国/加拿大/日本/俄罗斯）。
+   *
+   * 按钮来自**数据**（`public/data/other/index.json` 的四国清单）而不是写死在 HTML 里：
+   * 将来加一个国家只需重跑数据管线，UI 自动多一个按钮。
+   */
+  private renderOtherCountries() {
+    const el = $('other-country-toggle');
+    el.innerHTML = this.data.otherCountries
+      .map(
+        (c) =>
+          `<button id="other-country-${c.cc}" type="button" data-other-country="${c.cc}" role="radio" aria-checked="false">${c.name}</button>`,
+      )
+      .join('');
+  }
+
+  /**
+   * 进入「其他」档：先确保当前模式选中的那个国家数据已就位，再切粒度。
+   *
+   * 为什么"先加载再切"：粒度切换（`setGranularity` → `enter` → `syncScopeView`）是**同步**的，
+   * 若几何还没到，渲染器那一帧没有地图可画（会停在中国地图上，配上他国的标签）。
+   * 故把异步留给这里，模式侧永远只看到"数据已就位"。
+   */
+  private async enterOtherScope(target: ModeController) {
+    const cc = this.rememberedOtherCountry(target);
+    try {
+      const country = await loadOtherCountry(cc);
+      target.setOtherCountry?.(country);
+      target.setGranularity?.('other');
+      this.afterScopeChange();
+    } catch (e) {
+      // 加载失败（离线/数据缺失）时不要切过去 —— 切了就是一张空地图
+      console.warn('other country load failed:', e);
+      toast(t('main.otherLoadFail'));
+      this.syncModeChrome();
+    }
+  }
+
+  /** 在「其他」档里换一个国家（不在该档时顺带切进去）。 */
+  private async switchOtherCountry(cc: OtherCountryCode) {
+    const target = this.otherScopeTarget();
+    if (!target) return;
+    try {
+      const country = await loadOtherCountry(cc);
+      target.setOtherCountry?.(country);
+      saveOtherCountryChoice(this.otherStoragePrefix(target), cc);
+      if (target.getGranularity?.() !== 'other') target.setGranularity?.('other');
+      this.afterScopeChange();
+    } catch (e) {
+      console.warn('other country load failed:', e);
+      toast(t('main.otherLoadFail'));
+    }
+  }
+
+  /**
+   * 启动时补数据：上次停在「其他」档的话，几何是**按需加载**的、此刻并不在内存里，
+   * 必须先补上再进入 —— 否则模式以为自己在他国档、渲染器还停在中国地图上。
+   */
+  private restoreOtherScope() {
+    for (const mode of [this.selfMode, this.clickMode]) {
+      if (mode.getGranularity?.() !== 'other') continue;
+      const cc = this.rememberedOtherCountry(mode);
+      void loadOtherCountry(cc)
+        .then((country) => {
+          mode.setOtherCountry?.(country);
+          mode.enter();
+        })
+        .catch(() => {
+          // 数据拉不到就退回省级档，别把用户留在一张空地图上
+          mode.setGranularity?.('province');
+        });
+      return;
+    }
+  }
+
+  /** 「其他」档记住的国家（本地记忆；数据里没有该国家时回落第一个）。 */
+  private rememberedOtherCountry(mode: ModeController): OtherCountryCode {
+    return loadOtherCountryChoice(
+      this.otherStoragePrefix(mode),
+      this.data.otherCountries.map((c) => c.cc),
+    );
+  }
+
+  /**
+   * 「其他」档国家记忆的存储后缀 = 模式 id（`self` / `click`）。
+   *
+   * 与模式自己的 `storagePrefix()` 是同一个值（那两个模式恰好就用 id 作前缀），
+   * 而 `storagePrefix()` 是 protected、外壳拿不到，故这里按 id 取 —— 将来若有模式的
+   * storagePrefix 与 id 不同，需要补一条映射（目前两个模式都不需要）。
+   *
+   * ⚠ 国家按钮的**选中态不在这里手工同步**：它由 `chromeSync.syncNamingRows` 经
+   * `syncSegmentedToggle('other-country-toggle', cc)` 统一处理（值走 `data-other-country`）。
+   * 先前另写了一份 `.active` 切换，结果被紧随其后的统一同步按"值读不到"重置回未选中。
+   */
+  private otherStoragePrefix(mode: ModeController): string {
+    return mode.id;
+  }
+
+  /** 当前模式里的「其他」档目标（与 `worldScopeTarget` 同一判断口径：能不能切粒度）。 */
+  private otherScopeTarget(): ModeController | null {
+    const current = this.current;
+    if (!current?.setGranularity) return null;
+    return current;
   }
 
   /**
@@ -791,13 +902,28 @@ export class AppController {
 
   /** 范围类分段按钮：粒度、大洲、次区域、熟练度分析档位，以及拼图难度。 */
   private wireScopeToggles() {
-    // 点击/输入模式的「世界/省级/市级」粒度切换（仅全国视图、未开始测试时可操作）
+    // 点击/输入模式的「世界/省级/市级/其他」粒度切换（仅全国视图、未开始测试时可操作）
     this.wireSegmented('granularity-toggle', (btn) => {
       const g = btn.dataset.granularity as Granularity;
       // 以当前模式为准：输入/点击各自记住自己的粒度，其它支持粒度的模式自己处理
       const target = this.current?.setGranularity ? this.current : this.clickMode;
+      if (g === 'other') {
+        // 「其他」档的几何是**按需加载**的（见 src/otherData.ts）：先把国家数据备好再切粒度，
+        // 否则切过去的那一瞬间渲染器还没有几何、会停在中国地图上（空地图 + 错的标签）。
+        void this.enterOtherScope(target);
+        return;
+      }
       target.setGranularity?.(g);
       this.afterScopeChange();
+    });
+
+    // 「其他」档的国家行（美国/加拿大/日本/俄罗斯）。按钮按数据渲染（见 renderOtherCountries），
+    // 故这里用事件委托 —— 与次区域行同一手法。
+    $('other-country-toggle').addEventListener('click', (event) => {
+      const btn = (event.target as HTMLElement | null)?.closest?.('button[data-other-country]') as HTMLButtonElement | null;
+      if (!btn) return;
+      const cc = btn.dataset.otherCountry as OtherCountryCode | undefined;
+      if (cc) void this.switchOtherCountry(cc);
     });
 
     // 拼图模式的「简单/困难」：只影响是否显示省名，不是范围变化，故不走 afterScopeChange

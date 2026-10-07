@@ -1,4 +1,4 @@
-import type { AppData, Continent, Mode, RoundResult, Settings, SubregionId, Unit } from '../types';
+import type { AppData, Continent, Mode, OtherCountryData, RoundResult, Settings, SubregionId, Unit } from '../types';
 import type { MapRenderer } from '../map/renderer';
 import type { Matcher } from '../matcher';
 import type { MemoryStore } from '../store';
@@ -72,6 +72,15 @@ export interface QuestionNaming {
   world: 'country' | 'capital' | 'flag';
   lang: 'zh' | 'en';
   province: 'full' | 'capital' | 'abbr';
+  /**
+   * 「其他」档的题面/标签语言（2026-10）：`zh` = 中文，`local` = 该国当地语言
+   * （美国加拿大英语、日本日语、俄罗斯俄语）。
+   *
+   * 为什么不复用 `lang`：那个字段的取值是 `zh | en`（世界档的"中/英"两档），
+   * 而这里的"外语"**跟着所选国家变**（日本是日文、俄罗斯是俄文）——把 `en` 塞进来
+   * 会变成"日本档的英文名"，语义完全不同。两个字段各自记住自己的选择，互不干扰。
+   */
+  other: 'zh' | 'local';
 }
 
 /** 测试模式出题顺序：输入模式支持 顺序/随机/错题。 */
@@ -161,4 +170,15 @@ export interface ModeController {
   getQuestionNaming?(): QuestionNaming | null;
   /** 切换取名口径（只传要改的字段；与 setGranularity 一样：仅未开始时生效）。 */
   setQuestionNaming?(patch: Partial<QuestionNaming>): void;
+  /**
+   * 「其他」档（他国一级行政区，2026-10）：装载一国数据（外壳 `await` 懒加载后调用）。
+   *
+   * 为什么这个方法在接口上而不是"外壳自己塞进去"：粒度切换是同步的，而几何是异步来的，
+   * 外壳必须能在切粒度**之前**把数据交给模式；接口化后两端类型对得上（不是 `as unknown as` 硬塞）。
+   */
+  setOtherCountry?(country: OtherCountryData): void;
+  /** 是否处于「其他」档且国家数据已就位（外壳据此显隐国家/语言两行）。 */
+  isOtherNation?(): boolean;
+  /** 当前「其他」档的国家数据（外壳据此把语言行文案与按钮标题对齐）。 */
+  getOtherCountry?(): OtherCountryData | null;
 }

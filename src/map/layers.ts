@@ -14,7 +14,7 @@
  * 的完整清单。原先这些字段可以从 76 个方法里任意读到，改一处不知道会波及谁。
  */
 import type * as echarts from 'echarts';
-import type { AppData, BoundaryTone, Continent, RenderState, SubregionId, Unit, UnitColor } from '../types';
+import type { AppData, BoundaryTone, Continent, OtherCountryData, OtherUnitMeta, RenderState, SubregionId, Unit, UnitColor } from '../types';
 import { normalizeProvince } from '../matcher';
 import type { GeoFeature, GeoPoint } from './geometry';
 import { worldFeatureVisible, type WorldFaceContext } from './worldFaces';
@@ -72,6 +72,23 @@ export interface LayerInput {
   worldLabelAnchors: Map<string, GeoPoint>;
   isoContinent: Map<string, Continent>;
   isoSubregion: Map<string, SubregionId>;
+  /**
+   * 「其他」档当前国家的数据（未进入该档为 null）。
+   *
+   * 与 `data: AppData` 分开而不是塞进 AppData：这一份是**按需加载**的（点某国才拉几何），
+   * 而 AppData 是启动即全量；混在一起会让"AppData 里有没有这个字段"变成运行时才知道的事。
+   */
+  other: OtherCountryData | null;
+  /** 「其他」档题面与标签的语言：`zh` = 中文，`local` = 该国当地语言（美加英/日/俄）。 */
+  otherLang: OtherLang;
+}
+
+/** 「其他」档的取名口径（只有两档：中文 / 当地语言）。 */
+export type OtherLang = 'zh' | 'local';
+
+/** 一个国家的一级行政区在指定口径下的显示名。 */
+export function otherUnitName(u: OtherUnitMeta, lang: OtherLang): string {
+  return lang === 'local' ? u.nameLocal : u.name;
 }
 
 /** 文字锚点：优先用主面质心，没有就回落单位自带 center。 */
@@ -357,6 +374,80 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
       if (!anchor) continue;
       // 浏览标签按当前口径：「国名/首都」+「中/英文」给文本，「国旗」档给国旗小图
       out.push(browseLabelPoint(ctx, c.iso, c.name, anchor, c.name));
+    }
+  }
+  return out;
+}
+
+// ==================== 「其他」档（他国一级行政区，2026-10） ====================
+
+/**
+ * 「其他」档的面数据：一个面 = 一个一级行政区，**region 名就是编码**（见 otherData.ts 的说明）。
+ *
+ * 与另外三档的两处差别：
+ *   1. **没有"范围外"概念**：进来就是"整个国家"，不存在大洲/次区域那样的过滤；
+ *   2. 飞地面（`inset`）在主图里**静默**：它们被画在左下角小窗里，主图的投影范围不包含它们，
+ *      若不静默，主图上会留下几个位于画布之外、却能被键盘/命中测试碰到的"幽灵面"。
+ */
+export function buildOtherRegionData(ctx: LayerInput): GeoRegion[] {
+  const { state, theme } = ctx;
+  const other = ctx.other;
+  if (!other) return [];
+  const out: GeoRegion[] = [];
+  for (const u of other.units) {
+    const gray = u.decorative === true || u.inset === true;
+    const color: UnitColor = gray ? 'gray' : state.colorOf(u.code);
+    out.push({
+      name: u.code,
+      silent: gray,
+      itemStyle: {
+        areaColor: theme.fill[color],
+        borderColor: theme.boundary[ctx.cityBoundaryTone],
+        borderWidth: 0.6,
+      },
+      emphasis: {
+        disabled: gray,
+        itemStyle: { areaColor: gray ? theme.fill.gray : theme.emphasis[color] },
+        label: { show: false },
+      },
+      label: { show: false },
+    });
+  }
+  return out;
+}
+
+/** 「其他」档的 events data：题池单位才有事件（装饰面与飞地不参与主图交互）。 */
+export function buildOtherEventData(ctx: LayerInput): { name: string }[] {
+  const other = ctx.other;
+  if (!other) return [];
+  return other.pool.filter((u) => !u.inset).map((u) => ({ name: u.code }));
+}
+
+/**
+ * 「其他」档的地名标签：已作答的显示绿/红，未开始的浏览态按 `otherShowAllLabels` 常显全部
+ * （文本按当前语言口径取，见 `otherUnitName`）。
+ *
+ * 与世界的国名标签同一先后关系：先已作答（绿/红），再补中性色 —— 而不是"有已作答就不显示其余"。
+ */
+export function buildOtherLabelData(ctx: LayerInput): LabelPoint[] {
+  const { state, theme } = ctx;
+  const other = ctx.other;
+  if (!other || state.hideLabels) return [];
+  const out: LabelPoint[] = [];
+  const colored = new Set<string>();
+  if (state.otherLabel) {
+    for (const u of other.pool) {
+      const lab = state.otherLabel(u.code);
+      if (!lab) continue;
+      const color = lab.color === 'green' ? theme.labelGreen : theme.labelRed;
+      out.push({ name: u.code, value: [...u.center, lab.text, color, 0, 0, ''] });
+      colored.add(u.code);
+    }
+  }
+  if (state.otherShowAllLabels) {
+    for (const u of other.pool) {
+      if (colored.has(u.code)) continue;
+      out.push({ name: u.code, value: [...u.center, otherUnitName(u, ctx.otherLang), theme.labelNeutral, 0, 0, ''] });
     }
   }
   return out;

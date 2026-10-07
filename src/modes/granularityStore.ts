@@ -25,11 +25,15 @@ export function granularityStorageKey(modePrefix: string): string {
 /**
  * 读粒度记忆。
  * 非法值与存储不可用（隐私模式 / 配额）都回落 `fallback`，与历史行为一致。
+ *
+ * ⚠ 「其他」档在物理上依赖一份**按需加载**的国家数据（见 `src/otherData.ts`）：
+ * 这里只记得"用户上次选了其他档"，**国家与几何由外壳在启动时补上**（`AppController` 的
+ * `restoreOtherScope()`）—— 否则刷新后模式以为自己在他国档、而渲染器还停在中国地图上。
  */
 export function loadStoredGranularity(modePrefix: string, fallback: Granularity): Granularity {
   try {
     const raw = localStorage.getItem(granularityStorageKey(modePrefix));
-    if (raw === 'province' || raw === 'city' || raw === 'world') return raw;
+    if (raw === 'province' || raw === 'city' || raw === 'world' || raw === 'other') return raw;
     return fallback;
   } catch {
     return fallback;

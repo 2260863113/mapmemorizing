@@ -37,6 +37,8 @@ export interface TestCtx {
   toasts: string[];
   /** 输入框占位提示（口径切换时写入）。 */
   placeholders: string[];
+  /** 每次 `setOtherMode()` 收到的国家/语言（「其他」档的模式层单测用）。 */
+  otherScopes: { cc: string | null; lang: string }[];
 }
 
 export function makeTestCtx(opts: TestCtxOptions = {}): TestCtx {
@@ -44,9 +46,16 @@ export function makeTestCtx(opts: TestCtxOptions = {}): TestCtx {
   const hints: string[] = [];
   const toasts: string[] = [];
   const placeholders: string[] = [];
+  const otherScopes: { cc: string | null; lang: string }[] = [];
   const renderer = {
     setWorldMode: () => {},
     setProvinceMode: () => {},
+    // 「其他」档（他国一级行政区）：测试里只记录"谁来切过、切到哪个国家/语言"
+    setOtherMode: (country: { meta: { cc: string } } | null, lang?: string) => {
+      otherScopes.push({ cc: country?.meta.cc ?? null, lang: lang ?? 'zh' });
+    },
+    focusOtherUnit: () => {},
+    panOtherUnit: () => {},
     render: (state: RenderState) => {
       states.push(state);
     },
@@ -100,5 +109,5 @@ export function makeTestCtx(opts: TestCtxOptions = {}): TestCtx {
     updateProgress: () => {},
     randomUnit: opts.randomUnit ?? ((pool: Unit[]) => pool[0]),
   } as unknown as ModeCtx;
-  return { ctx, states, hints, toasts, placeholders };
+  return { ctx, states, hints, toasts, placeholders, otherScopes };
 }

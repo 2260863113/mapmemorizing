@@ -26,7 +26,7 @@
  * 文本逻辑仍然只有一处（就是这里），`MapQuizMode` 的 `displayNameOf` / `provinceLabelTextOf`
  * 退化成薄薄的转发 —— 那两处是题面、地图标签、答错提示共用的同一份实现（历史坑：三处各拼一份）。
  */
-import type { AppData, Mode, Unit } from '../types';
+import type { AppData, Mode, OtherUnitMeta, Unit } from '../types';
 import type { MessagesKey } from '../i18n';
 import type { QuestionNaming } from './types';
 import { normalizeProvince } from '../matcher';
@@ -40,6 +40,7 @@ import {
 } from '../province';
 import type { WorldMatcher } from '../worldNames';
 import { flagSrcOf, flagThumbSrcOf } from './flagPreload';
+import { matchOtherUnit } from '../other';
 
 /** 三个口径维度（= `QuestionNaming` 的字段）。 */
 export type NamingField = keyof QuestionNaming;
@@ -53,6 +54,13 @@ export interface NamingJudgeCtx {
   question: string | null;
   /** 世界国名匹配器（国名档用）。 */
   worldMatcher: WorldMatcher;
+  /**
+   * 「其他」档当前国家的一级行政区（判题用；未进入该档时为 undefined）。
+   *
+   * 为什么从外面传进来：那张表在 `AppData` 之外（几何与元数据都是**按国家懒加载**的，
+   * 见 `src/otherData.ts`），注册表拿不到它，也不该为了它去持有异步数据。
+   */
+  otherUnits?: readonly OtherUnitMeta[];
 }
 
 /**
@@ -89,8 +97,8 @@ export interface NamingGroup<F extends NamingField = NamingField> {
   /** 分段按钮容器的 DOM id（HTML 里只留容器，按钮由 `namingControls` 生成）。 */
   toggleId: string;
   ariaLabel: string;
-  /** 这一组挂在哪个粒度上（世界全国 / 省级全国）。 */
-  granularity: 'world' | 'province';
+  /** 这一组挂在哪个粒度上（世界全国 / 省级全国 / 其他档）。 */
+  granularity: 'world' | 'province' | 'other';
   choices: readonly NamingChoice<F>[];
 }
 
@@ -212,11 +220,38 @@ const PROVINCE_CHOICES: readonly NamingChoice<'province'>[] = [
   ),
 ];
 
-/** 全部组（顺序即 UI 里的行序）。 */
-export const NAMING_GROUPS: readonly NamingGroup[] = [
+// ==================== 「其他」档：中文 / 当地语言 ====================
+
+/**
+ * 「其他」档的语言档。
+ *
+ * 与 `lang` 组（世界档的中/英）**语义不同**：这里的"外语"跟着所选国家变
+ * （美加英语、日本日语、俄罗斯俄语），故另一个字段单独记，取值是 `local` 而不是 `en`。
+ *
+ * 两档**都给 judge**，且是同一个判据：输入中文名、当地语言名、英文罗马字名都算对，
+ * 与当前语言档无关（用户可能在任何档下打出其中任意一种）。语言档只决定**题面与标签写什么**。
+ * 题面文本由模式层从已加载的国家数据现取（注册表拿不到那份异步数据，见 `NamingJudgeCtx.otherUnits`）。
+ */
+const OTHER_CHOICES: readonly NamingChoice<'other'>[] = [
+  {
+    value: 'zh',
+    label: '中文',
+    placeholderKey: () => 'self.otherPlaceholder',
+    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits) : null),
+  },
+  {
+    value: 'local',
+    label: '外语',
+    placeholderKey: () => 'self.otherLocalPlaceholder',
+    judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits) : null),
+  },
+];
+
+/** 全部组（顺序即 UI 里的行序）。 */export const NAMING_GROUPS: readonly NamingGroup[] = [
   { field: 'world', toggleId: 'world-name-toggle', ariaLabel: '世界档题面：按国名、首都或国旗', granularity: 'world', choices: WORLD_CHOICES },
   { field: 'lang', toggleId: 'world-lang-toggle', ariaLabel: '世界档题面与标签语言：中文或英文', granularity: 'world', choices: LANG_CHOICES },
   { field: 'province', toggleId: 'province-name-toggle', ariaLabel: '省级全国题面：按省名、省会或简称', granularity: 'province', choices: PROVINCE_CHOICES },
+  { field: 'other', toggleId: 'other-lang-toggle', ariaLabel: '其他档题面与标签语言：中文或该国当地语言', granularity: 'other', choices: OTHER_CHOICES },
 ];
 
 /** 某字段的组。 */

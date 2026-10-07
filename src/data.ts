@@ -2,6 +2,7 @@ import type { AppData, CountryMeta, Unit } from './types';
 import { t } from './i18n';
 import { feature } from 'topojson-client';
 import type { Topology, GeometryCollection } from 'topojson-specification';
+import { loadOtherIndex } from './otherData';
 
 let cache: AppData | null = null;
 
@@ -62,7 +63,6 @@ export async function loadData(): Promise<AppData> {
   ]);
   const allUnits = meta.units.map((u) => (isPureDecoration(u) ? { ...u, decorative: true } : { ...u, decorative: false }));
   const units = allUnits.filter((u) => !u.decorative);
-  const provFine = provTopoToGeoJson(provFineTopo);
   // 五档精细度阶梯（顶点保留比例）：ultra 4% < pro 8% < fine 15% < plus 40% < lossless 100%
   // 县级装饰面（省直辖县级/兵团城市）已并入地级拓扑组，随各档一起输出，无需再单独拼接。
   //
@@ -82,7 +82,7 @@ export async function loadData(): Promise<AppData> {
     losslessGeoJson: topoToGeoJson(losslessTopo), // 无损档（100% 顶点，zoom ≥ 14）
     // 历史字段别名（旧测试固件/旧缓存仍引用）：coarse = pro 8% / provincesCoarse = 省级 4%
     coarseGeoJson: proGeo,
-    provincesGeoJson: provFine,
+    provincesGeoJson: provTopoToGeoJson(provFineTopo),
     provincesCoarseGeoJson: provUltraGeo,
     provincesUltraGeoJson: provUltraGeo,
     provincesProGeoJson: provTopoToGeoJson(provProTopo),
@@ -100,6 +100,8 @@ export async function loadData(): Promise<AppData> {
     subregions: subMeta.subregions,
     isoSubregion: subMeta.byIso,
     countryArea: areaMeta.area,
+    // 「其他」档四国清单（1KB）：几何不在这里 —— 按国家懒加载，见 src/otherData.ts
+    otherCountries: await loadOtherIndex(),
   };
   return cache;
 }

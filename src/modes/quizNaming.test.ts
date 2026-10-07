@@ -569,7 +569,7 @@ describe('口径守卫与读取', () => {
     const { ctx } = makeCtx();
     const mode = new ClickMode(ctx);
     const naming = mode.getQuestionNaming();
-    expect(naming).toEqual({ world: 'country', lang: 'zh', province: 'full' });
+    expect(naming).toEqual({ world: 'country', lang: 'zh', province: 'full', other: 'zh' });
     naming.lang = 'en'; // 改副本不应影响模式状态
     expect(mode.getQuestionNaming().lang).toBe('zh');
   });

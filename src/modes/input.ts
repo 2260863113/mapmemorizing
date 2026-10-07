@@ -160,7 +160,13 @@ export class InputMode extends MapQuizMode {
    * 加一档口径因此不用碰输入模式。
    */
   private matchInput(v: string): string | null {
-    const field = this.isProvinceNation() ? 'province' : this.isWorldNation() ? 'world' : null;
+    const field = this.isOtherNation()
+      ? 'other'
+      : this.isProvinceNation()
+        ? 'province'
+        : this.isWorldNation()
+          ? 'world'
+          : null;
     if (field) {
       const choice = activeChoiceOf(field, this.naming);
       if (choice.judge) {
@@ -169,6 +175,9 @@ export class InputMode extends MapQuizMode {
           pool: this.activePool(),
           question: this.question,
           worldMatcher: this.worldMatcher,
+          // 「其他」档判题要的那份元数据在按国家懒加载的数据里（见 otherData.ts），
+          // 池里只有"当前语言的名字"，而判题要接受三种写法，故把原始元数据一并交过去。
+          otherUnits: this.otherCountry?.units,
         });
       }
     }
@@ -220,7 +229,10 @@ export class InputMode extends MapQuizMode {
     const focusNext = () => {
       // 定时器到期时重新校验状态：期间可能已经暂停/重置/切模式，那就不该再动镜头
       if (!this.autoFollow || !this.started || this.paused) return;
-      if (this.isWorldNation()) {
+      if (this.isOtherNation()) {
+        // 「其他」档：按该国跨度算基准、再乘与世界/地级同一套系数（×0.75）
+        this.ctx.renderer.focusOtherUnit(u.adcode, cityFollowScale());
+      } else if (this.isWorldNation()) {
         const continent = this.ctx.data.countries.find((c) => c.iso === u.adcode)?.continent;
         this.ctx.renderer.focusWorldCountry(u.adcode, worldFollowScale(continent));
       } else if (!this.isProvinceNation()) {
@@ -284,9 +296,10 @@ export class InputMode extends MapQuizMode {
       },
       // 未开始（浏览态）：显示全量地名；开始后清空，只留已作答的绿/红（见 browseLabels.ts）
       ...this.browseLabelState(),
-      // 省名标签 / 国名标签：与点击模式共用基类实现（原先两个子类各抄了一份）
+      // 省名标签 / 国名标签 / 他国行政区标签：与点击模式共用基类实现（原先两个子类各抄了一份）
       provinceLabel: this.provinceLabelOf(),
       worldLabel: this.worldLabelOf(),
+      otherLabel: this.otherLabelOf(),
     });
   }
 
@@ -306,7 +319,13 @@ export class InputMode extends MapQuizMode {
    * 文案键来自口径注册表（每一档自己声明），故加一档不用改这里；地级沿用历史提示。
    */
   private placeholderForNaming(): string {
-    const field = this.isProvinceNation() ? 'province' : this.isWorldNation() ? 'world' : null;
+    const field = this.isOtherNation()
+      ? 'other'
+      : this.isProvinceNation()
+        ? 'province'
+        : this.isWorldNation()
+          ? 'world'
+          : null;
     if (field) {
       const key = activeChoiceOf(field, this.naming).placeholderKey?.(this.naming);
       if (key) return t(key);
@@ -429,6 +448,11 @@ export class InputMode extends MapQuizMode {
     if (this.isWorldNation()) {
       const last = this.lastGreen ? pool.find((u) => u.adcode === this.lastGreen) ?? null : null;
       return this.bfsNext('world', pool, last?.center ?? [10, 25]);
+    }
+    // 「其他」档：与省级/世界同一套「邻接优先 BFS」，起点用该国题池的中心
+    if (this.isOtherNation()) {
+      const last = this.lastGreen ? pool.find((u) => u.adcode === this.lastGreen) ?? null : null;
+      return this.bfsNext('other', pool, last?.center ?? this.otherPoolCenter());
     }
     // 省级全国：省-省邻接图上 BFS
     if (this.isProvinceNation()) {

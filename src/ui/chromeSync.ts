@@ -76,6 +76,11 @@ export class ChromeSync {
       // 「有粒度行的计时测验」= 输入/点击模式（这两者正是唯一会进入省级全国的测验）
       (hasGranularityToggle(mode) || puzzleScopePhase) && (current?.isProvinceNation?.() ?? false);
     $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
+    // 「其他」档的飞地小窗同样在左下角，说明/缩放按钮也要上移让位（与港澳放大框同一处理）：
+    // 小窗高度 150 + 上下留白 24 ≈ 174，取 180 留一点缝。
+    const otherInset = (current?.getOtherCountry?.()?.insetGeoJsons.length ?? 0) > 0
+      && (current?.isOtherNation?.() ?? false);
+    $('app').dataset.otherInset = otherInset ? '1' : '';
     $('map').classList.toggle('hidden', isNonMap || puzzleBoard);
     $('puzzle').classList.toggle('hidden', !puzzleBoard);
     // 非地图模式各自的整块界面（留言板 / 管理端）：元素 id 与模式 id 同名，故按模式表遍历
@@ -139,14 +144,26 @@ export class ChromeSync {
   ) {
     const mode = this.s.current()?.id;
     const naming = this.s.current()?.getQuestionNaming?.() ?? null;
-    // 当前视图落在哪一档粒度上（世界全国 / 省级全国；其余一律不显示口径行）
+    // 当前视图落在哪一档粒度上（世界全国 / 省级全国 / 其他档；其余一律不显示口径行）
     const onGranularity = isGranularityMode && !testStarted
-      ? granularity === 'world' && isWorldScope(scope)
-        ? 'world'
-        : granularity === 'province' && scope === PROVINCE_NATION_SCOPE
-          ? 'province'
-          : null
+      ? granularity === 'other'
+        ? 'other'
+        : granularity === 'world' && isWorldScope(scope)
+          ? 'world'
+          : granularity === 'province' && scope === PROVINCE_NATION_SCOPE
+            ? 'province'
+            : null
       : null;
+    // 「其他」档的两行（国家 / 语言）：与口径行同一显隐口径（仅该档、未开始时可切）。
+    // 国家行不是口径注册表的一部分（它的按钮来自**数据**：四国清单），故单独同步。
+    const onOther = onGranularity === 'other';
+    $('other-country-break').classList.toggle('hidden', !onOther);
+    $('other-country-toggle').classList.toggle('hidden', !onOther);
+    $('other-lang-break').classList.toggle('hidden', !onOther);
+    if (onOther) {
+      const cc = this.s.current()?.getOtherCountry?.()?.meta.cc;
+      if (cc) this.syncSegmentedToggle('other-country-toggle', cc);
+    }
     for (const group of NAMING_GROUPS) {
       const rowVisible = onGranularity === group.granularity;
       $(group.toggleId).classList.toggle('hidden', !rowVisible);
@@ -179,6 +196,8 @@ export class ChromeSync {
         btn.dataset.puzzleDifficulty ??
         btn.dataset.subregion ??
         btn.dataset.continent ??
+        // 「其他」档的国家行（按钮由数据渲染，值挂 data-other-country）
+        btn.dataset.otherCountry ??
         // 取名口径三组由注册表生成，值统一挂 `data-naming-value`（不再每个字段一个 dataset 名）
         btn.dataset.namingValue ??
         btn.dataset.mode;

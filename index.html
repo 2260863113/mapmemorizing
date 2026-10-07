@@ -259,7 +259,16 @@
           <button id="granularity-world" type="button" data-granularity="world" role="radio" aria-checked="false">世界</button>
           <button id="granularity-province" type="button" data-granularity="province" role="radio" aria-checked="false">省级</button>
           <button id="granularity-city" type="button" data-granularity="city" role="radio" aria-checked="false">市级</button>
+          <!-- 「其他」档（2026-10）：他国一级行政区（对应中国的省级）。点它之后下面两行才出现。 -->
+          <button id="granularity-other" type="button" data-granularity="other" role="radio" aria-checked="false">其他</button>
         </div>
+        <!-- 「其他」档的两行（国家 / 语言），按钮**静态写在 HTML 里**（不像口径行那样由注册表生成）：
+             国家清单来自数据（public/data/other/index.json），语言清单来自口径注册表（`other` 组）。
+             国家行的按钮由 appController 按数据渲染（新增国家只改数据，不改这里）。 -->
+        <div id="other-country-break" class="flex-break hidden" aria-hidden="true"></div>
+        <div id="other-country-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="其他档国家"></div>
+        <div id="other-lang-break" class="flex-break hidden" aria-hidden="true"></div>
+        <div id="other-lang-toggle" class="mode-segmented hidden" role="radiogroup"></div>
         <div id="continent-break" class="flex-break" aria-hidden="true"></div>
         <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
           <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>
@@ -304,6 +313,8 @@
       <!-- 拼图模式画布：进入该模式时 #map 隐藏、本层显示（与留言板/管理同一套做法） -->
       <div id="puzzle" class="hidden"></div>
       <div id="hkmac-inset" class="hidden"></div>
+      <!-- 「其他」档的飞地小窗容器（每块飞地一个窗，动态创建；与港澳放大框同一套样式） -->
+      <div id="other-insets" class="hidden"></div>
       <div id="board" class="hidden"></div>
       <div id="admin" class="hidden"></div>
       <aside id="side-panel">

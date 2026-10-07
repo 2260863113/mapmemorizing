@@ -28,6 +28,8 @@ import { MAX_ZOOM, MIN_ZOOM } from './zoom';
 import { MAP_PROJECTION_BBOX } from './camera';
 import {
   buildCityEventData,
+  buildOtherEventData,
+  buildOtherRegionData,
   buildProvinceEventData,
   buildProvinceRegionData,
   buildRegionData,
@@ -89,29 +91,39 @@ export function buildGeoOption(mapName: string, ctx: LayerInput): echarts.EChart
       borderColor: 'rgba(0,0,0,0)',
       borderWidth: 0, // geo 自身透明；边界由 geo.regions / province-lines 绘制
     },
-    regions: ctx.worldMode
-      ? buildWorldRegionData(ctx)
-      : ctx.provinceMode
-        ? buildProvinceRegionData(ctx)
-        : buildRegionData(ctx),
+    regions: ctx.other
+      ? buildOtherRegionData(ctx)
+      : ctx.worldMode
+        ? buildWorldRegionData(ctx)
+        : ctx.provinceMode
+          ? buildProvinceRegionData(ctx)
+          : buildRegionData(ctx),
     // 固定投影范围：ECharts 默认按**当前几何 bbox** 自动适配投影，而各简化档的 bbox 并不相同
     // （ultra/省级粗档把南海诸岛最南端简掉了，纬度下界 3.3974 → 3.5349，高度少 0.1375°）。
     // bbox 一变，投影比例与偏移就变 → 缩放跨换档阈值时整幅地图微移、鼠标所指位置偏移。
     // 用 boundingCoords 把投影范围钉死为常量，各档共用同一投影 → 换档前后像素位置完全一致。
-    boundingCoords: MAP_PROJECTION_BBOX[ctx.worldMode ? 'world' : 'china'],
+    //
+    // 「其他」档的投影范围**每个国家都不同**（构建期算好写进 index.json），故走动态分支：
+    // 把某个国家的包围盒钉成常量在中国/世界那两族没有意义，那一族的 bbox 是全局常量。
+    boundingCoords: ctx.other
+      ? ([
+          [ctx.other.bboxMain[0], ctx.other.bboxMain[1]],
+          [ctx.other.bboxMain[2], ctx.other.bboxMain[3]],
+        ] as [[number, number], [number, number]])
+      : MAP_PROJECTION_BBOX[ctx.worldMode ? 'world' : 'china'],
   };
 }
 
-/**
- * tooltip 的**活值**依赖：查表按引用传入（渲染器只原地 set，从不重新赋值），
- * `worldMode` 收闭包 —— formatter 是 ECharts 悬停时才调用的，取快照会让"切省/切世界后
- * 第一帧的 tooltip 仍按旧口径"。
- */
+/** tooltip 的**活值**依赖：查表按引用传入（渲染器只原地 set，从不重新赋值），
+ * `worldMode` / `other` 收闭包 —— formatter 是 ECharts 悬停时才调用的，取快照会让"切省/切世界后
+ * 第一帧的 tooltip 仍按旧口径"。 */
 export interface TooltipDeps {
   worldMode: () => boolean;
   worldNameToIso: Map<string, string>;
   isWorldFaceInteractive: (name: string) => boolean;
   nameToUnit: Map<string, Unit>;
+  /** 「其他」档：命中编码 → 显示名（按当前语言口径现取，切语言立刻生效）。 */
+  otherName: (code: string) => string | null;
 }
 
 /** tooltip：三档粒度各一套文案；不可交互的面（其他洲 / 被排除的极小国 / 装饰面）只显示面名。 */
@@ -130,6 +142,15 @@ export function buildTooltipOption(
         formatter: (p) => {
           const params = p as { name?: string };
           const hitName = params.name ?? '';
+          // 「其他」档：命中名就是编码，显示名按当前语言现取（装饰面只显示原名、不显示答题态）
+          const otherName = deps.otherName(hitName);
+          if (otherName !== null) {
+            const color: UnitColor = state.colorOf(hitName);
+            return t('map.tooltip.otherBody', {
+              name: otherName,
+              status: t('map.tooltip.statusLine', { status: STATUS_TXT[color] }),
+            });
+          }
           if (deps.worldMode()) {
             const iso = deps.worldNameToIso.get(hitName);
             // 不可交互的面（其他洲 / 被排除的极小国 / 装饰面）不显示答题态 tooltip
@@ -153,11 +174,13 @@ export function buildTooltipOption(
 
 /** 事件层：只提供 data 用于 tooltip/事件；区域样式由 geo.regions 负责。 */
 export function eventSeries(mapName: string, ctx: LayerInput): SeriesItem {
-  const data = ctx.worldMode
-    ? buildWorldEventData(ctx)
-    : ctx.provinceMode
-      ? buildProvinceEventData(ctx.data)
-      : buildCityEventData(ctx.units);
+  const data = ctx.other
+    ? buildOtherEventData(ctx)
+    : ctx.worldMode
+      ? buildWorldEventData(ctx)
+      : ctx.provinceMode
+        ? buildProvinceEventData(ctx.data)
+        : buildCityEventData(ctx.units);
   return {
     id: 'city-events',
     type: 'map',

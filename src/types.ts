@@ -92,6 +92,75 @@ export interface CountryNames {
 
 export type BoundaryTone = 'light' | 'mid' | 'dark';
 
+// ==================== 「其他」档：他国一级行政区（2026-10） ====================
+
+/**
+ * 「其他」档可选的国家（public/data/other/index.json 的键；`cc` 即文件名前缀）。
+ *
+ * 为什么用 `cc` 而不是 iso_a3：数据文件按 `usa/can/jpn/rus` 命名（小写短名更好读、更好按需拼接），
+ * 而 iso_a3 只在源数据里出现过一次。两者是同一件事的两种写法，故只留一种进代码。
+ */
+export type OtherCountryCode = 'usa' | 'can' | 'jpn' | 'rus';
+
+/** 一国的元数据（index.json 的一条；启动时随 `loadData` 加载）。 */
+export interface OtherCountryMeta {
+  cc: OtherCountryCode;
+  name: string;
+  /** 当地语言（`en` 美加 / `ja` 日本 / `ru` 俄罗斯）；分段按钮「中文 / <label>」用。 */
+  lang: { id: 'en' | 'ja' | 'ru'; label: string };
+  /** 题池数量（不含"不考但显示"的面）。 */
+  count: number;
+  /** 「不考但显示」的面数（争议地区）。 */
+  decorativeCount: number;
+  inset: boolean;
+  /** 主图与各小窗的投影范围（[minLon, minLat, maxLon, maxLat]）。 */
+  bbox: { main: [number, number, number, number]; insets: { codes: string[]; bbox: [number, number, number, number] }[] };
+}
+
+/** 一国的一个一级行政区（`<cc>.units.json` 的一条）。 */
+export interface OtherUnitMeta {
+  /** ISO 3166-2 编码（如 `US-AK`）；题池与渲染都以它为单位。 */
+  code: string;
+  /** 中文名。 */
+  name: string;
+  /** 当地语言名（英语/日语/俄语，见 OtherCountryMeta.lang）。 */
+  nameLocal: string;
+  /** 英文名（罗马字）：日语/俄语的题面用当地语言，但排查与容错输入需要一个稳定罗马字名。 */
+  nameEn: string;
+  /** 装饰面：不考但显示（争议地区）。 */
+  decorative?: boolean;
+  /** 飞地：画在左下角小窗里，不参与主图的正交包围盒。 */
+  inset?: boolean;
+  /** 属于第几个小窗（与 OtherCountryMeta.bbox.insets 下标对齐）。 */
+  insetGroup?: number;
+  center: [number, number];
+  bbox: [number, number, number, number];
+  /** 度² 面积（构建期算好，供跟随缩放与极小单位判定）。 */
+  area: number;
+  /** 相邻单位编码（顺序出题优先挑相邻的）。 */
+  neighbors: string[];
+}
+
+/**
+ * 一国的**已加载**数据（几何 + 元数据 + 索引）。按需加载并缓存，见 `src/otherData.ts`。
+ *
+ * 为什么几何单独按国家懒加载：四国几何合计 567KB，而一次只练一个国家 ——
+ * 塞进 `loadData` 会让每次打开站点都多拉 567KB（比 China 地级细档还大）。
+ */
+export interface OtherCountryData {
+  meta: OtherCountryMeta;
+  units: OtherUnitMeta[];
+  /** 题池（排除装饰面）。 */
+  pool: OtherUnitMeta[];
+  /** 全部面（含装饰面）的 GeoJSON；`properties.name` 被改写为 **code**（见 otherData.ts 的说明）。 */
+  geoJson: unknown;
+  /** 每个小窗一份 GeoJSON 子集（没有飞地则为空数组）。 */
+  insetGeoJsons: unknown[];
+  bboxMain: [number, number, number, number];
+  bboxInsets: [number, number, number, number][];
+  byCode: Map<string, OtherUnitMeta>;
+}
+
 export interface AppData {
   units: Unit[]; // 真实记忆单位（不含装饰）
   allUnits: Unit[]; // 含装饰（南海诸岛等纯装饰面）
@@ -130,6 +199,11 @@ export interface AppData {
   isoSubregion: Record<string, SubregionId>; // iso_a3 → 次区域 id（194 条全覆盖）
   /** iso_a3 → 国面面积（度²，构建期算好）：供「自动跟随缩放与国家面积成反比」与「极小国家」判定用。 */
   countryArea: Record<string, number>;
+  /**
+   * 「其他」档的四国清单（public/data/other/index.json，1KB；**几何不在这里**，按国家懒加载）。
+   * 顺序即 UI 分段按钮顺序：美国 / 加拿大 / 日本 / 俄罗斯。
+   */
+  otherCountries: OtherCountryMeta[];
 }
 
 /** 次区域元数据（public/data/subregions.json 生成）。 */
@@ -282,4 +356,13 @@ export interface RenderState {
    * 已作答的绿/红标签仍走 `provinceLabel` / `worldLabel` —— 那是答题反馈，不随浏览口径变。
    */
   browseLabel?: (id: string) => BrowseLabelContent | null;
+  /**
+   * 「其他」档（他国一级行政区）已作答单位的绿/红标签（id 为 ISO 3166-2 编码，如 `US-CA`）。
+   *
+   * 与 `worldLabel` 分开而不是复用：两个族的 id 空间不同（iso_a3 vs ISO 3166-2），
+   * 复用会让渲染器必须判断"这个 id 属于哪个族"，而它本来就知道自己在渲染哪个族。
+   */
+  otherLabel?: (code: string) => ProvinceLabel | null;
+  /** 「其他」档未开始时常显全部地名（中性色，文本按当前语言口径）。 */
+  otherShowAllLabels?: boolean;
 }

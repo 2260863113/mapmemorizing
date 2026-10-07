@@ -36,6 +36,7 @@
   "map.tooltip.body": "<b>{name}</b><br/>所属：{province}<br/>金币：{coins}",
   "map.tooltip.bodyBase": "<b>{name}</b><br/>所属：{province}{status}",
   "map.tooltip.worldBody": "<b>{name}</b>{status}",
+  "map.tooltip.otherBody": "<b>{name}</b>{status}",
   "map.tooltip.statusLine": "<br/>状态：{status}",
   "map.tooltip.coinCollected": "0￥（已收集）",
 
@@ -49,6 +50,8 @@
   "self.summaryProvince": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个省级单元",
   "self.summaryWorld": "正确 <b>{ok}</b> ｜ 错误 <b>{fail}</b> ｜ 用时 {time} ｜ 覆盖 {total} 个国家",
   "self.worldPlaceholder": "输入国家名",
+  "self.otherPlaceholder": "输入行政区名（中文）",
+  "self.otherLocalPlaceholder": "输入当地语言地名",
   "self.worldEnPlaceholder": "输入英文国名",
   "self.capitalPlaceholder": "输入首都名",
   "self.capitalEnPlaceholder": "输入首都英文名",
@@ -364,6 +367,7 @@
   "main.rejectPuzzle": "至少吸上拼成一片才能提交成绩",
   "common.noDrillSingleUnit": "直辖市与港澳台没有下级单位，不再下钻",
   "main.bootFail": "启动失败：{message}",
+  "main.otherLoadFail": "该国家的数据加载失败，请检查网络后重试",
 
   "help.self.title": "输入模式说明",
   "help.self.body": "输入地名进行作答。答对后题目会沿相邻地图单位继续扩张（顺序模式在广度优先的基础上，优先挑队列里与上一题相邻的地区）；答错保持红色并计入熟练度。可以使用跳过、暂停和重置，也可以直接按空格暂停/继续、按 Tab 立刻重开一局（不提交成绩）。顶部「世界/省级/市级」可切换练习粒度：世界粒度在全球 195 个国家和地区中练习（输入国家名，只计入国家熟练度）；省级粒度在全国 34 个省级单元中练习（输入省名，只计入省级熟练度）；市级粒度在省内地级市练习。省级全国视图未开始时点击某省可下钻该省的地级市练习，返回后回到省级全国。世界粒度还可用「国名/首都」切换考的是国名还是首都名，用「中文/英文」切换题面与地图标签的语言（输入框提示与实际输入都跟着变，界面文案仍是中文）；省级全国可用「省名/简称」按单字简称（如沪）出题。这三组按钮只在对应的全国视图、且未开始答题时可切换，开始后整组收起。**未开始时**地图上显示全部地名（可在导航栏「设置」里关掉），点「开始」后收起，结束后恢复。",

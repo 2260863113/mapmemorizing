@@ -221,19 +221,27 @@ export interface FramingExtentContext {
   viewProvince: string | null;
   /** 下钻省的几何 bbox（该省全部地级单位并集）。 */
   viewProvinceBox: [number, number, number, number] | null;
+  /**
+   * 「其他」档当前国家的主图投影范围（未进入该档为 null）。
+   *
+   * 这一族的"取景边界"就是**该国自己的包围盒** —— 与中国/世界那两族用全局常量不同，
+   * 它逐国不同（构建期算好），故只能从上下文传进来，不能写成本模块的常量表。
+   */
+  otherBBox: [number, number, number, number] | null;
 }
 
 /**
  * 当前视图的**取景边界**：视口允许显示的数据矩形（lng0/lat0/lng1/lat1）。
  *
  * 视口越出它就会露出纯背景色 —— 这正是「跟随把边界附近的目标顶到正中 → 半屏空白」的根因。
- * 分层取值：下钻省 = 该省地级单位并集 bbox；世界次区域/大洲 = 各自标定框；
+ * 分层取值：下钻省 = 该省地级单位并集 bbox；世界次区域/大洲 = 各自标定框；其他档 = 该国 bbox；
  * 否则按地图族用钉死的投影 bbox（中国 / 世界）。
  *
  * 注意命中 `viewProvinceBox` 时返回的是**传入的那个引用**（搬迁前 `this.viewProvinceBox`
  * 也是如此），调用方不得就地改写它。
  */
 export function framingExtent(ctx: FramingExtentContext): [number, number, number, number] {
+  if (ctx.otherBBox) return ctx.otherBBox;
   if (ctx.worldMode) {
     if (ctx.worldSubregion) return SUBREGION_VIEWS[ctx.worldSubregion];
     if (ctx.worldContinent) return CONTINENT_VIEWS[ctx.worldContinent];

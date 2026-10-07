@@ -218,6 +218,44 @@ export function quizProbe(a: AppDiagnostics) {
     },
 
     /**
+     * 「其他」档（他国一级行政区，2026-10）的范围快照（只读）。
+     *
+     * 与 `quizScope()` 分开而不是加字段：那一份的字段被多个既有验收脚本当作固定契约读，
+     * 加字段会让"读的是哪一档"变得含糊。这一族有它自己的东西（国家、语言、飞地小窗、地图名），
+     * 单独一个方法更清楚，也让验收脚本能够一眼断言"地图真的换成那个国家了"。
+     */
+    otherScope() {
+      const mode = a.current;
+      const ui = renderer.diagnostics();
+      const country = mode?.getOtherCountry?.() ?? null;
+      return {
+        granularity: mode?.getGranularity?.() ?? null,
+        country: country?.meta.cc ?? null,
+        countryName: country?.meta.name ?? null,
+        lang: country ? mode?.getQuestionNaming?.()?.other ?? null : null,
+        poolSize: country?.pool.length ?? null,
+        unitTotal: country?.units.length ?? null,
+        decorative: country?.units.filter((u) => u.decorative).length ?? null,
+        insets: country?.insetGeoJsons.length ?? null,
+        /** 渲染器实际应用的地图名（`other-usa` / `china-provinces` …）：换国家是否真的换了地图看它。 */
+        mapName: ui.appliedMapName,
+        otherMode: ui.other !== null,
+        zoom: ui.zoom,
+        center: ui.center,
+        /** 会话状态（答题反馈、当前题、进度格）：断言"点对了变绿"要看这些。 */
+        started: mode?.isStarted?.() ?? false,
+        question: mode?.diagnostics?.().question ?? null,
+        green: [...(mode?.diagnostics?.().green ?? [])],
+        red: [...(mode?.diagnostics?.().red ?? [])],
+        /** 标签系列实际会画出的文字（换语言后应当整体变成当地语言）。 */
+        labels:
+          ui.lastState === null
+            ? null
+            : ui.buildOtherLabelData(ui.lastState).map((row) => String((row as { value?: unknown[] }).value?.[2] ?? '')),
+      };
+    },
+
+    /**
      * 9. 题面 / 标签的**取名口径**（2026-09：「国名 / 首都」+「中文 / 英文」+「省名 / 简称」）。
      *
      * 返回三处**实际文本**：顶栏题面的 DOM 文本、以及两条标签系列真正会画出的文字

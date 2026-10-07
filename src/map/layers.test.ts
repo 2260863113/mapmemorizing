@@ -117,6 +117,8 @@ function ctx(over: Partial<Omit<LayerInput, 'state'>> & { state?: Partial<Render
     worldLabelAnchors: new Map(),
     isoContinent: ISO_CONTINENT,
     isoSubregion: ISO_SUBREGION,
+    other: null, // 「其他」档默认不在该档（相关用例自行 over）
+    otherLang: 'zh',
   };
   const baseState: RenderState = { colorOf: () => 'gray' };
   return { ...base, ...over, state: { ...baseState, ...over.state } };

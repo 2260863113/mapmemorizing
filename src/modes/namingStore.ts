@@ -9,8 +9,8 @@ import type { QuestionNaming } from './types';
 /** 存储键前缀。各模式用自己的后缀（'self' / 'click'），互不干扰。 */
 const KEY_PREFIX = 'china-admin-mode-naming:';
 
-/** 首访默认：国名 + 中文 + 省名 —— 即本功能上线前的历史行为，老用户升上来观感不变。 */
-export const DEFAULT_NAMING: QuestionNaming = { world: 'country', lang: 'zh', province: 'full' };
+/** 首访默认：国名 + 中文 + 省名 + 中文 —— 即本功能上线前的历史行为，老用户升上来观感不变。 */
+export const DEFAULT_NAMING: QuestionNaming = { world: 'country', lang: 'zh', province: 'full', other: 'zh' };
 
 /** 省级档合法取值（新增「省会」档时只需改这一处，读了旧值的用户照常回落默认）。 */
 const PROVINCE_VALUES: QuestionNaming['province'][] = ['full', 'capital', 'abbr'];
@@ -32,6 +32,8 @@ export function loadStoredNaming(modePrefix: string): QuestionNaming {
       province: PROVINCE_VALUES.includes(parsed.province as QuestionNaming['province'])
         ? (parsed.province as QuestionNaming['province'])
         : DEFAULT_NAMING.province,
+      // 「其他」档语言：只有 local 与默认两种取值，其余一律回落
+      other: parsed.other === 'local' ? 'local' : DEFAULT_NAMING.other,
     };
   } catch {
     return { ...DEFAULT_NAMING };

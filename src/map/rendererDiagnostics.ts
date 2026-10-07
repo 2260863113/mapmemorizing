@@ -13,10 +13,11 @@
  * 约定：视图是**只读**的（探针只观察，不改渲染器状态）；返回的 getter 读的是**活值**，
  * 因此探针在应用启动时取一次即可长期持有。
  */
-import type { BoundaryTone, Continent, RenderState, SubregionId } from '../types';
+import type { BoundaryTone, Continent, OtherCountryData, RenderState, SubregionId } from '../types';
 import type { GeoPoint } from './geometry';
 import type { ViewportWindow } from './follow';
 import type { Tier } from './tiers';
+import type { OtherLang } from './layers';
 
 export interface MapRendererDiagnostics {
   // ==================== ECharts 实例与渲染状态 ====================
@@ -37,6 +38,14 @@ export interface MapRendererDiagnostics {
   readonly provinceModeInset: boolean;
   readonly worldContinent: Continent | null;
   readonly worldSubregion: SubregionId | null;
+  /** 最近一次渲染实际用的 geo 地图名（如 `other-usa`）：断言"换国家真的换了地图"靠它。 */
+  readonly appliedMapName: string;
+  /** 「其他」档当前国家数据（null = 不在该档）。 */
+  readonly other: OtherCountryData | null;
+  /** 「其他」档当前语言口径。 */
+  readonly otherLang: OtherLang;
+  /** 「其他」档取景边界 = 该国主图包围盒（未在该档为 null）。 */
+  readonly otherBBox: [number, number, number, number] | null;
 
   // ==================== 边界深浅（读回设置是否真的生效） ====================
   readonly cityBoundaryTone: BoundaryTone;
@@ -84,4 +93,6 @@ export interface MapRendererDiagnostics {
   buildLabelData(state: RenderState): unknown[];
   buildProvinceLabelData(state: RenderState): unknown[];
   buildWorldLabelData(state: RenderState): unknown[];
+  /** 「其他」档的标签系列实际会画出的标签（换语言/答对答错都要能读出来）。 */
+  buildOtherLabelData(state: RenderState): unknown[];
 }

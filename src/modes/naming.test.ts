@@ -41,7 +41,10 @@ const ALL_NAMING: QuestionNaming[] = [];
 for (const world of ['country', 'capital', 'flag'] as const) {
   for (const lang of ['zh', 'en'] as const) {
     for (const province of ['full', 'capital', 'abbr'] as const) {
-      ALL_NAMING.push({ world, lang, province });
+      // 「其他」档语言与上面三档正交，矩阵里一并铺开（占位提示的不变量要覆盖它）
+      for (const other of ['zh', 'local'] as const) {
+        ALL_NAMING.push({ world, lang, province, other });
+      }
     }
   }
 }
@@ -224,12 +227,12 @@ describe('口径注册表 · 判题（通过输入模式实际走一遍）', () 
 
 describe('口径注册表的取值器', () => {
   it('activeChoiceOf 对非法取值回落该组第一档（不返回 undefined）', () => {
-    const weird = { world: 'nope' as QuestionNaming['world'], lang: 'zh' as const, province: 'full' as const };
+    const weird = { world: 'nope' as QuestionNaming['world'], lang: 'zh' as const, province: 'full' as const, other: 'zh' as const };
     expect(activeChoiceOf('world', weird).value).toBe('country');
   });
 
-  it('namingGroupOf 对三个字段都返回同一份表里的组（引用稳定）', () => {
-    for (const field of ['world', 'lang', 'province'] as NamingField[]) {
+  it('namingGroupOf 对四个字段都返回同一份表里的组（引用稳定）', () => {
+    for (const field of ['world', 'lang', 'province', 'other'] as NamingField[]) {
       expect(namingGroupOf(field)).toBe(NAMING_GROUPS.find((g) => g.field === field));
       expect(namingGroupOf(field).field).toBe(field);
     }

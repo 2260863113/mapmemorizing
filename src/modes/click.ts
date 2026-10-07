@@ -223,9 +223,10 @@ export class ClickMode extends MapQuizMode {
       disableTooltip: true,
       // 未开始（浏览态）：显示全量地名；开始后清空，只留已作答的绿/红（见 browseLabels.ts）
       ...this.browseLabelState(),
-      // 省名标签 / 国名标签：与输入模式共用基类实现（原先两个子类各抄了一份）
+      // 省名标签 / 国名标签 / 他国行政区标签：与输入模式共用基类实现（原先两个子类各抄了一份）
       provinceLabel: this.provinceLabelOf(),
       worldLabel: this.worldLabelOf(),
+      otherLabel: this.otherLabelOf(),
     });
   }
 

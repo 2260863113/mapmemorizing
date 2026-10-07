@@ -1,4 +1,4 @@
-import type { BrowseLabelContent, Continent, Mode, RenderState, RoundResult, SubregionId, Unit } from '../types';
+import type { BrowseLabelContent, Continent, Mode, OtherCountryData, RenderState, RoundResult, SubregionId, Unit } from '../types';
 import { CONTINENTS } from '../types';
 import type { ModeCtx, OrderMode, ProgressSegment, QuestionNaming } from './types';
 import type { QuizSessionDiagnostics } from './quizDiagnostics';
@@ -7,6 +7,8 @@ import { loadStoredNaming, saveStoredNaming } from './namingStore';
 import { browseLabelState, type BrowseLabelScope } from './browseLabels';
 import { labelOverride, labelsVisibleWith } from '../map/labelVisibility';
 import { activeChoiceOf, type NamingField } from './naming';
+import type { OtherLang } from '../map/layers';
+import { loadOtherWrong, otherScopeLabel, otherUnits, saveOtherWrong } from '../other';
 import { preloadFlags, stopFlagPreload } from './flagPreload';
 import { BaseMode } from './baseMode';
 import { Stopwatch } from '../ui/stopwatch';
@@ -87,6 +89,16 @@ export abstract class MapQuizMode extends BaseMode {
   protected provinceAdjacency = new Map<string, string[]>();
   protected provincePool: Unit[] = [];
   protected worldPool: Unit[] = [];
+  /**
+   * 「其他」档（他国一级行政区，2026-10）：当前国家数据 + 虚拟题池 + 错题清单。
+   *
+   * `otherPool` 用**当前语言档**取名（切语言要重建，见 `setOtherLang`）；编码是稳定身份，
+   * 故错题清单（`otherWrong`）跨语言共用同一套编码。
+   */
+  protected otherCountry: OtherCountryData | null = null;
+  protected otherPool: Unit[] = [];
+  protected otherWrong = new Set<string>();
+  private otherCountryLoaded = false;
 
   protected constructor(protected ctx: ModeCtx) {
     super();
@@ -320,9 +332,24 @@ export abstract class MapQuizMode extends BaseMode {
   setQuestionNaming(patch: Partial<QuestionNaming>) {
     if (this.started) return;
     const next: QuestionNaming = { ...this.naming, ...patch };
-    if (next.world === this.naming.world && next.lang === this.naming.lang && next.province === this.naming.province) return;
+    if (
+      next.world === this.naming.world &&
+      next.lang === this.naming.lang &&
+      next.province === this.naming.province &&
+      next.other === this.naming.other
+    ) {
+      return;
+    }
+    const otherLangChanged = next.other !== this.naming.other;
     this.naming = next;
     saveStoredNaming(this.storagePrefix(), next);
+    // 「其他」档切语言 = 题池里每个单位的名字都换了，必须重建题池（编码身份不变，故进度/错题不受影响）；
+    // 同时要告诉**渲染器**（地图标签与 tooltip 的文本由它按 `LayerInput.otherLang` 现取）——
+    // 只重建题池的话，题面变成日语而地图标签还是中文（冒烟测试实测到的缺陷）。
+    if (otherLangChanged) {
+      this.rebuildOtherPool();
+      if (this.granularity === 'other') this.syncScopeView();
+    }
     this.onNamingChanged();
     // 刚选上「国旗」就开始把它那个池子的国旗预取进缓存（用户口径：选了国旗档就先把国旗备好）
     this.syncFlagPreload();
@@ -376,6 +403,72 @@ export abstract class MapQuizMode extends BaseMode {
     return 'city'; // 市级全国 / 单省 / 省级全国下钻某省：显示该范围内的地级市名
   }
 
+  // ==================== 「其他」档（他国一级行政区，2026-10） ====================
+
+  /** 是否处于「其他」档且国家数据已就位（数据未就位时按"不在该档"处理，不会渲染出空地图）。 */
+  isOtherNation(): boolean {
+    return this.granularity === 'other' && this.otherCountry !== null;
+  }
+
+  /** 当前「其他」档的语言口径（取自取名注册表的 `other` 字段，持久化在 namingStore 里）。 */
+  otherLangOf(): OtherLang {
+    return this.naming.other === 'local' ? 'local' : 'zh';
+  }
+
+  /** 当前「其他」档的国家数据（探针与外壳用）。 */
+  getOtherCountry(): OtherCountryData | null {
+    return this.otherCountry;
+  }
+
+  /**
+   * 装载某个国家（外壳 **await 懒加载**后调用）。
+   *
+   * 为什么由外壳触发加载而不是模式自己：加载是异步的，而模式的粒度/范围切换全是同步的；
+   * 把 `await` 留在外壳（点击那个国家按钮的处理函数）里，模式这一侧就永远只看到"数据已就位"。
+   */
+  setOtherCountry(country: OtherCountryData) {
+    this.otherCountry = country;
+    if (!this.otherCountryLoaded) {
+      // 错题清单只读一次（它跨会话累积，不该被每次切国家覆盖）
+      this.otherWrong = loadOtherWrong(this.storagePrefix());
+      this.otherCountryLoaded = true;
+    }
+    // 无条件重建：换国家与换语言都会让"名字与集合"变（重建只有几十条，不值得做条件判断）
+    this.rebuildOtherPool();
+    // ⚠ 必须让**渲染器**也换到新国家：渲染器持有的那份国家数据是另一个引用
+    //   （`LayerInput.other`），只重建题池的话地图、标签、飞地小窗都还停在旧国家上 ——
+    //   冒烟测试实测到的缺陷（切到日本后地图仍是美国各州、小窗仍是两块）。
+    if (this.granularity === 'other') {
+      this.syncScopeView();
+      this.refresh();
+    }
+  }
+
+  /** 按当前语言口径重建虚拟题池（切语言/换国家都要重建：名字与集合都可能变）。 */
+  protected rebuildOtherPool() {
+    this.otherPool = this.otherCountry ? otherUnits(this.otherCountry, this.otherLangOf()) : [];
+  }
+
+  /** 「其他」档顺序出题的起点（题池各单位的中心，即该国几何重心附近）。 */
+  protected otherPoolCenter(): [number, number] {
+    if (!this.otherPool.length) return [0, 0];
+    const sx = this.otherPool.reduce((a, u) => a + u.center[0], 0);
+    const sy = this.otherPool.reduce((a, u) => a + u.center[1], 0);
+    return [sx / this.otherPool.length, sy / this.otherPool.length];
+  }
+
+  /** 「其他」档的已作答绿/红标签（文本 = 当前语言的名字，池里已经按语言建好）。 */
+  protected otherLabelOf(): RenderState['otherLabel'] {
+    if (!this.isOtherNation()) return undefined;
+    return (code) => {
+      const u = this.otherPool.find((x) => x.adcode === code);
+      if (!u) return null;
+      if (this.green.has(code)) return { text: u.name, color: 'green' as const };
+      if (this.red.has(code)) return { text: u.name, color: 'red' as const };
+      return null;
+    };
+  }
+
   /**
    * 浏览标签片段（喂给 `refresh()` 的渲染状态）。
    *
@@ -392,6 +485,9 @@ export abstract class MapQuizMode extends BaseMode {
     const override = this.ctx.labelsOverride?.() ?? labelOverride();
     const playing = this.started && !this.settled;
     if (!labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, playing)) return {};
+    // 「其他」档的浏览地名走 `otherShowAllLabels`（文本由渲染层按当前语言从国家数据现取，
+    // 因为那份数据不在 AppData 里、注册表的 labelName 拿不到它）。
+    if (this.granularity === 'other') return { otherShowAllLabels: true };
     return browseLabelState(this.browseLabelScope(), true, (id) => this.browseLabelContentOf(id));
   }
 
@@ -586,8 +682,9 @@ export abstract class MapQuizMode extends BaseMode {
     if (this.granularity === 'city') saveScopeProvince(this.scopeStorageKey(), scopeProvince);
   }
 
-  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 答题国；否则地级单位）。 */
+  /** 当前粒度+范围下的有效题目池（省级全国 → 34 个省级虚拟单位；世界全国 → 答题国；其他档 → 该国一级行政区；否则地级单位）。 */
   protected activePool(): Unit[] {
+    if (this.granularity === 'other') return this.otherPool;
     if (this.isProvinceNation()) return this.provincePool;
     if (this.isWorldNation()) return this.worldScopedPool();
     return scopedUnits(this.ctx.data, this.scopeProvince);
@@ -608,9 +705,10 @@ export abstract class MapQuizMode extends BaseMode {
     return base.filter((u) => isoToContinent.get(u.adcode) === this.worldContinent);
   }
 
-  /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池或地级池）。 */
+  /** 由 adcode 反查当前池中的单位（省级全国池、世界国家池、其他档池或地级池）。 */
   protected currentUnitOf(adcode: string | null): Unit | null {
     if (!adcode) return null;
+    if (this.granularity === 'other') return this.otherPool.find((u) => u.adcode === adcode) ?? null;
     if (this.isProvinceNation()) return this.provincePool.find((u) => u.adcode === adcode) ?? null;
     if (this.isWorldNation()) return this.worldPool.find((u) => u.adcode === adcode) ?? null;
     return this.ctx.byAdcode.get(adcode) ?? null;
@@ -620,6 +718,14 @@ export abstract class MapQuizMode extends BaseMode {
     this.ensureScopeProvince();
     this.syncingScope = true;
     try {
+      // 「其他」档：他国一级行政区（第四族）。渲染器按该国几何与投影切图，
+      // 没有下钻层级，故这里只把国家数据 + 语言交过去。
+      if (this.granularity === 'other') {
+        this.ctx.renderer.setOtherMode(this.otherCountry, this.otherLangOf());
+        return;
+      }
+      // 离开「其他」档时必须显式退出（否则渲染器仍停在那国的地图上）
+      this.ctx.renderer.setOtherMode(null);
       if (this.isProvinceNation()) {
         // 省级全国：省级地图视图，不渲染地级；含港澳放大框；不下钻
         //
@@ -915,12 +1021,26 @@ export abstract class MapQuizMode extends BaseMode {
    * 省级全国（虚拟省单位）没有真实几何，跳过。
    */
   protected panToUnit(adcode: string) {
-    if (this.isProvinceNation()) return;
-    if (this.isWorldNation()) this.ctx.renderer.panWorldCountry(adcode);
+    if (this.granularity === 'other') this.ctx.renderer.panOtherUnit(adcode);
+    else if (this.isProvinceNation()) return;
+    else if (this.isWorldNation()) this.ctx.renderer.panWorldCountry(adcode);
     else this.ctx.renderer.panUnit(adcode);
   }
 
-  /** 熟练度记录：省级全国 → 省级熟练度；世界全国 → 国家熟练度；市级 → 地级熟练度（完全隔离）。 */  protected recordPractice(adcode: string, correct: boolean) {
+  /**
+   * 熟练度记录：省级全国 → 省级熟练度；世界全国 → 国家熟练度；市级 → 地级熟练度（完全隔离）。
+   *
+   * ⚠ **「其他」档不写熟练度**（用户口径：纯练习，不计分、不上排行榜）。
+   * 但「错题」分段按钮要有依据，故把错题记进**独立的一份清单**（`src/other.ts`）：
+   * 它不进 `MemoryStore`，熟练度分析的四个分区都不受影响；答对了就把该编码移出错题。
+   */
+  protected recordPractice(adcode: string, correct: boolean) {
+    if (this.granularity === 'other') {
+      if (correct) this.otherWrong.delete(adcode);
+      else this.otherWrong.add(adcode);
+      saveOtherWrong(this.storagePrefix(), this.otherWrong);
+      return;
+    }
     if (this.isProvinceNation()) this.ctx.store.recordProvinceAnswer(adcode, correct);
     else if (this.isWorldNation()) this.ctx.store.recordWorldAnswer(adcode, correct);
     else this.ctx.store.recordAnswer(adcode, correct);
@@ -949,6 +1069,8 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   getScopeProvince() {
+    // 「其他」档不上排行榜（用户口径：纯练习），故没有榜单作用域
+    if (this.granularity === 'other') return null;
     // 排行榜/结算的省级全国范围用哨兵；世界全国范围用世界哨兵；大洲/次区域范围各自哨兵；市级沿用 scopeProvince
     if (this.scopeProvince === null && this.granularity === 'province') return PROVINCE_NATION_SCOPE;
     if (this.scopeProvince === null && this.granularity === 'world') {
@@ -965,8 +1087,9 @@ export abstract class MapQuizMode extends BaseMode {
     return this.worldContinent ? continentScope(this.worldContinent) : WORLD_NATION_SCOPE;
   }
 
-  /** 快照当前会话结果（全国排行榜结算卡片用）。 */
+  /** 快照当前会话结果（全国排行榜结算卡片用）。「其他」档纯练习，不给可提交的结果。 */
   collectResult(): RoundResult | null {
+    if (this.granularity === 'other') return null;
     if (!this.started && !this.question && this.green.size === 0 && this.red.size === 0) return null;
     return this.buildResult(this.stopwatch.elapsedMs());
   }
@@ -988,6 +1111,9 @@ export abstract class MapQuizMode extends BaseMode {
   }
 
   protected scopeLabel() {
+    if (this.granularity === 'other') {
+      return this.otherCountry ? otherScopeLabel(this.otherCountry) : t('common.nation');
+    }
     if (this.scopeProvince === null && this.granularity === 'province') return t('common.provinceNation');
     if (this.scopeProvince === null && this.granularity === 'world') {
       const continentName = this.worldContinent
@@ -1003,6 +1129,8 @@ export abstract class MapQuizMode extends BaseMode {
 
   /** 熟练度读取：世界粒度（含大洲）共用同一套国家熟练度（Q：大洲榜独立但熟练度共享）。 */
   protected scoreOf = (u: Unit) => {
+    // 「其他」档没有熟练度，用**独立的错题清单**喂「错题」顺序档：错过的记 −1，其余 0。
+    if (this.granularity === 'other') return this.otherWrong.has(u.adcode) ? -1 : 0;
     if (this.isProvinceNation()) return this.ctx.store.getProvincePractice(u.adcode).score;
     if (this.isWorldNation()) return this.ctx.store.getWorldPractice(u.adcode).score;
     return this.ctx.store.getPractice(u.adcode).score;
@@ -1034,6 +1162,7 @@ export abstract class MapQuizMode extends BaseMode {
 
   /** 当前视图落在哪一档取名口径上（地级档没有口径）。 */
   protected namingField(): NamingField | null {
+    if (this.granularity === 'other') return 'other';
     if (this.isWorldNation()) return 'world';
     if (this.isProvinceNation()) return 'province';
     return null;
