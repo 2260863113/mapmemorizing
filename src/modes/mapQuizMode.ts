@@ -482,13 +482,27 @@ export abstract class MapQuizMode extends BaseMode {
    * 那样 Alt 在答题中按下等于没反应，覆盖值形同虚设。
    */
   protected browseLabelState(): Partial<RenderState> {
-    const override = this.ctx.labelsOverride?.() ?? labelOverride();
-    const playing = this.started && !this.settled;
-    if (!labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, playing)) return {};
+    if (!this.labelsVisible()) return {};
     // 「其他」档的浏览地名走 `otherShowAllLabels`（文本由渲染层按当前语言从国家数据现取，
     // 因为那份数据不在 AppData 里、注册表的 labelName 拿不到它）。
     if (this.granularity === 'other') return { otherShowAllLabels: true };
     return browseLabelState(this.browseLabelScope(), true, (id) => this.browseLabelContentOf(id));
+  }
+
+  /**
+   * 「浏览地名」此刻是否可见 —— **Alt 热切换的基准值**，与 `browseLabelState` 同一判据。
+   *
+   * 单列出来的理由：Alt 的语义是"取反**当前看到的**状态"，基准值必须与真正显示的一致。
+   * 「其他」档默认不显示（用户口径 2026-10），若基准值仍按"设置开关 && 未开始"算出 true，
+   * 第一次按 Alt 只会把状态翻成 false —— 屏幕上什么都没变（看起来毫无反应），要按第二次才出来。
+   */
+  labelsVisible(): boolean {
+    const override = this.ctx.labelsOverride?.() ?? labelOverride();
+    // 「其他」档：默认不显示，只在**显式**手势（Alt）下显示。这一族一屏 47/51 个一级行政区
+    // （且是"整国铺满"、飞地也在主图上），全量标签会把地图糊成一片；省级 34 个、世界档国名稀疏，
+    // 故**只在这一族**不看设置开关（它默认开着，是为中国/世界两档设的）。
+    if (this.granularity === 'other') return override === true;
+    return labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, this.started && !this.settled);
   }
 
   /**

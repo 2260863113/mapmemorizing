@@ -8,7 +8,6 @@ import { clampFollowCenter, followZoomFloor, isComfortablyVisible, isNegligibleM
 import { scaleFollowZoom, worldFocusZoom } from './followScale';
 import { isTinyCountry } from '../tinyCountries';
 import { InsetMap } from './inset';
-import { OtherInsetWindows } from './otherInset';
 import { otherMapName, registerMaps } from './mapRegistry';
 import { boxOfCoords, cullToViewport, type CullBox } from './cull';
 import { worldFaceInteractive, type WorldFaceContext } from './worldFaces';
@@ -37,6 +36,7 @@ import {
 import {
   buildLabelData,
   buildOtherLabelData,
+  buildOtherEventData,
   buildProvinceLabelData,
   buildWorldLabelData,
   otherUnitName,
@@ -199,8 +199,6 @@ export class MapRenderer {
    */
   private other: OtherCountryData | null = null;
   private otherLang: OtherLang = 'zh';
-  /** 「其他」档的左下角小窗（每个飞地一个；没有飞地时不显示）。 */
-  private otherInsets: OtherInsetWindows | null = null;
   /** 最近一次 render 实际应用到的 geo 地图名（用于检测地图切换，切换时强制重建 geo 组件）。 */
   private appliedMapName = '';
   /** 最近一次的「地图名|大洲|次区域」签名（洲/次区域变化需 replaceMerge 重建 geo.regions）。 */
@@ -319,7 +317,7 @@ export class MapRenderer {
       // 「其他」档：region 名就是编码（见 otherData.ts），装饰面与飞地不可交互
       if (this.other) {
         const u = this.other.byCode.get(hitName);
-        if (u && !u.decorative && !u.inset) this.handlers.onUnitClick(hitName);
+        if (u && !u.decorative) this.handlers.onUnitClick(hitName);
         return;
       }
       // 世界模式：命中答题国 → 按 iso 回传；装饰面/被排除的极小国/当前范围外的面一律静默
@@ -372,7 +370,7 @@ export class MapRenderer {
       // 「其他」档：只有题池里的主图单位响应悬停（装饰面/飞地回显式结束，防残留高亮）
       if (this.other) {
         const u = this.other.byCode.get(hitName);
-        if (u && !u.decorative && !u.inset) this.handlers.onUnitHover?.(hitName);
+        if (u && !u.decorative) this.handlers.onUnitHover?.(hitName);
         else this.handlers.onUnitHoverEnd?.();
         return;
       }
@@ -496,7 +494,6 @@ export class MapRenderer {
   resize() {
     this.chart.resize();
     this.inset.resize();
-    this.otherInsets?.resize();
     // 画布尺寸变了 → 视口覆盖的数据范围随之变化，需按新尺寸重算裁剪
     this.cullToViewport();
   }
@@ -504,6 +501,11 @@ export class MapRenderer {
   /** 切走某地图族前，把当前全国视野记入对应记忆槽（仅全国层：钻省状态不参与，此时以钻省前快照为准）。 */
   private snapshotViewBeforeLeave() {
     const mapName = this.currentMapName();
+    // 「其他」档**不存记忆**：这一族的取景是"进哪国都从整国铺满开始"（`resetOtherCamera`），
+    // 没有跨族恢复的需求。⚠ 以前这里没有这一支，`other-usa` 会落到下面的中国分支、
+    // 把中国的记忆槽覆盖成"上一个国家的取景" —— 于是从「其他」回到省级/市级时相机被"恢复"到
+    // 美国中心，中国地图整个落在屏幕外，表现为**地图消失**（实测：画布非背景像素 0%）。
+    if (mapName.startsWith('other-')) return;
     if (mapName === 'world') {
       this.savedWorldView = { center: [this.center[0], this.center[1]], zoom: this.zoom };
     } else {
@@ -698,10 +700,8 @@ export class MapRenderer {
       this.viewProvinceBox = null;
       this.labelMode = 'none';
       this.inset.hide();
-      this.ensureOtherInsets().show(country);
       this.resetOtherCamera();
     } else {
-      this.otherInsets?.hide();
       const v = this.pickViewFor(this.currentMapName());
       this.center = [v.center[0], v.center[1]];
       this.zoom = v.zoom;
@@ -722,20 +722,6 @@ export class MapRenderer {
     const b = other.bboxMain;
     this.center = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
     this.zoom = 1;
-  }
-
-  private ensureOtherInsets(): OtherInsetWindows {
-    if (!this.otherInsets) {
-      this.otherInsets = new OtherInsetWindows({
-        theme: () => this.theme(),
-        state: () => this.lastState,
-        tone: () => this.cityBoundaryTone,
-        handlers: this.handlers,
-        nameOf: (code) => this.otherNameOf(code) ?? code,
-        country: () => this.other,
-      });
-    }
-    return this.otherInsets;
   }
 
   /** 编码 → 当前语言下的显示名（未进入该档或编码不存在时 null）。 */
@@ -1084,8 +1070,6 @@ export class MapRenderer {
     }
     // 省级模式下同步刷新港澳放大框着色；期望显示时确保容器可见（防任何路径误隐藏后无 render 恢复）
     if (this.provinceMode && this.provinceModeInset) this.inset.show();
-    // 「其他」档：每次重绘同步刷新飞地小窗（着色/标签跟着答题态与语言走）
-    if (this.other) this.otherInsets?.render();
     // 视口裁剪必须放在最后一次 setOption 之后：replaceMerge 会重建 region 组、
     // 清掉上一轮的 ignore 标记，且换档后可见集合本身也变了。
     this.cullToViewport();
@@ -1109,8 +1093,9 @@ export class MapRenderer {
       provinceLinesSeries(theme, this.provinceBoundaryTone, this.buildLineData()),
       // 世界练习的国名标签：随缩放缩小
       provinceLikeLabelSeries('world-labels', 10, buildWorldLabelData(ctx), theme, () => labelScale(this.zoom)),
-      // 「其他」档的地名标签（他国一级行政区）：z=10 与国名标签同层，字号随缩放缩小
-      provinceLikeLabelSeries('other-labels', 10, buildOtherLabelData(ctx), theme, () => labelScale(this.zoom)),
+      // 「其他」档的地名标签：**字号固定为最大档**（用户口径 2026-10：不随缩放变小，
+      // 与省级省名标签同一处理 —— 这一族的行政区分得开、标签也不密，缩小只会更难认）。
+      provinceLikeLabelSeries('other-labels', 10, buildOtherLabelData(ctx), theme, () => 1),
       cityLabelSeries(buildLabelData(ctx), theme, () => labelScale(this.zoom)),
       // 省级练习的省名标签：已作答省的简称，**始终显示**。字号固定为最大档（scale=1）、
       // 不随缩放缩小，故恒按「放大足够时」的样式渲染（字号/衬底/间距统一最大）；
@@ -1562,6 +1547,7 @@ export class MapRenderer {
       buildProvinceLabelData: (state) => buildProvinceLabelData(self.layerInput(state)),
       buildWorldLabelData: (state) => buildWorldLabelData(self.layerInput(state)),
       buildOtherLabelData: (state) => buildOtherLabelData(self.layerInput(state)),
+      buildOtherEventData: (state) => buildOtherEventData(self.layerInput(state)),
     };
   }
 
@@ -1581,7 +1567,6 @@ export class MapRenderer {
     }
     this.chart.dispose();
     this.inset.dispose();
-    this.otherInsets?.dispose();
   }
 }
 

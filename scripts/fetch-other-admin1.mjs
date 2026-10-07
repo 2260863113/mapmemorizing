@@ -64,18 +64,15 @@ const SOURCE_NOTE =
  * 四国配置。
  *
  * `lang` 是"当地语言"这一档的标识与按钮文案（用户口径：美国加拿大英语、日本日语、俄罗斯俄语）。
- * `insetGroups` 是**每个小窗装哪几块飞地**（放左下角，与现有港澳小窗同一套）：显式清单而不是几何启发式 ——
- * 实测"连通分量"分不出飞地（日本四个大岛之间没有陆地相邻，会被误判成四块飞地；北海道与冲绳也各自孤立），
- * 显式清单语义精确、可审计（沿用世界图并港澳时的同一判断）。
- *
- * 美国给**两个小窗**（阿拉斯加、夏威夷各一个）而不是一个窗里塞两块：两者相距 4000 多公里，
- * 合在一个窗里包围盒被拉成 51°×54°，窗口里两块各占对角、都只剩几个像素，点都点不到。
- * 中国那一个窗（港澳）本身就在广东沿海、共用一个框，属于另一种情形。
+ * 用户口径（2026-10 二次确认）：**不要左下角小窗**，飞地也直接在主图上点。
+ * 故 `insetGroups` 一律为空 —— 主图包围盒取**全部单位**的并集（含阿拉斯加/夏威夷/加里宁格勒），
+ * 这样它们就在主图的投影范围内、可以直接点到。保留这个配置项是因为"哪些算飞地"仍是数据事实，
+ * 将来若要恢复小窗只需在此填回清单。
  */
 const COUNTRIES = [
   {
     cc: 'usa', a3: 'USA', name: '美国', lang: { id: 'en', label: '英文' },
-    simplify: '30%', insetGroups: [['US-AK'], ['US-HI']],
+    simplify: '30%', insetGroups: [],
   },
   {
     cc: 'can', a3: 'CAN', name: '加拿大', lang: { id: 'en', label: '英文' },
@@ -87,7 +84,7 @@ const COUNTRIES = [
   },
   {
     cc: 'rus', a3: 'RUS', name: '俄罗斯', lang: { id: 'ru', label: '俄文' },
-    simplify: '22%', insetGroups: [['RU-KGD']],
+    simplify: '22%', insetGroups: [],
   },
 ];
 
@@ -476,7 +473,8 @@ for (const cfg of COUNTRIES) {
      * 由构建期算好写进清单：渲染器据此注册地图的 boundingCoords，不必在运行时再遍历几何。
      */
     bbox: {
-      main: unionBbox(units.filter((u) => !u.inset)),
+      // 全部单位的并集：飞地也留在主图里（用户口径：不要小窗，直接点大地图）
+      main: unionBbox(units),
       insets: cfg.insetGroups.map((codes, i) => ({
         codes,
         bbox: unionBbox(units.filter((u) => u.insetGroup === i)),

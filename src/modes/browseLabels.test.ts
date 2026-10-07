@@ -29,7 +29,7 @@ function makeCtx(showBrowseLabels = true) {
 }
 
 /** 只落粒度、不走 enter（避免开始卡片的 DOM 依赖）。 */
-const scopeQuery = (granularity: 'world' | 'province' | 'city') => ({
+const scopeQuery = (granularity: 'world' | 'province' | 'city' | 'other') => ({
   granularity,
   continent: null,
   subregion: null,
@@ -199,6 +199,41 @@ describe('点击模式 · 开始后清空、结束后复现', () => {
     mode.applyScopeQuery(scopeQuery('world'));
     mode.refresh();
     expect(last(states).worldShowAllLabels).toBeUndefined();
+  });
+});
+
+describe('「其他」档 · 默认不显示浏览地名（用户口径 2026-10）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /**
+   * 用户原话：「为什么这么多标签啊，没开始就不要显示标签啊」。
+   * 这一族一屏就有 47/51 个一级行政区（且是"整国铺满"、飞地也在主图上），全量标签会把地图糊成一片；
+   * 省级只有 34 个、世界档国名本就稀疏，故**只在这一族**把默认改掉：不看设置开关（它默认开着、
+   * 是为中国/世界两档设的），只在**显式手势**（Alt 会话覆盖）下显示。
+   */
+  it('未开始也**不**显示全量标签（设置开关默认开着也不显示）', () => {
+    const { ctx, states } = makeCtx(true);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('other'));
+    mode.refresh();
+    expect(last(states).otherShowAllLabels).toBeUndefined();
+  });
+
+  it('按 Alt（会话覆盖 = true）才显示 —— 那是用户主动"临时看一眼名字"', () => {
+    const { ctx, states } = makeCtx(true);
+    ctx.labelsOverride = () => true;
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('other'));
+    mode.refresh();
+    expect(last(states).otherShowAllLabels).toBe(true);
+  });
+
+  it('中国/世界两档不受影响：设置开着就显示全量', () => {
+    const { ctx, states } = makeCtx(true);
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('province'));
+    mode.refresh();
+    expect(last(states).showAllProvinceLabels).toBe(true);
   });
 });
 

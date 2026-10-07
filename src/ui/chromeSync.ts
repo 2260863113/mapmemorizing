@@ -76,11 +76,6 @@ export class ChromeSync {
       // 「有粒度行的计时测验」= 输入/点击模式（这两者正是唯一会进入省级全国的测验）
       (hasGranularityToggle(mode) || puzzleScopePhase) && (current?.isProvinceNation?.() ?? false);
     $('app').dataset.provinceInset = provinceNationInset ? '1' : '';
-    // 「其他」档的飞地小窗同样在左下角，说明/缩放按钮也要上移让位（与港澳放大框同一处理）：
-    // 小窗高度 150 + 上下留白 24 ≈ 174，取 180 留一点缝。
-    const otherInset = (current?.getOtherCountry?.()?.insetGeoJsons.length ?? 0) > 0
-      && (current?.isOtherNation?.() ?? false);
-    $('app').dataset.otherInset = otherInset ? '1' : '';
     $('map').classList.toggle('hidden', isNonMap || puzzleBoard);
     $('puzzle').classList.toggle('hidden', !puzzleBoard);
     // 非地图模式各自的整块界面（留言板 / 管理端）：元素 id 与模式 id 同名，故按模式表遍历

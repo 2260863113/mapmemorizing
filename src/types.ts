@@ -112,9 +112,8 @@ export interface OtherCountryMeta {
   count: number;
   /** 「不考但显示」的面数（争议地区）。 */
   decorativeCount: number;
-  inset: boolean;
-  /** 主图与各小窗的投影范围（[minLon, minLat, maxLon, maxLat]）。 */
-  bbox: { main: [number, number, number, number]; insets: { codes: string[]; bbox: [number, number, number, number] }[] };
+  /** 主图投影范围（[minLon, minLat, maxLon, maxLat]）：**全部单位**的并集，飞地也在里面。 */
+  bbox: { main: [number, number, number, number] };
 }
 
 /** 一国的一个一级行政区（`<cc>.units.json` 的一条）。 */
@@ -129,10 +128,6 @@ export interface OtherUnitMeta {
   nameEn: string;
   /** 装饰面：不考但显示（争议地区）。 */
   decorative?: boolean;
-  /** 飞地：画在左下角小窗里，不参与主图的正交包围盒。 */
-  inset?: boolean;
-  /** 属于第几个小窗（与 OtherCountryMeta.bbox.insets 下标对齐）。 */
-  insetGroup?: number;
   center: [number, number];
   bbox: [number, number, number, number];
   /** 度² 面积（构建期算好，供跟随缩放与极小单位判定）。 */
@@ -154,10 +149,7 @@ export interface OtherCountryData {
   pool: OtherUnitMeta[];
   /** 全部面（含装饰面）的 GeoJSON；`properties.name` 被改写为 **code**（见 otherData.ts 的说明）。 */
   geoJson: unknown;
-  /** 每个小窗一份 GeoJSON 子集（没有飞地则为空数组）。 */
-  insetGeoJsons: unknown[];
   bboxMain: [number, number, number, number];
-  bboxInsets: [number, number, number, number][];
   byCode: Map<string, OtherUnitMeta>;
 }
 

@@ -95,4 +95,11 @@ export interface MapRendererDiagnostics {
   buildWorldLabelData(state: RenderState): unknown[];
   /** 「其他」档的标签系列实际会画出的标签（换语言/答对答错都要能读出来）。 */
   buildOtherLabelData(state: RenderState): unknown[];
+  /**
+   * 「其他」档的 events data（= 主图上**点得动**的面）。
+   *
+   * 单独暴露的理由：用户口径是"飞地也直接在主图上点"，而"点得动"既取决于池子也取决于
+   * `buildOtherEventData` 的过滤；只看题池数量无法证明阿拉斯加/夏威夷/加里宁格勒真的可交互。
+   */
+  buildOtherEventData(state: RenderState): { name: string }[];
 }

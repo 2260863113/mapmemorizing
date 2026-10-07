@@ -384,20 +384,18 @@ export function buildWorldLabelData(ctx: LayerInput): LabelPoint[] {
 /**
  * 「其他」档的面数据：一个面 = 一个一级行政区，**region 名就是编码**（见 otherData.ts 的说明）。
  *
- * 与另外三档的两处差别：
- *   1. **没有"范围外"概念**：进来就是"整个国家"，不存在大洲/次区域那样的过滤；
- *   2. 飞地面（`inset`）在主图里**静默**：它们被画在左下角小窗里，主图的投影范围不包含它们，
- *      若不静默，主图上会留下几个位于画布之外、却能被键盘/命中测试碰到的"幽灵面"。
+ * 与另外三档的差别：**没有"范围外"概念** —— 进来就是"整个国家"，不存在大洲/次区域那样的过滤。
+ * 飞地（阿拉斯加/夏威夷/加里宁格勒）与普通单位一样**可交互**：用户口径是不要左下角小窗、
+ * 直接在主图上点，故它们照常参与悬停与作答。
  */
 export function buildOtherRegionData(ctx: LayerInput): GeoRegion[] {
   const { state, theme } = ctx;
   const other = ctx.other;
   if (!other) return [];
-  const out: GeoRegion[] = [];
-  for (const u of other.units) {
-    const gray = u.decorative === true || u.inset === true;
+  return other.units.map((u) => {
+    const gray = u.decorative === true;
     const color: UnitColor = gray ? 'gray' : state.colorOf(u.code);
-    out.push({
+    return {
       name: u.code,
       silent: gray,
       itemStyle: {
@@ -411,16 +409,15 @@ export function buildOtherRegionData(ctx: LayerInput): GeoRegion[] {
         label: { show: false },
       },
       label: { show: false },
-    });
-  }
-  return out;
+    };
+  });
 }
 
-/** 「其他」档的 events data：题池单位才有事件（装饰面与飞地不参与主图交互）。 */
+/** 「其他」档的 events data：题池单位都有事件（只有"不考但显示"的装饰面不参与）。 */
 export function buildOtherEventData(ctx: LayerInput): { name: string }[] {
   const other = ctx.other;
   if (!other) return [];
-  return other.pool.filter((u) => !u.inset).map((u) => ({ name: u.code }));
+  return other.pool.map((u) => ({ name: u.code }));
 }
 
 /**

@@ -181,4 +181,12 @@ export interface ModeController {
   isOtherNation?(): boolean;
   /** 当前「其他」档的国家数据（外壳据此把语言行文案与按钮标题对齐）。 */
   getOtherCountry?(): OtherCountryData | null;
+  /**
+   * 「浏览地名」此刻是否可见（Alt 热切换的**基准值**）。
+   *
+   * 为什么外壳要问模式而不是自己算：Alt 的语义是"取反**当前看到的**状态"，而"当前看到什么"
+   * 是模式的事（设置开关 + 答题进行中 + 「其他」档的默认不显示）。外壳自己算会在「其他」档
+   * 出现"第一次按 Alt 看不出变化"（见 `MapQuizMode.labelsVisible` 的说明）。
+   */
+  labelsVisible?(): boolean;
 }

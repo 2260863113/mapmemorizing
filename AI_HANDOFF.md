@@ -1,5 +1,75 @@
 # 给下一个 AI 的交接文档
 
+## 本轮（2026-10 第四轮）：「其他」档三条用户反馈（撤小窗 / 修地图消失 / 标签口径）
+
+用户三条（原话）：
+1. 「去掉其他范围中四个国家的左下角小地图，用户直接点击大地图上的就可以了。」
+2. 「修复一旦进入"其他"，回到省级和市级的时候地图就消失不见的bug。」
+3. 「对于"其他"的四个国家，地图标签保持大小不变，始终为最大尺寸。」
+追加一条（看到截图后）：「为什么这么多标签啊，没开始就不要显示标签啊。」
+
+### 1. 撤掉左下角小窗 → 飞地回到主图
+
+- **数据层**（`scripts/fetch-other-admin1.mjs`）：`insetGroups` 四个国家全部清空，
+  `bbox.main` 改成**全部单位**的并集 → 美国主图含 −187.5°（阿留申）与 18.9°N（夏威夷）、
+  俄罗斯含 19.6°~191°（加里宁格勒 + 楚科奇）。重新生成了 `public/data/other/*`。
+- **代码层**：删掉 `src/map/otherInset.ts` 整块、`#other-insets` DOM 与 CSS、
+  `#app[data-other-inset]` 的按钮让位规则、`registerOtherMaps` 的小窗地图注册、
+  `OtherCountryData.insetGeoJsons/bboxInsets`、`OtherUnitMeta.inset/insetGroup`
+  （`buildOtherRegionData` 里"飞地静默"与 `buildOtherEventData` 里 `!u.inset` 的过滤一并删掉）。
+- `src/otherData.test.ts` 改成断言"数据里**没有** inset 标记" + "包围盒 = 全部单位并集"。
+
+### 2. ⭐ 进过「其他」之后回省级/市级，地图消失（真 bug）
+
+**根因**：`MapRenderer.snapshotViewBeforeLeave()` 只认 `world` 与"中国"两族，
+`other-usa` 落到了中国分支里，于是**把美国的取景写进了中国族的记忆槽**；回省级时
+`pickViewFor('china-…')` 读回那个槽 → 相机被"恢复"到美国中心 `[-95.86, 36.96]` → 中国地图整个落在
+屏幕外 → **画布一片空白**。而 `appliedMapName` 是对的，所以**只看地图名的验收脚本抓不到**
+（用户的描述是"地图消失不见"，我的脚本只断言了地图名 —— 这是这一轮最有价值的教训）。
+
+**修法**：`snapshotViewBeforeLeave()` 里 `mapName.startsWith('other-')` 直接 return（这一族的取景
+是"进哪国都从整国铺满开始"，没有跨族恢复的需求，也不该占中国族的槽）。
+
+**验收补强**：`verify-other.mjs` 现在会读**画布像素直方图**（与左上角背景色不同的像素占比），
+对"进其他 → 回省级 → 切市级"三步都断言 `fillPct > 3%` 且相机回到中国范围。只断言地图名的脚本
+必须补上这一条，否则同类缺陷还会漏。
+
+### 3. 标签字号恒为最大档
+
+`provinceLikeLabelSeries('other-labels', …)` 的缩放闭包从 `() => labelScale(this.zoom)` 改成 `() => 1`
+（与省级省名标签一致）。截图对比 1.00x 与 0.80x：标签逐像素同尺寸，地图背景才变小。
+
+### 4. 未开始不显示地名标签（用户追加口径）
+
+`MapQuizMode.browseLabelState()` 原来对「其他」档返回 `{ otherShowAllLabels: true }`（跟中国/世界
+两档一样在未开始时铺满标签）→ 47/51 个一级行政区把地图糊成一片。改为**这一族默认不显示**：
+不看 `settings.showBrowseLabels`（它默认开着、是为中国/世界两档设的），只在 `labelsOverride === true`
+（按 Alt）时显示。
+
+⚠ 连带修的一处：Alt 的基准值必须与"此刻真的看到什么"一致，否则「其他」档**第一次按 Alt 会毫无变化**
+（它把状态翻成 false）。为此把判据收进模式并暴露给外壳：
+`MapQuizMode.labelsVisible()`（`ModeController.labelsVisible?()`），`appController.handleLabelToggle`
+优先问它。新增 `src/modes/browseLabels.test.ts` 三条用例守着（默认不显示 / Alt 显示 / 中国档不受影响）。
+
+### 验收
+
+- `npm run check` 退出 0：**61 文件 / 853 用例**、eslint 0 error / 1 条既有 warning。
+- 八套浏览器验收全绿共 **411 项**：`verify-other` **41/41**（新增：无小窗容器、飞地在主图 events data 里、
+  未开始零标签、Alt 显示/再按收起、**回省级/市级画布非空 + 相机回中国**），
+  其余 round2 38 / round3 54 / naming 47 / drill-scope 34 / puzzle 84 / mobile-gate 24 / admin-traffic 89 → 无回归。
+- 截图（`docs/shots/`）：`verify-other-1-usa.png`（美国含阿拉斯加/夏威夷一图）、
+  `verify-other-5-back-province.png`（回省级正常）、`verify-other-7/8-labels-*.png`（1.00x vs 0.80x 字号相同）。
+
+### ⚠ 留给下一个 AI（延续上一轮）
+
+1. 日俄两档的"英文名"是罗马字（`Moskva` / `Gorno-Altay`），常见英文名要另加别名表。
+2. 「外语」按钮文案仍是固定的「外语」（实际语言由国家决定），要跟着国家变得让 `label` 支持函数。
+3. 加国家只需重跑数据管线 + 在 `COUNTRIES` 加一行。
+4. 这一族**不进拼图模式与 SEO 落地页**（用户口径）。
+5. 撤掉小窗的**代价**：美国主图被阿拉斯加/夏威夷撑宽，本土各州变小、标签在大陆部分更挤 ——
+   若用户后续嫌挤，可考虑的方案是"默认视野只框本土 + 飞地靠平移看"（但那与"直接点大地图"有冲突，
+   需先跟用户确认）。
+
 ## 本轮（2026-10 第三轮）：「其他」档 —— 输入/点击模式考他国一级行政区
 
 用户需求（原话）：「对于输入模式和点击模式，在"世界/省级/市级"分段按钮右侧添加新的分段"其他"，

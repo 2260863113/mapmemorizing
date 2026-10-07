@@ -1231,7 +1231,7 @@ export class AppController {
     if (!current) return;
     if (this.settingsOverlayOpen()) return; // 面板里那个「显示地图地名」复选框才是此刻该改的东西
     event.preventDefault();
-    const cur = labelOverride() ?? (this.settings.showBrowseLabels && !current.isStarted());
+    const cur = labelOverride() ?? current.labelsVisible?.() ?? (this.settings.showBrowseLabels && !current.isStarted());
     setLabelOverride(!cur);
     current.refresh();
     toast(t(cur ? 'main.labelsHidden' : 'main.labelsShown'));

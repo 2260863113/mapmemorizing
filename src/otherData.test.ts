@@ -28,6 +28,11 @@ interface OtherUnit {
   nameLocal: string;
   nameEn: string;
   decorative?: boolean;
+  /**
+   * 第一版有"飞地小窗"时数据里带这两个字段；用户口径（2026-10 二次确认）改成
+   * "不要小窗，飞地直接在主图上点"之后它们应当**消失**。这里保留为可选字段，
+   * 专门用来断言"数据里已经没有了"（类型上删掉就没法断言缺省了）。
+   */
   inset?: boolean;
   insetGroup?: number;
   center: [number, number];
@@ -48,8 +53,7 @@ interface OtherIndex {
     lang: { id: string; label: string };
     count: number;
     decorativeCount: number;
-    inset: boolean;
-    bbox: { main: number[]; insets: { codes: string[]; bbox: number[] }[] };
+    bbox: { main: number[] };
   }[];
 }
 
@@ -60,11 +64,11 @@ const poolOf = (f: OtherUnitsFile) => f.units.filter((u) => !u.decorative);
 
 /** 与管线同一口径的期望值（改数据管线时这里也要一起改，改不动就说明口径变了）。 */
 const EXPECTED = [
-  { cc: 'usa', name: '美国', count: 51, decorative: 0, lang: 'en', insets: [['US-AK'], ['US-HI']] },
-  { cc: 'can', name: '加拿大', count: 13, decorative: 0, lang: 'en', insets: [] },
-  { cc: 'jpn', name: '日本', count: 47, decorative: 0, lang: 'ja', insets: [] },
+  { cc: 'usa', name: '美国', count: 51, decorative: 0, lang: 'en' },
+  { cc: 'can', name: '加拿大', count: 13, decorative: 0, lang: 'en' },
+  { cc: 'jpn', name: '日本', count: 47, decorative: 0, lang: 'ja' },
   // 俄罗斯：85 个面 = 83 个题池 + 2 个"不考但显示"（克里米亚、塞瓦斯托波尔）
-  { cc: 'rus', name: '俄罗斯', count: 83, decorative: 2, lang: 'ru', insets: [['RU-KGD']] },
+  { cc: 'rus', name: '俄罗斯', count: 83, decorative: 2, lang: 'ru' },
 ] as const;
 
 describe('other/index.json · 四国清单', () => {
@@ -75,15 +79,19 @@ describe('other/index.json · 四国清单', () => {
       expect({ cc: c.cc, name: c.name, count: c.count, decorative: c.decorativeCount, lang: c.lang.id }).toEqual({
         cc: e.cc, name: e.name, count: e.count, decorative: e.decorative, lang: e.lang,
       });
-      // 小窗：编码清单与顺序都要与配置一致（渲染器按顺序摆放窗口）
-      expect(c.bbox.insets.map((i) => i.codes)).toEqual(e.insets);
-      expect(c.inset).toBe(e.insets.length > 0);
     }
   });
 
-  it('主图包围盒 = 非飞地单位包围盒的并集（清单不能与明细自相矛盾）', () => {
+  /**
+   * 主图包围盒 = **全部单位**的并集。
+   *
+   * 用户口径（2026-10 二次确认）：不要左下角小窗，飞地（阿拉斯加/夏威夷/加里宁格勒）
+   * 就在主图上直接点 —— 故它们必须落在主图投影范围内，不能像第一版那样被排除在外。
+   * 下面同时断言"飞地确实把包围盒撑出去了"，否则这条口径会悄悄退回旧行为。
+   */
+  it('主图包围盒 = 全部单位包围盒的并集（含飞地）', () => {
     for (const e of EXPECTED) {
-      const units = load(e.cc).units.filter((u) => !u.inset);
+      const units = load(e.cc).units;
       const union = [
         Math.min(...units.map((u) => u.bbox[0])),
         Math.min(...units.map((u) => u.bbox[1])),
@@ -92,6 +100,20 @@ describe('other/index.json · 四国清单', () => {
       ];
       const main = index.countries.find((c) => c.cc === e.cc)!.bbox.main;
       main.forEach((v, i) => expect(v).toBeCloseTo(union[i], 3));
+    }
+  });
+
+  it('飞地不再是"小窗"：四个国家都没有 inset 标记、包围盒里也没有分区', () => {
+    const idx = read<{ countries: { cc: string; inset?: boolean; bbox: { insets?: unknown[] } }[] }>(
+      path.join(OTHER, 'index.json'),
+    );
+    for (const c of idx.countries) {
+      expect(c.inset ?? false, `${c.cc} 不该再有小窗`).toBe(false);
+      expect(c.bbox.insets ?? [], `${c.cc} 不该再有包围盒分区`).toEqual([]);
+      for (const u of load(c.cc).units) {
+        expect(u.inset ?? false, `${c.cc} 的 ${u.code} 不该再标成飞地`).toBe(false);
+        expect(u.insetGroup ?? -1, `${c.cc} 的 ${u.code} 不该再有 insetslot`).toBe(-1);
+      }
     }
   });
 });
@@ -213,9 +235,7 @@ describe('源数据兜底清单（改了兜底就必须同时改这些断言）'
     expect(poolNeighborSeen).not.toContain('UA-43');
   });
 
-  it('飞地标记与小窗分组一致；孤立单位正是那几块飞地/离岛', () => {
-    expect(usa.units.filter((u) => u.inset).map((u) => `${u.code}#${u.insetGroup}`)).toEqual(['US-AK#0', 'US-HI#1']);
-    expect(rus.units.filter((u) => u.inset).map((u) => `${u.code}#${u.insetGroup}`)).toEqual(['RU-KGD#0']);
+  it('孤立单位正是那几块飞地/离岛（它们留在主图里，直接可点）', () => {
     // 没有邻居的题池单位 = 岛屿/飞地：美国(阿拉斯加/夏威夷)、加拿大(爱德华王子岛)、日本(北海道/冲绳)、俄罗斯(加里宁格勒/萨哈林)
     const isolated = (f: OtherUnitsFile) => poolOf(f).filter((u) => u.neighbors.length === 0).map((u) => u.code).sort();
     expect(isolated(usa)).toEqual(['US-AK', 'US-HI']);

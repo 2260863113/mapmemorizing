@@ -236,7 +236,14 @@ export function quizProbe(a: AppDiagnostics) {
         poolSize: country?.pool.length ?? null,
         unitTotal: country?.units.length ?? null,
         decorative: country?.units.filter((u) => u.decorative).length ?? null,
-        insets: country?.insetGeoJsons.length ?? null,
+        /** 主图投影范围：必须是**全部单位**的并集（含阿拉斯加/夏威夷/加里宁格勒）——飞地直接在主图上点。 */
+        bboxMain: country?.bboxMain ?? null,
+        /**
+         * 主图 events data 里的编码（= 点得动的面）。飞地在这份清单里，
+         * 就是"用户可以直接点大地图"的硬证据（用户口径 2026-10 二次确认：不要左下角小窗）。
+         */
+        interactive:
+          ui.lastState === null ? null : ui.buildOtherEventData(ui.lastState).map((row) => String(row.name)),
         /** 渲染器实际应用的地图名（`other-usa` / `china-provinces` …）：换国家是否真的换了地图看它。 */
         mapName: ui.appliedMapName,
         otherMode: ui.other !== null,

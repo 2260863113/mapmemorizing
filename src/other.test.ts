@@ -216,13 +216,11 @@ describe('otherUnits · 虚拟题池', () => {
     const units = file.units;
     const byCode = new Map(units.map((u) => [u.code, u]));
     return {
-      meta: { cc, name: file.name, lang: file.lang, count: units.filter((u) => !u.decorative).length, decorativeCount: 2, inset: false, bbox: { main: [0, 0, 0, 0], insets: [] } },
+      meta: { cc, name: file.name, lang: file.lang, count: units.filter((u) => !u.decorative).length, decorativeCount: 2, bbox: { main: [0, 0, 0, 0] } },
       units,
       pool: units.filter((u) => !u.decorative),
       geoJson: null,
-      insetGeoJsons: [],
       bboxMain: [0, 0, 0, 0],
-      bboxInsets: [],
       byCode,
     };
   };

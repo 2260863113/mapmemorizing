@@ -38,8 +38,11 @@ npm run dev
   （美加英语、日本日语、俄罗斯俄语）；判题**三种写法都接受**（中文名 / 当地语言名 / 英文罗马字），
   与当前语言档无关，少写后缀、打不出长音符号、大小写随意都能判对。
 - **纯练习**：不计熟练度、不上排行榜。但「错题」分段照常可用 —— 错题记在**独立的一份清单**里。
-- **飞地小窗**：阿拉斯加、夏威夷、加里宁格勒这些远离主体的地块画在左下角小窗里
-  （与港澳放大框同一套样式，美国两个窗、俄罗斯一个、日本加拿大没有），主图因此保持"本土铺满"。
+- **飞地就在主图上**：阿拉斯加、夏威夷、加里宁格勒与本土一起铺满主图（美国主图含 −187° 的阿留申
+  与 18.9°N 的夏威夷），**没有左下角小窗**，直接点大地图即可（用户口径 2026-10）。
+- **地图标签**：未开始时**不显示**地名（一屏 47/51 个一级行政区，全量标签会把地图糊成一片）；
+  答题后已答对的显示绿、答错的显示红。想临时看一眼全部名字按 **Alt**。
+  标签字号**固定为最大档**，缩小地图时不会跟着变小。
 - 几何**按国家懒加载**（切到哪国才拉哪国，四国合计 567KB），设计取舍见
   [ADR 0011](docs/adr/0011-other-admin1-scope.md)。
 
@@ -105,11 +108,11 @@ npm run build:data
 - 国家的**国旗图片**（点击模式「国旗」档的题面用）由 `scripts/fetch-world-flags.mjs` 生成：从开放许可（MIT / 公有领域）的 SVG 国旗集中取 194 国的旗帜、**原样不改**地冻结进 `public/data/flags/`，并产出 `public/data/flags/index.json`（`iso_a3 → 文件名`，与 `countries.json` 一一对应，有单测断言：键集合一致、文件存在且确实是 SVG、无孤儿文件）。脚本头与 `index.json` 的 `source` 字段都写明来源与许可；运行时不依赖网络。**不用 emoji 国旗**：Windows 的 Chrome/Edge 不渲染国旗 emoji（会显示成「JP」两个字母），而本项目的开发与运行时验收都在 Windows 上
 - 地图标签用的**国旗缩略图**由 `scripts/build-flag-thumbs.mjs` 生成：用本机无头 Edge（CDP）把 194 面 SVG 逐张画到 40×30 的 canvas 上、编码成 WebP，写出 `public/data/flags/thumbs/*.webp` 与 `public/data/flags/thumbs.json`（`iso_a3 → 文件名`）。合计 **163KB**（原始 SVG 1.21MB，约小 87%）。为什么要单独一套：标签只有二十几像素宽、且缩放/拖动/答题时每帧都会重画，194 张复杂 SVG 的解析与绘制成本远高于一张 1KB 位图；而题面卡片要清楚，故**仍用原始 SVG**。与 `index.json` 是两张表、各自单一职责，键集合一致 + 文件确实是 40×30 WebP 由 `worldFlagsData.test.ts` 断言
 - 邻接关系（输入模式 BFS 扩张用）由构建脚本用 turf 自动计算，存在 `units.json` 的 `neighbors` 字段；国家邻接在 `countries.json` 的 `neighbors`
-- **「其他」档（美/加/日/俄一级行政区）**的数据来自 [Natural Earth v5.1.2 admin_1_states_provinces 10m](https://www.naturalearthdata.com/)（公有领域，与上面的世界图同源同版本），由 `scripts/fetch-other-admin1.mjs` 生成为 `public/data/other/`：`index.json`（四国清单 1.3KB）+ 每国的 `<cc>.topojson`（几何）与 `<cc>.units.json`（名称/相邻/质心/面积/飞地标记）。四国 196 个面、几何合计 567KB，**按国家懒加载**（切到哪国才拉哪国）
+- **「其他」档（美/加/日/俄一级行政区）**的数据来自 [Natural Earth v5.1.2 admin_1_states_provinces 10m](https://www.naturalearthdata.com/)（公有领域，与上面的世界图同源同版本），由 `scripts/fetch-other-admin1.mjs` 生成为 `public/data/other/`：`index.json`（四国清单 1.3KB）+ 每国的 `<cc>.topojson`（几何）与 `<cc>.units.json`（名称/相邻/质心/面积）。四国 196 个面、几何合计 567KB，**按国家懒加载**（切到哪国才拉哪国）
   - 用 10m 而不是 50m：**实测 50m 档完全没有日本**（JPN = 0 个面），且 50m 是为全球视野简化的，单独一国铺满一屏时边线明显发毛
   - **源数据错误逐条兜底**（每条都在脚本里写明原因）：`RU-X01~` 属性全空的残留面（丢弃）、`RU-MOW`/`RU-MOS` 的**编码与几何互换**（交换编码，而不是只改名字）、`RU-AL`/`RU-ALT` 中文重名、`RU-KAM`/`RU-IRK` 繁体残留、`JP-13` 缺「都」、`RU-ARK` 的 `name_local` 与 `RU-ALT` 的 `name_ru` 各错一条（各自取另一个字段的正确值）
   - **经度解缠**：跨 180° 经线的楚科奇与阿留申按**国家**参考经度平移 360 的整数倍（逐单位各算一次会让公共边界的浮点尾数不一致，mapshaper 认不出同一条弧 → 拓扑丢失、相邻关系全没）
-  - 飞地（阿拉斯加/夏威夷/加里宁格勒）由显式清单 `insetGroups` 决定，**不用连通分量启发式**（日本四个大岛之间也没有陆地相邻，会被误判成四块飞地）
+  - **飞地留在主图里**（用户口径 2026-10：不要左下角小窗，直接点大地图）：主图投影范围 = **全部单位**的并集，阿拉斯加 / 夏威夷 / 加里宁格勒就在主图边缘、照常可点。第一版曾把它们排除在外、单独画左下角小窗，现已撤掉（`insetGroups` 配置项保留为空清单，将来要恢复只需填回）
   - 重新生成：`node scripts/fetch-other-admin1.mjs`（需网络；运行时零网络依赖）
 - 世界地图对比图（人工验收用）：`node scripts/shot-world-compare.mjs` → `shot-world/`（5 组，同投影对比新旧两个几何源，每组上=旧档、下=新档）
 
@@ -127,7 +130,7 @@ node scripts/shot-follow-clamp.mjs # 跟随钳制的 9 张边界样例截图
 node scripts/verify-drill-scope.mjs # 34 项：「下钻后隐藏无关地区」开关的两种观感（真实设置面板保存路径 + 真实指针 + 画布像素直方图）
 node scripts/verify-admin-traffic.mjs # 89 项：管理端「日志记录」与「游玩统计」两个子视图（真实鼠标挪到标记点验 tooltip 文案、三个时间范围 24/7/30 点、切 tab 不残留实例、暗色模式跟随；日志行的**折叠结构**（外层只有一行、IP/环境在折叠区、展开入口在右侧同一行）、完整 IP·完整 UA·环境字段、「游客1234」/「爬虫1234」、访问上报带 4 位游客编号；游玩统计的曲线图/条目/**出题范围**/来源区分与空态；用户管理显示**登录前的游客号**；fetch 打桩 + 注入管理员登录态）
 node scripts/verify-mobile-gate.mjs  # 24 项：手机端访问门槛（CDP 模拟 iPhone UA + 移动端 metrics + 触屏）：桌面不弹、手机弹「请用电脑端访问」、首屏即 width=1280、点「继续访问」放行后布局视口与地图画布都是桌面宽度、选择被记住、二次访问不再打扰、手机爬虫不弹
-node scripts/verify-other.mjs      # 33 项：「其他」档（美/加/日/俄一级行政区）：分段显隐与高亮、四国题池与计数、换国家真的换地图、飞地小窗数量随国家变、中文↔当地语言切题面与标签、输入模式用当地语言/中文作答判对、错题进独立清单、纯练习（熟练度三键不动 + 零 /api/score）
+node scripts/verify-other.mjs      # 41 项：「其他」档（美/加/日/俄一级行政区）：分段显隐与高亮、四国题池与计数、换国家真的换地图、**飞地在主图上可点（无小窗）**、**未开始不显示标签 / Alt 才显示**、中文↔当地语言切题面与标签、输入模式用当地语言/中文作答判对、错题进独立清单、纯练习（熟练度三键不动 + 零 /api/score）、**退出回省级/市级地图不消失（相机与画布双重断言）**
 node scripts/shot-round2.mjs       # 出验收截图到 docs/shots/
 ```
 
@@ -192,7 +195,7 @@ npm run build    # 生成次区域数据与落地页 + 类型检查 + 生产构�
 npm run preview  # 预览生产构建
 npm run check    # 三道门禁：类型检查（src + functions 两套 tsconfig）+ ESLint + 单测
 npm run lint     # 只跑 ESLint
-npm test         # vitest（849 个用例）
+npm test         # vitest（853 个用例）
 npm run db:migrate:remote   # 数据库迁移（**部署前必须先跑**；可重复执行，报 duplicate column 即已迁过）
 ```
 
@@ -212,6 +215,6 @@ npm run db:migrate:local    # 本地 dev
 
 ⚠ **漏跑不会报错、只会静默不记录**：`visit` / `play` 两条上报路径对写库失败只 `console.warn`，接口照旧返回 `ok`（不让日志问题影响玩法）。重复执行会报 `duplicate column name: …`，那说明已经迁过，忽略即可。
 
-运行时验收（下面那八个 verify-*.mjs，436 项断言）**不在 CI 里** —— 它们要真实 headless Edge
+运行时验收（下面那八个 verify-*.mjs，411 项断言）**不在 CI 里** —— 它们要真实 headless Edge
 加一次生产构建，约 90 秒，且依赖「必须用 Edge」这类本机环境前提。涉及渲染 / 交互 / 相机行为的
 改动，改完请手工跑一遍。

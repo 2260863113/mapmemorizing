@@ -60,30 +60,11 @@ function unionBBox(list: OtherUnitMeta[]): [number, number, number, number] {
 }
 
 /**
- * 按 `insetGroup` 把一国的几何切成"主图 + 每个小窗一份"，并算好各自的投影范围。
- *
- * 切分放在加载处（而不是渲染器里）：渲染器只需要"给我第 i 个小窗的面"，
- * 而切分是一次性成本；且主图/小窗的包围盒口径必须与构建期**完全一致**
- * （构建脚本用同一套并集规则算进 index.json，两处不一致就会出现"投影与实际几何错位"）。
- */
-function splitInsets(units: OtherUnitMeta[], geo: { features: { properties: Record<string, unknown> }[] }) {
-  const groupCount = units.reduce((m, u) => Math.max(m, (u.insetGroup ?? -1) + 1), 0);
-  const bboxInsets: [number, number, number, number][] = [];
-  const insetGeoJsons: unknown[] = [];
-  for (let g = 0; g < groupCount; g++) {
-    const mine = units.filter((u) => u.insetGroup === g);
-    bboxInsets.push(unionBBox(mine));
-    const keep = new Set(mine.map((u) => u.code));
-    insetGeoJsons.push({
-      type: 'FeatureCollection',
-      features: geo.features.filter((f) => keep.has(String(f.properties.code))),
-    });
-  }
-  return { bboxMain: unionBBox(units.filter((u) => !u.inset)), groupCount, bboxInsets, insetGeoJsons };
-}
-
-/**
  * 加载一国（几何 + 元数据）并注册其 ECharts 地图。重复调用走缓存。
+ *
+ * 投影范围取**全部单位**的并集（含阿拉斯加/夏威夷/加里宁格勒）：用户口径是"不要左下角小窗，
+ * 飞地也直接在主图上点"，故它们必须落在主图的投影范围内 —— 构建期的 `bbox.main` 已是全量并集，
+ * 这里用同一套并集规则现算一遍，两者不一致时（例如换了数据版本）本地这份说了算。
  */
 export async function loadOtherCountry(cc: OtherCountryCode): Promise<OtherCountryData> {
   const hit = cache.get(cc);
@@ -104,9 +85,9 @@ export async function loadOtherCountry(cc: OtherCountryCode): Promise<OtherCount
   const units = file.units;
   const byCode = new Map(units.map((u) => [u.code, u]));
   const pool = units.filter((u) => !u.decorative);
-  const { bboxMain, groupCount, bboxInsets, insetGeoJsons } = splitInsets(units, geo);
+  const bboxMain = unionBBox(units);
 
-  registerOtherMaps(cc, geo, insetGeoJsons);
+  registerOtherMaps(cc, geo);
 
   const data: OtherCountryData = {
     meta: {
@@ -115,21 +96,12 @@ export async function loadOtherCountry(cc: OtherCountryCode): Promise<OtherCount
       lang: file.lang,
       count: pool.length,
       decorativeCount: units.length - pool.length,
-      inset: groupCount > 0,
-      bbox: {
-        main: bboxMain,
-        insets: bboxInsets.map((bbox, g) => ({
-          codes: units.filter((u) => u.insetGroup === g).map((u) => u.code),
-          bbox,
-        })),
-      },
+      bbox: { main: bboxMain },
     },
     units,
     pool,
     geoJson: geo,
-    insetGeoJsons,
     bboxMain,
-    bboxInsets,
     byCode,
   };
   cache.set(cc, data);

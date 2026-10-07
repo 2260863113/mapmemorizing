@@ -379,10 +379,6 @@ body.theme-dark #test-timer.urgent {
 #app[data-province-inset='1'] #mode-info {
   bottom: 255px;
 }
-/* 「其他」档的飞地小窗（高 150 + 留白）同理：说明/缩放按钮上移，别压在小窗上 */
-#app[data-other-inset='1'] #mode-info {
-  bottom: 180px;
-}
 #hkmac-inset {
   position: absolute;
   left: 12px;
@@ -397,27 +393,8 @@ body.theme-dark #test-timer.urgent {
   overflow: hidden;
   pointer-events: auto;
 }
-/* 「其他」档的飞地小窗（美国阿拉斯加/夏威夷、俄罗斯加里宁格勒）：
-   视觉与港澳放大框**同一套**（同边框/圆角/底色/阴影），只是可以并列多个 —— 每块飞地一个窗。
-   为什么不合成一个窗：阿拉斯加与夏威夷相距 4000 多公里，合框会把两块都压成几个像素。 */
-#other-insets {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 18;
-  display: flex;
-  gap: 8px;
-  pointer-events: auto;
-}
-#other-insets .inset-window {
-  width: 170px;
-  height: 150px;
-  border: 2px solid var(--muted);
-  border-radius: 8px;
-  background: var(--map-bg);
-  box-shadow: var(--floating-shadow);
-  overflow: hidden;
-}
+/* 「其他」档**没有**左下角小窗：飞地（阿拉斯加/夏威夷/加里宁格勒）就在主图上直接点，
+   主图投影范围取全部单位的并集（见 scripts/fetch-other-admin1.mjs）。 */
 #mode-info-row {
   display: flex;
   align-items: center;

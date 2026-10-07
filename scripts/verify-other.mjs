@@ -116,11 +116,23 @@ try {
     s.granularityButtons = Array.prototype.map.call(document.querySelectorAll('#granularity-toggle button'), text);
     s.countryHidden = document.getElementById('other-country-toggle').classList.contains('hidden');
     s.langHidden = document.getElementById('other-lang-toggle').classList.contains('hidden');
-    s.insetBoxes = document.querySelectorAll('#other-insets .inset-window').length;
-    s.insetsHidden = document.getElementById('other-insets').classList.contains('hidden');
+    s.insetsHidden = !document.getElementById('other-insets');
+    /** 飞地小窗容器**整体不该存在**（用户口径：不要左下角小窗） */
+    s.insetHostExists = !!document.getElementById('other-insets');
     s.otherInsetAttr = document.getElementById('app').dataset.otherInset || '';
     var c = document.querySelector('#map canvas');
     s.canvas = c ? [Math.round(c.getBoundingClientRect().width), Math.round(c.getBoundingClientRect().height)] : null;
+    /** 画布**真的有内容**吗：与左上角背景色不同的像素占比（0% = 地图消失，只剩空白） */
+    if (c) {
+      var ctx2 = c.getContext('2d');
+      var d = ctx2.getImageData(0, 0, c.width, c.height).data;
+      var bg = [d[0], d[1], d[2]], diff = 0, total = 0;
+      for (var i = 0; i < d.length; i += 4 * 37) {
+        total++;
+        if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 24) diff++;
+      }
+      s.fillPct = +(100 * diff / total).toFixed(2);
+    } else { s.fillPct = null; }
     s.practice = ${JSON.stringify(PRACTICE_KEYS)}.reduce(function (o, k) { o[k] = localStorage.getItem(k); return o; }, {});
     return s;
   })()`);
@@ -169,7 +181,7 @@ try {
   await sleep(1500);
   const initial = await snap();
   check('粒度行现在是四档：世界 / 省级 / 市级 / 其他', initial.granularityButtons.join(' ') === '世界 省级* 市级 其他', initial.granularityButtons);
-  check('不在「其他」档时，国家行与语言行都收起', initial.countryHidden && initial.langHidden && initial.insetBoxes === 0, { countryHidden: initial.countryHidden, langHidden: initial.langHidden });
+  check('不在「其他」档时，国家行与语言行都收起', initial.countryHidden && initial.langHidden && initial.insetHostExists === false, { countryHidden: initial.countryHidden, langHidden: initial.langHidden });
   check('国家按钮按数据渲染出四国（美国/加拿大/日本/俄罗斯）', initial.countryButtons.join(',') === '美国,加拿大,日本,俄罗斯', initial.countryButtons);
   const practiceBefore = initial.practice;
 
@@ -182,9 +194,11 @@ try {
   check('默认国家是美国，题池 51（50 州 + 华盛顿特区）', usa.country === 'usa' && usa.poolSize === 51, { country: usa.country, pool: usa.poolSize });
   check('渲染器真的换成美国地图（appliedMapName = other-usa）', usa.mapName === 'other-usa' && usa.otherMode === true, { mapName: usa.mapName, otherMode: usa.otherMode });
   check('国家按钮高亮「美国」', usa.countryButtons.join(',') === '美国*,加拿大,日本,俄罗斯', usa.countryButtons);
-  check('地图标签是中文州名（含阿拉斯加州/夏威夷州）', usa.labels.includes('阿拉斯加州') && usa.labels.includes('夏威夷州') && usa.labels.length === 51, { count: usa.labels.length });
-  check('飞地小窗 2 个（阿拉斯加 / 夏威夷），与港澳小窗同一套样式', usa.insetBoxes === 2 && !usa.insetsHidden, { boxes: usa.insetBoxes });
-  check('说明/缩放按钮让位（#app 带 data-other-inset）', usa.otherInsetAttr === '1', usa.otherInsetAttr);
+  check('未开始时**不**显示地名标签（用户口径：其他档没开始就不要显示标签）', usa.labels.length === 0, { n: usa.labels.length });
+  check('地图真的画出来了（画布非背景像素 > 5%）', usa.fillPct > 5, { fillPct: usa.fillPct });
+  check('没有左下角小窗容器（用户口径：只在主图上点）', usa.insetHostExists === false && usa.otherInsetAttr === '', { host: usa.insetHostExists, attr: usa.otherInsetAttr });
+  check('飞地在**主图**投影范围内（美国包围盒含阿拉斯加 −187° 与夏威夷 18.9°N）', usa.bboxMain[0] < -180 && usa.bboxMain[1] < 20, usa.bboxMain);
+  check('飞地直接可点（events data 里有 US-AK / US-HI）', usa.interactive.includes('US-AK') && usa.interactive.includes('US-HI') && usa.interactive.length === 51, { n: usa.interactive.length });
   await shot('verify-other-1-usa.png');
 
   // ==================== 2. 换国家 ====================
@@ -193,20 +207,30 @@ try {
   await sleep(2500);
   const jpn = await snap();
   check('切到日本：题池 47、地图换成 other-jpn', jpn.country === 'jpn' && jpn.poolSize === 47 && jpn.mapName === 'other-jpn', { country: jpn.country, pool: jpn.poolSize, mapName: jpn.mapName });
-  check('日本没有飞地小窗（小窗数 0 且容器收起）', jpn.insetBoxes === 0 && jpn.insetsHidden, { boxes: jpn.insetBoxes, hidden: jpn.insetsHidden });
-  check('切国家后地图标签整体换成日本 47 个都道府县', jpn.labels.length === 47 && jpn.labels.includes('北海道') && jpn.labels.includes('冲绳县'), { count: jpn.labels.length });
+  check('地图真的画出来了，且始终没有小窗容器', jpn.fillPct > 2 && jpn.insetHostExists === false, { fillPct: jpn.fillPct, host: jpn.insetHostExists });
+  check('切国家后仍然不显示标签（换国家不改变这条口径）', jpn.labels.length === 0, { n: jpn.labels.length });
+  check('日本的离岛（北海道/冲绳）也在主图上可点', jpn.interactive.includes('JP-01') && jpn.interactive.includes('JP-47') && jpn.interactive.length === 47, { n: jpn.interactive.length });
   check('国家按钮高亮跟随（日本*）', jpn.countryButtons.join(',') === '美国,加拿大,日本*,俄罗斯', jpn.countryButtons);
 
   await click('#other-country-rus');
   await sleep(2500);
   const rus = await snap();
   check('切到俄罗斯：题池 83（85 面 − 2 个不考的争议地区）', rus.country === 'rus' && rus.poolSize === 83 && rus.unitTotal === 85 && rus.decorative === 2, { pool: rus.poolSize, total: rus.unitTotal, decorative: rus.decorative });
-  check('俄罗斯地图生效，飞地小窗 1 个（加里宁格勒）', rus.mapName === 'other-rus' && rus.insetBoxes === 1, { mapName: rus.mapName, boxes: rus.insetBoxes });
-  check('俄罗斯中文标签正确，「不考但显示」的克里米亚不在题池标签里', rus.labels.length === 83 && rus.labels.includes('阿尔泰边疆区') && rus.labels.includes('莫斯科') && rus.labels.includes('莫斯科州') && !rus.labels.some((s) => s.includes('克里米亚')), { count: rus.labels.length });
+  check('俄罗斯地图生效，加里宁格勒在主图上可点（不再是小窗）', rus.mapName === 'other-rus' && rus.fillPct > 5 && rus.insetHostExists === false && rus.interactive.includes('RU-KGD'), { mapName: rus.mapName, fillPct: rus.fillPct, kgd: rus.interactive.includes('RU-KGD') });
+  // ==================== 3. 语言切换（用 Alt 临时显示全量标签来读文本） ====================
+  console.log('\n=== 3. 「中文 / 外语」切换（当地语言）：按 Alt 临时显示标签读文本 ===');
+  /** 按 Alt 显示全量标签（会话级覆盖）：这是「其他」档唯一会显示浏览地名的路径。 */
+  const pressAlt = () =>
+    ev(`(function () {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true, cancelable: true }));
+      return true;
+    })()`);
+  await pressAlt();
+  await sleep(1200);
+  const rusZh = await snap();
+  check('按 Alt 后显示全量标签：俄罗斯 83 个中文名（含不考但显示的克里米亚**不在**池内）', rusZh.labels.length === 83 && rusZh.labels.includes('阿尔泰边疆区') && rusZh.labels.includes('莫斯科') && rusZh.labels.includes('莫斯科州') && !rusZh.labels.some((s) => s.includes('克里米亚')), { n: rusZh.labels.length });
   await shot('verify-other-2-rus.png');
 
-  // ==================== 3. 语言切换 ====================
-  console.log('\n=== 3. 「中文 / 外语」切换（当地语言） ===');
   const before = await snap();
   await click('#other-lang-local');
   await sleep(1500);
@@ -218,6 +242,11 @@ try {
   const jpnLocal = await snap();
   check('切到日本后仍是「外语」，标签是日文（東京都 / 沖縄県）', jpnLocal.lang === 'local' && jpnLocal.labels.includes('東京都') && jpnLocal.labels.includes('沖縄県'), { sample: jpnLocal.labels.slice(0, 4) });
   await shot('verify-other-3-jpn-local.png');
+  // 再按一次 Alt 关掉全量标签（回到"没开始就不显示"的默认）
+  await pressAlt();
+  await sleep(1200);
+  const altOff = await snap();
+  check('再按一次 Alt 收起全量标签（回到默认的"不显示"）', altOff.labels.length === 0, { n: altOff.labels.length });
 
   // ==================== 4. 玩法：输入模式用**当地语言**作答 ====================
   console.log('\n=== 4. 玩法（输入模式）：用当地语言答对 / 答错进错题 ===');
@@ -280,8 +309,8 @@ try {
   const scope = await asJson(`window.__probe.quizScope()`);
   check('该档没有排行榜作用域（getScopeProvince 返回 null）', scope.scopeProvince === null && scope.granularity === 'other', { scopeProvince: scope.scopeProvince, granularity: scope.granularity });
 
-  // ==================== 6. 退出该档 ====================
-  console.log('\n=== 6. 重置后切回省级：地图回中国、小窗收起 ===');
+  // ==================== 6. 退出该档（用户报的 bug：回省级/市级地图消失） ====================
+  console.log('\n=== 6. 重置后切回省级 / 市级：地图必须还在（相机不能停在他国） ===');
   // 答题进行中不允许切粒度（模式的守卫），故先重置 ——「其他」档没有可提交的成绩，重置直接重开。
   // ⚠ 重置按钮是**两步确认**（第一次点变成「确认」，第二次才执行），故这里点两次。
   await click('#btn-reset');
@@ -293,9 +322,46 @@ try {
   await click('#granularity-province');
   await sleep(2000);
   const back = await snap();
-  check('回到省级档：地图名不再是 other-*，国家/语言行收起，小窗收起', !String(back.mapName).startsWith('other-') && back.countryHidden && back.langHidden && back.insetsHidden, { mapName: back.mapName, countryHidden: back.countryHidden, insetsHidden: back.insetsHidden });
+  check('回到省级档：地图名不再是 other-*，国家/语言行收起', !String(back.mapName).startsWith('other-') && back.countryHidden && back.langHidden, { mapName: back.mapName, countryHidden: back.countryHidden });
   check('模式侧也退出了「其他」档（粒度回省级，渲染器不再处于该档）', back.granularity === 'province' && back.otherMode === false, { granularity: back.granularity, otherMode: back.otherMode });
-  await shot('verify-other-5-back.png');
+  /**
+   * ⭐ 这一条是用户报的 bug 的回归闸门：进过「其他」之后回省级，地图**必须还画得出来**。
+   * 曾经的缺陷：`snapshotViewBeforeLeave()` 不认识这一族，把美国视野写进了中国族的记忆槽，
+   * 回省级时相机被"恢复"到美国中心 —— 地图名对（china-provinces-ultra）但画布一片空白。
+   * 故这里同时断言**相机回到中国**与**画布真的有像素**，只看地图名是抓不到的。
+   */
+  check('⭐ 相机回到中国范围（不是停在他国的中心）', back.center[0] > 70 && back.center[0] < 140 && back.center[1] > 3 && back.center[1] < 55, back.center);
+  check('⭐ 省级地图真的画出来了（画布非背景像素 > 3%，不是空白）', back.fillPct > 3, { fillPct: back.fillPct });
+  await shot('verify-other-5-back-province.png');
+
+  await click('#granularity-city');
+  await sleep(2000);
+  const city = await snap();
+  check('⭐ 切到市级同样正常：地图名 china-ultra 且画布有内容', String(city.mapName).startsWith('china-') && city.fillPct > 3, { mapName: city.mapName, fillPct: city.fillPct });
+  await shot('verify-other-6-back-city.png');
+
+  // ==================== 7. 标签字号（人工确认用截图） ====================
+  console.log('\n=== 7. 「其他」档标签字号（固定最大，不随缩放变小）===');
+  await click('#granularity-other');
+  await sleep(2500);
+  await pressAlt(); // 用 Alt 显示全量标签，才能看字号
+  await sleep(1200);
+  const at1x = await snap();
+  await shot('verify-other-7-labels-1x.png');
+  // 用真实滚轮**缩小**（与用户操作同一条路径；ECharts 里 deltaY 为负是缩小）
+  await ev(`(function () {
+    var c = document.querySelector('#map canvas');
+    var r = c.getBoundingClientRect();
+    for (var i = 0; i < 6; i++) {
+      c.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+    }
+    return true;
+  })()`);
+  await sleep(1200);
+  const zoomedOut = await snap();
+  await shot('verify-other-8-labels-zoomed-out.png');
+  console.log(`  缩放 ${at1x.zoom?.toFixed(2)} → ${zoomedOut.zoom?.toFixed(2)}；标签数 ${at1x.labels?.length} → ${zoomedOut.labels?.length}`);
+  check('缩小后地图与标签都还在（截图 verify-other-7/8 供人工确认字号未变小）', zoomedOut.fillPct > 1 && (zoomedOut.labels?.length ?? 0) > 0, { fillPct: zoomedOut.fillPct, labels: zoomedOut.labels?.length });
 } catch (err) {
   check('脚本执行未抛错', false, String(err));
 } finally {
