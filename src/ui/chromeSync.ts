@@ -149,15 +149,22 @@ export class ChromeSync {
             ? 'province'
             : null
       : null;
-    // 「其他」档的两行（国家 / 语言）：与口径行同一显隐口径（仅该档、未开始时可切）。
+    // 「其他」档的国家行：与口径行同一显隐口径（仅该档、未开始时可切）。
     // 国家行不是口径注册表的一部分（它的按钮来自**数据**：四国清单），故单独同步。
+    // 语言行（`other-lang-toggle`）在**最上面那一排**（见 index.html），显隐由下面的口径注册表循环统一处理。
     const onOther = onGranularity === 'other';
     $('other-country-break').classList.toggle('hidden', !onOther);
     $('other-country-toggle').classList.toggle('hidden', !onOther);
-    $('other-lang-break').classList.toggle('hidden', !onOther);
     if (onOther) {
-      const cc = this.s.current()?.getOtherCountry?.()?.meta.cc;
-      if (cc) this.syncSegmentedToggle('other-country-toggle', cc);
+      const country = this.s.current()?.getOtherCountry?.() ?? null;
+      if (country) {
+        this.syncSegmentedToggle('other-country-toggle', country.meta.cc);
+        // 语言按钮写**具体语言**（中文 / 英语 / 日语 / 俄语），名字跟着上面的国家变 ——
+        // 故不能写死在口径注册表里（那里的 label 是静态的），按当前国家的 `lang.label` 现改。
+        // 数据驱动：将来加一个国家，语言按钮的文字自动跟着来。
+        const local = document.getElementById('other-lang-local');
+        if (local) local.textContent = country.meta.lang.label;
+      }
     }
     for (const group of NAMING_GROUPS) {
       const rowVisible = onGranularity === group.granularity;

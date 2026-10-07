@@ -178,18 +178,28 @@ describe('点击模式 · 开始后清空、结束后复现', () => {
   });
 
   /**
-   * Alt 热切换（2026-09 需求 6）：外壳通过 `ctx.labelsOverride` 注入会话级覆盖。
-   * 覆盖为 true 时**答题进行中也显示全量**（这正是"热切换"的意义）；false 时任何情况都不显示。
+   * ⚠ **口径反转（2026-10 用户口径）**：这条原来断言"Alt 覆盖为 true 时答题中也显示全量"，
+   * 当时视为"热切换的意义"。用户最新口径是：「如果是在游戏中，控制显示只显示已经回答的地图标签，
+   * 对于未回答的标签，依然不显示」—— 否则按一下 Alt 就能把答案念出来，记忆练习就失去意义。
+   * 故现在**答题进行中一律不显示未作答的名字，Alt 也不例外**；已作答的绿/红标签不受影响。
    */
-  it('会话覆盖 = true：答题进行中也显示全量标签', () => {
+  it('会话覆盖 = true：答题进行中**也不**显示全量（2026-10 口径反转）', () => {
     const { ctx, states } = makeCtx();
     ctx.labelsOverride = () => true;
     const mode = new ClickMode(ctx);
     mode.applyScopeQuery(scopeQuery('world'));
     mode.diagnostics().started = true; // 答题进行中
     mode.refresh();
+    expect(last(states).worldShowAllLabels).toBeUndefined();
+  });
+
+  it('会话覆盖 = true 且**未开始**：仍然显示全量（Alt 的热切换意义保留在浏览态）', () => {
+    const { ctx, states } = makeCtx();
+    ctx.labelsOverride = () => true;
+    const mode = new ClickMode(ctx);
+    mode.applyScopeQuery(scopeQuery('world'));
+    mode.refresh();
     expect(last(states).worldShowAllLabels).toBe(true);
-    expect(last(states).worldLabelZoomThreshold).toBe(0);
   });
 
   it('会话覆盖 = false：即使未开始、设置开着也不显示', () => {

@@ -492,17 +492,26 @@ export abstract class MapQuizMode extends BaseMode {
   /**
    * 「浏览地名」此刻是否可见 —— **Alt 热切换的基准值**，与 `browseLabelState` 同一判据。
    *
-   * 单列出来的理由：Alt 的语义是"取反**当前看到的**状态"，基准值必须与真正显示的一致。
-   * 「其他」档默认不显示（用户口径 2026-10），若基准值仍按"设置开关 && 未开始"算出 true，
-   * 第一次按 Alt 只会把状态翻成 false —— 屏幕上什么都没变（看起来毫无反应），要按第二次才出来。
+   * 两条口径：
+   *   1. **答题进行中一律不显示未作答的名字**（2026-10 用户口径：「如果是在游戏中，
+   *      控制显示只显示已经回答的地图标签，对于未回答的标签，依然不显示」）。
+   *      这一条对 Alt 也生效 —— 否则按一下 Alt 就能把答案念出来，记忆练习就没意义了。
+   *      ⚠ 这**推翻了 2026-09 的「Alt 在答题中也显示全量」**口径（当时视为"热切换的意义"），
+   *      以用户最新口径为准；已作答的绿/红标签是答题反馈，不受影响。
+   *   2. 「其他」档默认不显示（一屏 47/51 个一级行政区太密），只在 Alt 下显示；
+   *      中国/世界两档仍看全局设置开关。
+   *
+   * 为什么外壳要问模式而不是自己算：Alt 的语义是"取反**当前看到的**状态"，而"当前看到什么"
+   * 是模式的事。外壳自己算会在「其他」档出现"第一次按 Alt 看不出变化"。
    */
   labelsVisible(): boolean {
+    if (this.started && !this.settled) return false;
     const override = this.ctx.labelsOverride?.() ?? labelOverride();
     // 「其他」档：默认不显示，只在**显式**手势（Alt）下显示。这一族一屏 47/51 个一级行政区
     // （且是"整国铺满"、飞地也在主图上），全量标签会把地图糊成一片；省级 34 个、世界档国名稀疏，
     // 故**只在这一族**不看设置开关（它默认开着，是为中国/世界两档设的）。
     if (this.granularity === 'other') return override === true;
-    return labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, this.started && !this.settled);
+    return labelsVisibleWith(override, this.ctx.settings.showBrowseLabels, false);
   }
 
   /**

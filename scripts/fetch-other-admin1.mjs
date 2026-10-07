@@ -71,19 +71,19 @@ const SOURCE_NOTE =
  */
 const COUNTRIES = [
   {
-    cc: 'usa', a3: 'USA', name: '美国', lang: { id: 'en', label: '英文' },
+    cc: 'usa', a3: 'USA', name: '美国', lang: { id: 'en', label: '英语' },
     simplify: '30%', insetGroups: [],
   },
   {
-    cc: 'can', a3: 'CAN', name: '加拿大', lang: { id: 'en', label: '英文' },
+    cc: 'can', a3: 'CAN', name: '加拿大', lang: { id: 'en', label: '英语' },
     simplify: '30%', insetGroups: [],
   },
   {
-    cc: 'jpn', a3: 'JPN', name: '日本', lang: { id: 'ja', label: '日文' },
+    cc: 'jpn', a3: 'JPN', name: '日本', lang: { id: 'ja', label: '日语' },
     simplify: '45%', insetGroups: [],
   },
   {
-    cc: 'rus', a3: 'RUS', name: '俄罗斯', lang: { id: 'ru', label: '俄文' },
+    cc: 'rus', a3: 'RUS', name: '俄罗斯', lang: { id: 'ru', label: '俄语' },
     simplify: '22%', insetGroups: [],
   },
 ];

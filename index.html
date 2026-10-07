@@ -225,6 +225,12 @@
           <button id="click-order-random" type="button" class="active" data-order="random" role="radio" aria-checked="true">随机</button>
           <button id="click-order-wrong" type="button" data-order="wrong" role="radio" aria-checked="false">错题</button>
         </div>
+        <!-- 「其他」档的语言行：并到**顺序/随机/错题这一排的右边**（用户口径 2026-10：一行放两排按钮）。
+             为什么并到这里：它是"题面与标签用哪种语言"的口径开关，与出题顺序同属"怎么问"，
+             而粒度/国家两行决定"问哪里"，各自成行更清楚。
+             文案「中文 / 英语（日语、俄语）」是**具体语言名**，跟着上面的国家变 ——
+             按钮由口径注册表生成，语言名由 chromeSync 按当前国家的 lang.label 现改（数据驱动）。 -->
+        <div id="other-lang-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="其他档语言"></div>
         <!-- 世界档取名口径：国名（默认）/ 首都 / 国旗，以及内容语言 中文 / 英文。
              按钮**不写在这里**：值与文字都来自 `src/modes/naming.ts` 的口径注册表，由
              `renderNamingGroups()` 在 boot 时生成（「国旗」只在点击模式提供，由表的 modes 字段声明）。
@@ -262,13 +268,11 @@
           <!-- 「其他」档（2026-10）：他国一级行政区（对应中国的省级）。点它之后下面两行才出现。 -->
           <button id="granularity-other" type="button" data-granularity="other" role="radio" aria-checked="false">其他</button>
         </div>
-        <!-- 「其他」档的两行（国家 / 语言），按钮**静态写在 HTML 里**（不像口径行那样由注册表生成）：
-             国家清单来自数据（public/data/other/index.json），语言清单来自口径注册表（`other` 组）。
-             国家行的按钮由 appController 按数据渲染（新增国家只改数据，不改这里）。 -->
+        <!-- 「其他」档的国家行。按钮**静态写在 HTML 里**（不像口径行那样由注册表生成）：
+             国家清单来自数据（public/data/other/index.json），按钮由 appController 按数据渲染
+             （新增国家只改数据，不改这里）。语言行在**最上面那一排**（顺序/随机/错题右边）。 -->
         <div id="other-country-break" class="flex-break hidden" aria-hidden="true"></div>
         <div id="other-country-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="其他档国家"></div>
-        <div id="other-lang-break" class="flex-break hidden" aria-hidden="true"></div>
-        <div id="other-lang-toggle" class="mode-segmented hidden" role="radiogroup"></div>
         <div id="continent-break" class="flex-break" aria-hidden="true"></div>
         <div id="continent-toggle" class="mode-segmented hidden" role="radiogroup" aria-label="世界大洲范围">
           <button id="continent-all" type="button" class="active" data-continent="" role="radio" aria-checked="true">全世界</button>

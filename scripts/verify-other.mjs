@@ -114,6 +114,15 @@ try {
     s.countryButtons = Array.prototype.map.call(document.querySelectorAll('#other-country-toggle button'), text);
     s.langButtons = Array.prototype.map.call(document.querySelectorAll('#other-lang-toggle button'), text);
     s.granularityButtons = Array.prototype.map.call(document.querySelectorAll('#granularity-toggle button'), text);
+    /** 语言行是否与「顺序/随机/错题」那一排**在同一行**（用户口径：并到最上面那一排的右边） */
+    var langRow = document.getElementById('other-lang-toggle');
+    var orderRow = document.getElementById('self-order-toggle').classList.contains('hidden')
+      ? document.getElementById('click-order-toggle')
+      : document.getElementById('self-order-toggle');
+    s.sameRowAsOrder = !!langRow && !!orderRow
+      ? Math.abs(langRow.getBoundingClientRect().top - orderRow.getBoundingClientRect().top) < 6
+        && langRow.getBoundingClientRect().left > orderRow.getBoundingClientRect().right
+      : null;
     s.countryHidden = document.getElementById('other-country-toggle').classList.contains('hidden');
     s.langHidden = document.getElementById('other-lang-toggle').classList.contains('hidden');
     s.insetsHidden = !document.getElementById('other-insets');
@@ -243,12 +252,12 @@ try {
   await click('#other-lang-local');
   await sleep(1500);
   const local = await snap();
-  check('语言行高亮切到「外语」', local.langButtons.join(',') === '中文,外语*' && local.lang === 'local', local.langButtons);
+  check('语言行高亮切到「俄语」', local.langButtons.join(',') === '中文,俄语*' && local.lang === 'local', local.langButtons);
   check('地图标签整体换成俄文（题池规模不变 = 只是换了名字）', local.poolSize === before.poolSize && local.labels.includes('Московская область') && !local.labels.includes('莫斯科州'), { sample: local.labels.slice(0, 4) });
   await click('#other-country-jpn');
   await sleep(2000);
   const jpnLocal = await snap();
-  check('切到日本后仍是「外语」，标签是日文（東京都 / 沖縄県）', jpnLocal.lang === 'local' && jpnLocal.labels.includes('東京都') && jpnLocal.labels.includes('沖縄県'), { sample: jpnLocal.labels.slice(0, 4) });
+  check('切到日本后仍是当地语言档，标签是日文（東京都 / 沖縄県），按钮文字变「日语」', jpnLocal.lang === 'local' && jpnLocal.langButtons.join(',') === '中文,日语*' && jpnLocal.labels.includes('東京都') && jpnLocal.labels.includes('沖縄県'), { buttons: jpnLocal.langButtons, sample: jpnLocal.labels.slice(0, 4) });
   await shot('verify-other-3-jpn-local.png');
   // 再按一次 Alt 关掉全量标签（回到"没开始就不显示"的默认）
   await pressAlt();
@@ -270,7 +279,8 @@ try {
   await click('#other-lang-local');
   await sleep(1200);
   const beforeStart = await snap();
-  check('输入模式 + 其他档 + 日语：国家是日本、语言高亮「外语」', beforeStart.country === 'jpn' && beforeStart.lang === 'local' && beforeStart.langButtons.join(',') === '中文,外语*', { country: beforeStart.country, lang: beforeStart.lang, buttons: beforeStart.langButtons });
+  check('输入模式 + 其他档 + 日语：国家是日本、语言高亮「日语」', beforeStart.country === 'jpn' && beforeStart.lang === 'local' && beforeStart.langButtons.join(',') === '中文,日语*', { country: beforeStart.country, lang: beforeStart.lang, buttons: beforeStart.langButtons });
+  check('语言行与「顺序/随机/错题」那一排**同一行**、且在它右边', beforeStart.sameRowAsOrder === true, beforeStart.sameRowAsOrder);
   const placeholder = await ev(`document.getElementById('search-input').placeholder`);
   check('输入框提示按口径给出（「输入当地语言地名」）', placeholder === '输入当地语言地名', placeholder);
 
@@ -295,14 +305,43 @@ try {
   const afterZh = await snap();
   check(`用中文名（${want2.zh}）作答同样判对（判题接受三种写法）`, afterZh.green.includes(q2.question), { question: q2.question, green: afterZh.green });
 
-  // ③ 答错一题：乱输入
+  /**
+   * ⭐ 答题进行中按 Alt：**不许把未作答的名字念出来**（用户口径 2026-10）。
+   * 判据 = 标签数只等于已作答数，而不是题池总数（47）。
+   */
+  await pressAlt();
+  await sleep(1000);
+  const duringPlay = await snap();
+  check('⭐ 答题中按 Alt 只显示已作答的标签（未作答的不显示）', duringPlay.labels.length === duringPlay.green.length + duringPlay.red.length && duringPlay.labels.length < duringPlay.poolSize, { labels: duringPlay.labels.length, green: duringPlay.green.length, red: duringPlay.red.length, pool: duringPlay.poolSize });
+  await pressAlt();
+  await sleep(600);
+
+  // ③ 答错一题：乱输入；同时盯着画布，防"答错后地图空白一两秒"回归
   const q3 = await asJson(`window.__probe.namingTexts()`);
   const wrongTyped = await typeAndSubmit('不存在的名字XYZ');
-  await sleep(900);
+  const fills = [];
+  for (let i = 0; i < 14; i++) {
+    await sleep(160);
+    const s = await asJson(`JSON.stringify(window.__probe.otherScope())`);
+    const c = await ev(`(function () {
+      var el = document.querySelector('#map canvas');
+      var d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      var bg = [d[0], d[1], d[2]], diff = 0, total = 0;
+      for (var i = 0; i < d.length; i += 4 * 37) { total++; if (Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]) > 24) diff++; }
+      return +(100 * diff / total).toFixed(2);
+    })()`);
+    fills.push(c);
+    void s;
+  }
   const afterWrong = await snap();
   // 注意：不能断言 `typed` —— 提交后模式会立刻清空输入框（`ask()` 里 search.clear()），
   // 取回的 el.value 已经是空串。看的是"是否真的计了错"与"是否换了下一题"。
   check('乱输入判错：该题进 red 且题面换到下一题', afterWrong.red.includes(q3.question) && afterWrong.question !== q3.question, { typed: wrongTyped, question: q3.question, red: afterWrong.red, next: afterWrong.question });
+  /**
+   * ⭐ 答错后的纠错平移期间画布必须一直有内容（曾经的缺陷：跟随动画把 `geo.map` 换成了中国档，
+   * region 名 `JP-*` 一个都匹配不上 → 画布空白约 0.6 秒，用户看到"地图消失一两秒"）。
+   */
+  check('⭐ 答错后的纠错平移全程地图不消失（每帧画布非背景像素 > 3%）', Math.min(...fills) > 3, { min: Math.min(...fills), max: Math.max(...fills), samples: fills });
   const wrongStore = await ev(`localStorage.getItem('china-admin-other-wrong:self')`);
   check('错题记进**独立**清单（不进熟练度，供「错题」顺序档使用）', typeof wrongStore === 'string' && JSON.parse(wrongStore).includes(q3.question), wrongStore);
   await shot('verify-other-4-playing.png');

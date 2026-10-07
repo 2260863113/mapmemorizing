@@ -1339,6 +1339,23 @@ export class MapRenderer {
   // 中国族的跟随倍率阶梯 followZoomFor（宽省 6x / 海南 28x / 其余 12x）已搬到 ./camera.ts；
   // 世界族的 worldFollowZoom 留在本文件 —— 它是**导出**给验收探针的标定函数，位置不动。
 
+  /**
+   * 跟随动画期间（与动画结束时判定是否换档）该用的**地图名**。
+   *
+   * 为什么单独一个方法：这里原先写的是 `worldMode ? 'world' : provinceMode ? 省级档 : 地级档`，
+   * **不认识「其他」族** —— 那一族两个模式位都是 false，于是动画帧把 `geo.map` 换成了**中国**的
+   * 某个档，而 region 名是 `JP-*`/`US-*`，一个都匹配不上 → 画布**整片空白**，
+   * 直到动画走完、下面"档位变了"的分支再完整重绘一次才恢复（实测：答错后触发纠错平移，
+   * 画布非背景像素从 74% 掉到 0.17%、约 0.6 秒后才回来 —— 用户看到的就是"地图消失一两秒"）。
+   *
+   * 语义与原来一致：**在调用时刻**取当前档的地图名（动画开始时算一次 = 固定在起点档，
+   * 避免帧间切档触发 ECharts 的空白问题；结束时再算一次用于判定"是否需要换档重绘"）。
+   */
+  private animMapName(): string {
+    if (this.other) return otherMapName(this.other.meta.cc);
+    return this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
+  }
+
   private animateViewTo(targetCenter: [number, number], targetZoom: number) {
     if (this.followRaf !== null) cancelAnimationFrame(this.followRaf);
     const current = this.currentGeoView();
@@ -1346,7 +1363,7 @@ export class MapRenderer {
     const startZoom = current.zoom;
     // 动画期间 map 固定为起点档（避免帧间合并式切换地图名触发 ECharts 空白 bug）；
     // 动画结束后（下方）统一走档位检查，若目标 zoom 跨档则 replaceMerge 换图。
-    const animMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
+    const animMap = this.animMapName();
     const start = performance.now();
     let lastFrame = start - FOLLOW_FRAME_INTERVAL;
     const step = (now: number) => {
@@ -1371,7 +1388,7 @@ export class MapRenderer {
       } else {
         this.followRaf = null;
         // 动画结束：若目标 zoom 跨档（如 zoom 1→12 应从 coarse 切 fine），走完整 render 换图
-        const targetMap = this.worldMode ? 'world' : this.provinceMode ? this.provinceTierMapName() : this.chinaTierMapName();
+        const targetMap = this.animMapName();
         if (targetMap !== this.appliedMapName && this.lastState) {
           this.render(this.lastState);
           return;

@@ -225,8 +225,12 @@ const PROVINCE_CHOICES: readonly NamingChoice<'province'>[] = [
 /**
  * 「其他」档的语言档。
  *
- * 与 `lang` 组（世界档的中/英）**语义不同**：这里的"外语"跟着所选国家变
+ * 与 `lang` 组（世界档的中/英）**语义不同**：这里的第二个档跟着所选国家变
  * （美加英语、日本日语、俄罗斯俄语），故另一个字段单独记，取值是 `local` 而不是 `en`。
+ *
+ * 按钮文字是**具体语言名**（中文 / 英语 / 日语 / 俄语，用户口径 2026-10）：
+ * 名字来自数据的 `country.lang.label`，由 `chromeSync.syncNamingRows` 在切到该档/换国家时现改
+ * ——注册表这里的 label 只是**未进入该档时**的占位（那一行此时是隐藏的，用户看不到）。
  *
  * 两档**都给 judge**，且是同一个判据：输入中文名、当地语言名、英文罗马字名都算对，
  * 与当前语言档无关（用户可能在任何档下打出其中任意一种）。语言档只决定**题面与标签写什么**。
@@ -243,6 +247,7 @@ const OTHER_CHOICES: readonly NamingChoice<'other'>[] = [
   },
   {
     value: 'local',
+    // 占位文案；进入该档后按当前国家的 `lang.label` 改成「英语」/「日语」/「俄语」
     label: '外语',
     placeholderKey: () => 'self.otherLocalPlaceholder',
     judge: (input, ctx) => (ctx.otherUnits ? matchOtherUnit(input, ctx.otherUnits, ctx.question) : null),
